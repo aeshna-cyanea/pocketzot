@@ -7,7 +7,6 @@
 // WASM engine worker, which needs the Phase A artifacts under
 // public/offline/.
 
-import { getPref, setPref } from '../prefs'
 import { FakeEnginePort } from './fake-engine'
 import { WorkerEnginePort } from './engine-port'
 import { LocalConnection } from './local-connection'
@@ -25,17 +24,6 @@ export function bootOffline(params: URLSearchParams): OfflineBoot {
   const port = params.get('engine') === 'fake'
     ? new FakeEnginePort(params.get('fixture') ?? undefined)
     : new WorkerEnginePort(params.has('perf'))
-
-  // No local tile atlases yet (offline tiles is a follow-up): a persisted
-  // tiles pref would mount the game view onto atlases that 404. Force the
-  // pref to ASCII before the view builds — persisting is deliberate (the
-  // settings page then shows the true state; switching back online is one
-  // toggle). The in-game gestures can still switch to tiles mid-session;
-  // that's a dev poking at it, not a trap.
-  if (getPref('mapRenderMode') === 'tiles') {
-    console.warn('offline: tile mode has no local atlases yet — render mode switched to ASCII')
-    setPref('mapRenderMode', 'ascii')
-  }
 
   const conn = new LocalConnection()
   const mini = createMiniServer(port, (msg) => conn.deliver(msg))
