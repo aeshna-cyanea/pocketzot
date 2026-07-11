@@ -45,6 +45,11 @@ interface CrawlOverrides {
   print?: (text: string) => void
   printErr?: (text: string) => void
   pocketzotSeedCaches?: (fs: CrawlFS) => Promise<void>
+  // Pre-fetched engine bytes: with these provided the Emscripten glue does
+  // no artifact fetches of its own, which is what routes everything through
+  // the worker's cache+gunzip path below.
+  wasmBinary?: Uint8Array
+  getPreloadedPackage?: (name: string, size: number) => ArrayBuffer
 }
 
 type CrawlFactory = (overrides: CrawlOverrides) => Promise<CrawlModule>
@@ -139,6 +144,86 @@ function nudge(): void {
   pz.pushControl(JSON.stringify({ msg: 'spectator_joined' }))
 }
 
+// ---- Artifact delivery: Cache API + gzip -----------------------------------
+// The engine artifacts are immutable per build (~46 MB raw; install.sh ships
+// the big three gzipped, ~15 MB total). They're fetched through a Cache API
+// store — plain caches.open() from this dedicated worker; NO service worker
+// exists or is registered, nothing intercepts the app's requests — and kept
+// compressed at rest, gunzipped per boot via DecompressionStream (native
+// zlib speed; well under wasm-instantiation time). /offline/version.json
+// names the current build: on change the cache is cleared and refetched;
+// when it's unreachable (no network) the existing cache boots the engine
+// anyway. The app shell itself is NOT offline-capable yet — that's the
+// deliberate service-worker decision deferred to productization; this layer
+// is the substrate it will sit on.
+
+const ARTIFACT_CACHE = 'pz-offline-artifacts'
+// Synthetic cache entry recording which build the cached artifacts belong to.
+const BUILD_KEY = '/offline/__build'
+
+async function openArtifactCache(): Promise<Cache | null> {
+  if (typeof caches === 'undefined') return null
+  try {
+    const cache = await caches.open(ARTIFACT_CACHE)
+    let build: string | null = null
+    try {
+      const r = await fetch('/offline/version.json', { cache: 'no-cache' })
+      if (r.ok && (r.headers.get('content-type') ?? '').includes('json'))
+        build = String((await r.json() as { build?: unknown }).build ?? '') || null
+    } catch { /* offline — trust whatever the cache holds */ }
+    if (build !== null) {
+      const stored = await (await cache.match(BUILD_KEY))?.text()
+      if (stored !== build) {
+        for (const req of await cache.keys()) await cache.delete(req)
+        await cache.put(BUILD_KEY, new Response(build))
+        if (stored !== undefined)
+          post({ type: 'log', text: `engine build ${stored} -> ${build}: artifact cache cleared` })
+      }
+    }
+    return cache
+  } catch (e) {
+    // Cache API unavailable/broken — plain network fetches below. Logged
+    // because this silently downgrades every boot to a full re-download.
+    post({ type: 'log', text: `artifact cache unavailable: ${String(e)}` })
+    return null
+  }
+}
+
+// Boot diagnostics: where the artifact bytes actually came from.
+let artifactCacheHits = 0
+let artifactNetFetches = 0
+
+// Cache-first fetch of one artifact; tries `paths` in order (gzipped name
+// first, plain fallback for older installs). Never caches an HTML body — a
+// SPA-fallback 200 for a missing file must not become a sticky cache entry.
+async function fetchArtifact(cache: Cache | null, ...paths: string[]): Promise<ArrayBuffer> {
+  for (const p of paths) {
+    const hit = cache && await cache.match(p)
+    if (hit) { artifactCacheHits++; return hit.arrayBuffer() }
+  }
+  let lastStatus = 0
+  for (const p of paths) {
+    const res = await fetch(p).catch(() => null)
+    if (!res || !res.ok) { lastStatus = res?.status ?? 0; continue }
+    if ((res.headers.get('content-type') ?? '').includes('text/html')) { lastStatus = 404; continue }
+    if (cache) await cache.put(p, res.clone()).catch(() => { /* quota — serve uncached */ })
+    artifactNetFetches++
+    return res.arrayBuffer()
+  }
+  throw new Error(`artifact ${paths[0]}: HTTP ${lastStatus || 'unreachable'}`)
+}
+
+// Transparent gunzip, keyed on magic bytes rather than filename: handles
+// plain files, and a CDN that already content-decoded the body, identically.
+async function gunzipIfNeeded(buf: ArrayBuffer): Promise<ArrayBuffer> {
+  const b = new Uint8Array(buf)
+  if (b.length < 2 || b[0] !== 0x1f || b[1] !== 0x8b) return buf
+  if (typeof DecompressionStream === 'undefined')
+    throw new Error('gzipped engine artifact but DecompressionStream is unavailable')
+  const ds = new DecompressionStream('gzip')
+  return new Response(new Blob([buf]).stream().pipeThrough(ds)).arrayBuffer()
+}
+
 // First-boot cache seeding, run by the engine glue after IDBFS hydration and
 // before main() (pre.js's pocketzotSeedCaches hook). The engine build ships
 // its derived caches (description DBs + des cache, baked by the engine
@@ -150,12 +235,13 @@ function nudge(): void {
 // Any failure is non-fatal (pre.js catches): boot continues, engine rebuilds.
 const PREWARM_STAMP_PATH = '/crawl/.pocketzot-prewarm'
 
-async function seedCaches(fs: CrawlFS): Promise<void> {
-  const res = await fetch('/offline/prewarm/manifest.json')
-  if (!res.ok || !(res.headers.get('content-type') ?? '').includes('json')) return
-  const manifest = await res.json() as {
-    stamp: string | number
-    files: { path: string, offset: number, size: number }[]
+async function seedCaches(fs: CrawlFS, cache: Cache | null): Promise<void> {
+  let manifest: { stamp: string | number, files: { path: string, offset: number, size: number }[] }
+  try {
+    const raw = await fetchArtifact(cache, '/offline/prewarm/manifest.json')
+    manifest = JSON.parse(new TextDecoder().decode(raw)) as typeof manifest
+  } catch {
+    return // no prewarm shipped — the engine builds its caches itself
   }
   const stamp = String(manifest.stamp)
   let existing: string | null = null
@@ -166,9 +252,8 @@ async function seedCaches(fs: CrawlFS): Promise<void> {
 
   // One pack fetch for all ~575 cache files; nothing is written until the
   // whole pack is here, so a failed fetch can't leave a half-seeded set.
-  const packRes = await fetch('/offline/prewarm/prewarm.bin')
-  if (!packRes.ok) throw new Error(`prewarm.bin: HTTP ${packRes.status}`)
-  const pack = new Uint8Array(await packRes.arrayBuffer())
+  const pack = new Uint8Array(await gunzipIfNeeded(await fetchArtifact(
+    cache, '/offline/prewarm/prewarm.bin.gz', '/offline/prewarm/prewarm.bin')))
 
   for (const f of manifest.files) {
     const path = `/crawl/${f.path}`
@@ -185,17 +270,27 @@ async function seedCaches(fs: CrawlFS): Promise<void> {
 }
 
 async function start(): Promise<void> {
+  const cache = await openArtifactCache()
   let factory: CrawlFactory
+  let wasmBinary: Uint8Array
+  let dataBuffer: ArrayBuffer
   try {
-    // Fetch + blob-URL import instead of importing the path directly: the
-    // Vite dev server refuses to module-serve files under public/ ("can only
-    // be referenced via HTML tags"), and a blob module bypasses its
-    // middleware entirely while behaving identically in production. All
-    // sibling fetches (crawl.wasm, crawl.data) go through our locateFile, so
-    // nothing resolves relative to the blob URL.
-    const res = await fetch('/offline/crawl.js')
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const blob = new Blob([await res.text()], { type: 'text/javascript' })
+    // All three artifacts go through the cache+gunzip path; wasm and data
+    // are handed to the glue as bytes (wasmBinary / getPreloadedPackage), so
+    // the glue performs no fetches of its own. The glue itself is fetched +
+    // blob-URL imported rather than imported by path: the Vite dev server
+    // refuses to module-serve files under public/ ("can only be referenced
+    // via HTML tags"), and a blob module bypasses its middleware entirely
+    // while behaving identically in production.
+    const [glueBuf, wasmBuf, dataBuf] = await Promise.all([
+      fetchArtifact(cache, '/offline/crawl.js'),
+      fetchArtifact(cache, '/offline/crawl.wasm.gz', '/offline/crawl.wasm').then(gunzipIfNeeded),
+      fetchArtifact(cache, '/offline/crawl.data.gz', '/offline/crawl.data').then(gunzipIfNeeded),
+    ])
+    wasmBinary = new Uint8Array(wasmBuf)
+    dataBuffer = dataBuf
+    post({ type: 'log', text: `artifacts loaded: ${artifactCacheHits} from cache, ${artifactNetFetches} from network` })
+    const blob = new Blob([glueBuf], { type: 'text/javascript' })
     const url = URL.createObjectURL(blob)
     try {
       const mod = await import(/* @vite-ignore */ url) as { default: CrawlFactory }
@@ -203,13 +298,13 @@ async function start(): Promise<void> {
     } finally {
       URL.revokeObjectURL(url)
     }
-  } catch {
-    // No artifact deployed (expected until the Phase A build lands). Surface
-    // through the normal exit path: mini-server turns the starred
-    // exit_reason + nonzero exit into game_ended{reason:'error'}.
+  } catch (e) {
+    // No artifact deployed (expected on a checkout without an engine
+    // install). Surface through the normal exit path: mini-server turns the
+    // starred exit_reason + nonzero exit into game_ended{reason:'error'}.
     post({
       type: 'lines',
-      chunk: '*{"msg":"exit_reason","type":"error","message":"Offline engine not installed (missing /offline/crawl.js)."}\n',
+      chunk: `*${JSON.stringify({ msg: 'exit_reason', type: 'error', message: `Offline engine not installed or unreachable (${String(e)}).` })}\n`,
     })
     post({ type: 'exit', code: 1 })
     return
@@ -249,7 +344,13 @@ async function start(): Promise<void> {
       onExit: (code) => { flushOut(); post({ type: 'exit', code }) },
       print: (text) => post({ type: 'log', text }),
       printErr: (text) => post({ type: 'log', text }),
-      pocketzotSeedCaches: seedCaches,
+      pocketzotSeedCaches: (fs) => seedCaches(fs, cache),
+      wasmBinary,
+      getPreloadedPackage: (_name, size) => {
+        if (size !== dataBuffer.byteLength)
+          post({ type: 'log', text: `crawl.data size mismatch: glue expects ${size}, have ${dataBuffer.byteLength}` })
+        return dataBuffer
+      },
     })
   } catch (e) {
     post({
