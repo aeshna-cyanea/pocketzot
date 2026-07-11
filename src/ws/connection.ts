@@ -3,7 +3,21 @@ import type { ClientMsg, ServerMsg } from './types'
 export type MessageHandler = (msg: ServerMsg) => void
 export type StateHandler = () => void
 
-export class WsConnection {
+// The connection surface the lobby/game views and app shell actually consume.
+// WsConnection is the live-server implementation; the offline engine provides
+// LocalConnection (src/offline/local-connection.ts). Login/token-login deal in
+// concrete WsConnection (connect, onLoginCookie) — those never apply offline.
+export interface GameConnection {
+  send(msg: ClientMsg): void
+  close(): void
+  readonly connected: boolean
+  readonly wsUrl: string
+  readonly httpBase: string
+  onMessage: MessageHandler
+  onClose: StateHandler
+}
+
+export class WsConnection implements GameConnection {
   private socket: WebSocket | null = null
   private url: string
   private intentionalClose = false
@@ -126,10 +140,12 @@ export class WsConnection {
   }
 }
 
-// Dev-only circular WS message log accessible via window.__dcssWsLog
+// Dev-only circular WS message log accessible via window.__dcssWsLog.
+// Exported so LocalConnection (offline play) logs into the same window, and
+// input routing can be eyeballed identically in both transports.
 type LogEntry = { dir: 'in' | 'out'; ts: number; msg: unknown }
 const MAX_LOG = 200
-function devLog(dir: 'in' | 'out', msg: unknown): void {
+export function devLog(dir: 'in' | 'out', msg: unknown): void {
   const w = window as unknown as Record<string, unknown>
   if (!Array.isArray(w['__dcssWsLog'])) w['__dcssWsLog'] = []
   const log = w['__dcssWsLog'] as LogEntry[]

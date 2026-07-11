@@ -52,11 +52,18 @@ export function buildLoginView(
   // About / What's new are rendered in-app from the committed ABOUT.md /
   // CHANGELOG.md (see ./docs), so they ship in every build — this footer is the
   // always-present source/attribution surface required by the AGPL.
+  // DEV-only offline entry: an installed PWA has no address bar to type
+  // ?offline=1 into, so surface the flag as a footer link (dead-code-
+  // eliminated from prod builds together with the rest of src/offline/).
+  const offlineLinkHtml = import.meta.env.DEV
+    ? '<a href="#" id="login-offline">Offline</a>'
+    : ''
   const siteFooterHtml = `
     <div class="login-footer">
       <a href="#" id="login-about">About</a>
       <a href="#" id="login-changelog">What's new</a>
       <a href="#" id="login-settings">Settings</a>
+      ${offlineLinkHtml}
     </div>
   `
 
@@ -176,6 +183,13 @@ export function buildLoginView(
     e.preventDefault()
     openSettings()
   })
+  if (import.meta.env.DEV) {
+    view.querySelector('#login-offline')?.addEventListener('click', (e) => {
+      e.preventDefault()
+      // Full navigation (not a state change): app.ts reads the flag at init.
+      location.assign('/?offline=1')
+    })
+  }
 
   renderResumeButtons()
   renderAvatars()

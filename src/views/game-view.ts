@@ -1,4 +1,4 @@
-import type { WsConnection } from '../ws/connection'
+import type { GameConnection } from '../ws/connection'
 import type { ClientMsg, ServerMsg, GameExit } from '../ws/types'
 import { fitToWidth } from './fit-terminal'
 import { MapStore } from '../game/map/map-store'
@@ -94,7 +94,7 @@ export interface SpectateTarget {
 }
 
 export function buildGameView(
-  conn: WsConnection,
+  conn: GameConnection,
   onLobby: (exit?: GameExit) => void,
   spectating?: SpectateTarget,
   initialLoader?: TileLoader,
@@ -1237,11 +1237,27 @@ export function buildGameView(
       }
 
       case 'ui-stack': {
-        // Sent on spectator join: a snapshot of the watched game's UI stack.
-        // Each item carries its own `msg` field (ui-push, ui-state, ...),
-        // so we re-dispatch through the same handler.
+        // _send_everything()'s snapshot of the engine-side UI stack, sent on
+        // attach (spectator join; offline, the mini-server's boot handshake).
+        // Each item carries its own `msg` field (ui-push, menu, ...), so we
+        // re-dispatch through this handler — but the snapshot can duplicate
+        // pushes that already arrived live (offline the newgame screen is
+        // always up before the forced snapshot lands), so it REPLACES the
+        // client stack rather than appending. The reference client instead
+        // drops the message unless watching (ui-layouts.js recv_ui_stack);
+        // replacing is equivalent on a fresh spectate view and also
+        // self-heals a desynced stack.
         const items = (msg as unknown as { items?: ServerMsg[] }).items
-        if (Array.isArray(items)) for (const item of items) handleMsg(item)
+        if (!Array.isArray(items)) break
+        uiStack.length = 0
+        for (const item of items) handleMsg(item)
+        // An empty snapshot must also clear a stale overlay — mirror
+        // ui-pop's restore chain (dialogs live outside the engine stack).
+        if (uiStack.length === 0) {
+          if (crtActive) restoreCrt()
+          else if (activeMenu) showMenu(activeMenu)
+          else if (!dialogActive) hideOverlay()
+        }
         break
       }
 

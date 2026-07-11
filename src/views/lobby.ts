@@ -1,4 +1,4 @@
-import type { WsConnection } from '../ws/connection'
+import type { GameConnection } from '../ws/connection'
 import type { GameExit, LobbyEntry, ServerMsg } from '../ws/types'
 import { clearSession, loadSession } from '../auth/session'
 import { getTileLoader, type TileLoader } from '../game/tiles/tile-loader'
@@ -12,7 +12,7 @@ import { isBelowSupportCutoff, parseDcssVersion } from '../util/dcss-version'
 import { attachScrollCue } from '../util/scroll-cue'
 
 export function buildLobbyView(
-  conn: WsConnection,
+  conn: GameConnection,
   username: string,
   guest: boolean,
   onGameStart: (spectating?: SpectateTarget, loader?: TileLoader, gameId?: string) => void,
