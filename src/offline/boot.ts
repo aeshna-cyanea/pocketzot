@@ -21,9 +21,15 @@ export interface OfflineBoot {
 }
 
 export function bootOffline(params: URLSearchParams): OfflineBoot {
+  // Latency meter (__pzPerf in the console): always on in DEV — the phone
+  // enters offline via the login footer link, which can't carry a ?perf=1
+  // param on an installed PWA with no address bar. The param stays
+  // meaningful for any future non-DEV offline build; the meter's cost is a
+  // few timestamps per input.
+  const perf = params.has('perf') || import.meta.env.DEV
   const port = params.get('engine') === 'fake'
     ? new FakeEnginePort(params.get('fixture') ?? undefined)
-    : new WorkerEnginePort(params.has('perf'))
+    : new WorkerEnginePort(perf)
 
   const conn = new LocalConnection()
   const mini = createMiniServer(port, (msg) => conn.deliver(msg))
