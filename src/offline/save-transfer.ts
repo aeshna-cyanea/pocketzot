@@ -163,6 +163,31 @@ async function openDb(): Promise<IDBDatabase> {
   return db
 }
 
+// Whether a resumable save exists in the engine's IDBFS (any
+// /crawl/saves/*.cs file), without creating the database as a side effect —
+// this runs on every login-screen mount, most of which never touch offline
+// play. Returns null when the browser can't be probed non-creatingly
+// (indexedDB.databases missing); callers fall back to the offline-state
+// record's guess.
+export async function hasOfflineSave(): Promise<boolean | null> {
+  try {
+    if (typeof indexedDB === 'undefined' || typeof indexedDB.databases !== 'function') return null
+    const dbs = await indexedDB.databases()
+    if (!dbs.some((d) => d.name === MOUNT)) return false
+    const db = await openRaw()
+    try {
+      if (!db.objectStoreNames.contains(STORE)) return false
+      const keys = await request(db.transaction(STORE, 'readonly').objectStore(STORE)
+        .getAllKeys(IDBKeyRange.bound(`${MOUNT}/saves/`, `${MOUNT}/saves/\uffff`)))
+      return keys.some((k) => typeof k === 'string' && /^[^/]+\.cs$/.test(k.slice(`${MOUNT}/saves/`.length)))
+    } finally {
+      db.close()
+    }
+  } catch {
+    return null
+  }
+}
+
 // Snapshot every real file under the mount (one readonly transaction —
 // atomic vs the engine's own syncfs batches), minus regenerable caches.
 export async function readOfflineFiles(): Promise<SavedFile[]> {

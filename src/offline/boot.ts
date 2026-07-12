@@ -11,6 +11,7 @@ import { FakeEnginePort } from './fake-engine'
 import { WorkerEnginePort } from './engine-port'
 import { LocalConnection } from './local-connection'
 import { createMiniServer } from './mini-server'
+import { trackOfflineMsg } from './offline-state'
 import { packSave, readOfflineFiles, unpackSave, writeOfflineFiles } from './save-transfer'
 
 export interface OfflineBoot {
@@ -40,7 +41,14 @@ export function bootOffline(params: URLSearchParams): OfflineBoot {
     : new WorkerEnginePort(perf)
 
   const conn = new LocalConnection()
-  const mini = createMiniServer(port, (msg) => conn.deliver(msg))
+  // Fold real-engine messages into the login card's last-character record.
+  // Fake-fixture replays are excluded — they'd write a phantom "Resume …"
+  // label for a character that exists only in a golden test capture.
+  const real = port instanceof WorkerEnginePort
+  const mini = createMiniServer(port, (msg) => {
+    if (real) trackOfflineMsg(msg)
+    conn.deliver(msg)
+  })
   conn.onSend = (msg) => mini.handleClientMsg(msg)
   conn.onShutdown = () => mini.dispose()
 

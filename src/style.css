@@ -349,6 +349,23 @@ html, body {
 }
 .login-account-card:disabled::after { content: "…"; }
 
+/* Offline entry card (login.ts renderOfflineCard): account-card chrome with a
+   two-line middle — fixed "Play offline" title row + save-state subline. */
+.login-offline-lines {
+  grid-area: user;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+.login-offline-sub {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .login-add-section > summary {
   cursor: pointer;
   font-size: 0.9rem;

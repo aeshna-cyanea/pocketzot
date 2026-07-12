@@ -39,12 +39,12 @@ export function initApp(appEl: HTMLElement): void {
       connLost()
     }
   })
-  // DEV-only offline play: ?offline=1 mounts the game view against the local
-  // WASM engine (or ?engine=fake, a golden-fixture replay) with no server,
-  // login, or lobby. Checked before the resume path so a stale online-resume
-  // record can't hijack the boot. Statically false in prod builds, so the
-  // dynamic import below is dead-code-eliminated.
-  if (import.meta.env.DEV && new URLSearchParams(location.search).has('offline')) {
+  // Offline play: ?offline=1 mounts the game view against the local WASM
+  // engine (or ?engine=fake, a golden-fixture replay) with no server, login,
+  // or lobby. Checked before the resume path so a stale online-resume record
+  // can't hijack the boot. The URL flag is a dev/debug convenience — the real
+  // entry point is the login view's offline card (onOffline below).
+  if (new URLSearchParams(location.search).has('offline')) {
     void showOfflineGame()
     return
   }
@@ -61,12 +61,14 @@ export function initApp(appEl: HTMLElement): void {
   }
 }
 
-// Offline (WASM engine) game, DEV-only. Bypasses login/lobby entirely: the
-// engine has no account and no game list. Deliberate parameter choices:
-// gameId '' keeps avatar/crypt writes disabled (both gate on a truthy id);
-// guest=false keeps canResumeAfterClose() false, so the visibilitychange
-// handler never proactively closes the "socket" (LocalConnection never
-// reconnects — see its header). Exit lands on the login view, the app's home.
+// Offline (WASM engine) game. Bypasses login/lobby entirely: the engine has
+// no account and no game list. Deliberate parameter choices: gameId '' keeps
+// avatar/crypt writes disabled (both gate on a truthy id); guest=false keeps
+// canResumeAfterClose() false, so the visibilitychange handler never
+// proactively closes the "socket" (LocalConnection never reconnects — see
+// its header). Exit lands on the login view, the app's home, where the
+// offline card shows the ending state (from the offline-state record) — a
+// normal exit is not an error, so nothing goes to the login error slot.
 async function showOfflineGame(): Promise<void> {
   const { bootOffline } = await import('./offline/boot')
   const boot = bootOffline(new URLSearchParams(location.search))
@@ -76,13 +78,13 @@ async function showOfflineGame(): Promise<void> {
   currentIsGuest = false
   setView(buildGameView(
     boot.conn,
-    (exit) => {
+    () => {
       boot.dispose()
       conn = null
       // Drop the ?offline flag with the session: a later reload (e.g. the
       // iOS eviction path mid-online-game) must not boot back into offline.
       history.replaceState(null, '', location.pathname)
-      showLogin(exit?.reason ? `Offline game ended (${exit.reason}).` : 'Offline game ended.')
+      showLogin()
     },
     undefined,
     undefined,
@@ -103,7 +105,7 @@ function showLogin(notice?: string): void {
     currentUsername = result.username
     currentIsGuest = result.guest ?? false
     showLobby(currentUsername, currentIsGuest)
-  }, notice))
+  }, notice, () => { void showOfflineGame() }))
 }
 
 function showLobby(username: string, guest: boolean, exit?: GameExit): void {

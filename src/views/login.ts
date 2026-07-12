@@ -10,6 +10,9 @@ import { decorateLogo } from '../logo'
 import { listAvatars } from '../avatars'
 import { paintAvatars } from './avatar-tiles'
 import { openCrypt } from './crypt-view'
+import { getOfflineLast, offlineLastSaysResumable } from '../offline/offline-state'
+import { abbrevPlace } from '../game/place-abbrev'
+import { hasOfflineSave } from '../offline/save-transfer'
 
 export interface LoginResult {
   conn: WsConnection
@@ -22,6 +25,9 @@ export function buildLoginView(
   // Shown in the error slot on mount — how the app explains an involuntary
   // trip back here (connection lost, auto-resume gave up).
   notice?: string,
+  // Boots offline play (the WASM engine) in place. When absent the offline
+  // card is not rendered.
+  onOffline?: () => void,
 ): HTMLElement {
   const view = document.createElement('div')
   view.id = 'login-view'
@@ -52,18 +58,11 @@ export function buildLoginView(
   // About / What's new are rendered in-app from the committed ABOUT.md /
   // CHANGELOG.md (see ./docs), so they ship in every build — this footer is the
   // always-present source/attribution surface required by the AGPL.
-  // DEV-only offline entry: an installed PWA has no address bar to type
-  // ?offline=1 into, so surface the flag as a footer link (dead-code-
-  // eliminated from prod builds together with the rest of src/offline/).
-  const offlineLinkHtml = import.meta.env.DEV
-    ? '<a href="#" id="login-offline">Offline</a>'
-    : ''
   const siteFooterHtml = `
     <div class="login-footer">
       <a href="#" id="login-about">About</a>
       <a href="#" id="login-changelog">What's new</a>
       <a href="#" id="login-settings">Settings</a>
-      ${offlineLinkHtml}
     </div>
   `
 
@@ -94,6 +93,19 @@ export function buildLoginView(
       <section id="resume-section" class="login-section">
         <div class="login-section-label">Your accounts</div>
         <div id="resume-list" class="login-account-list"></div>
+      </section>
+      ` : ''}
+
+      ${onOffline ? `
+      <section id="offline-section" class="login-section">
+        <div class="login-section-label">On this device</div>
+        <button type="button" id="offline-card" class="login-account-card login-offline-card">
+          <span class="login-account-tag">⌂</span>
+          <span class="login-offline-lines">
+            <span class="login-account-username">Play offline</span>
+            <span id="offline-sub" class="login-offline-sub"></span>
+          </span>
+        </button>
       </section>
       ` : ''}
 
@@ -183,15 +195,8 @@ export function buildLoginView(
     e.preventDefault()
     openSettings()
   })
-  if (import.meta.env.DEV) {
-    view.querySelector('#login-offline')?.addEventListener('click', (e) => {
-      e.preventDefault()
-      // Full navigation (not a state change): app.ts reads the flag at init.
-      location.assign('/?offline=1')
-    })
-  }
-
   renderResumeButtons()
+  renderOfflineCard()
   renderAvatars()
 
   // Shelf of your recently-played character dolls (see ../avatars + ./avatar-tiles),
@@ -247,6 +252,46 @@ export function buildLoginView(
       paint()
     }
     window.addEventListener(LOGIN_SPRITES_CHANGED_EVENT, onSpritesPref)
+  }
+
+  // Offline card: one tap boots the local engine. The subline says what the
+  // tap will do — resume the saved character or start fresh. Save presence is
+  // guessed synchronously from the offline-state record, then corrected by
+  // the IDB probe when the browser supports probing without side effects
+  // (covers a wiped IDB under a stale record, and an imported save with no
+  // record). The subline is the fallback-varying part; the title row stays
+  // fixed so the card never reflows.
+  function renderOfflineCard(): void {
+    const card = view.querySelector<HTMLButtonElement>('#offline-card')
+    const sub = view.querySelector<HTMLElement>('#offline-sub')
+    if (!card || !sub || !onOffline) return
+    const rec = getOfflineLast()
+    const setSub = (resumable: boolean): void => {
+      if (resumable && rec?.name) {
+        // The wire title carries its own joiner ("the Sneak", ", Vainglorious")
+        // — same rule as the HUD titleline (stats-view.ts nameTitle).
+        const who = rec.title
+          ? (rec.title.startsWith(',') ? rec.name + rec.title : `${rec.name} ${rec.title}`)
+          : rec.name
+        // Same compact place form as the HUD chip (stats-view.ts).
+        const place = rec.place
+          ? (rec.depth ? `${abbrevPlace(rec.place)}:${rec.depth}` : abbrevPlace(rec.place))
+          : ''
+        sub.textContent = `Resume ${who}${place ? ` — ${place}` : ''}`
+      } else if (resumable) {
+        sub.textContent = 'Resume saved game'
+      } else {
+        sub.textContent = 'Start a new game'
+      }
+    }
+    setSub(offlineLastSaysResumable(rec))
+    void hasOfflineSave().then((has) => {
+      if (has !== null && view.isConnected) setSub(has)
+    })
+    card.addEventListener('click', () => {
+      card.disabled = true
+      onOffline()
+    })
   }
 
   function renderResumeButtons(): void {
