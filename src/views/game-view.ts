@@ -261,6 +261,14 @@ export function buildGameView(
   const uiStack: UiPushMsg[] = []
   const crtLines = new Map<number, string>()
   let crtActive = false
+  // Latched when the engine pushes the "game-over" screen (end.cc end_game:
+  // Goodbye + hiscores). From that point the game never returns to the map —
+  // only game_ended remains — so overlay teardowns keep the last screen up
+  // instead of revealing the map. Without this, dismissing the final screen
+  // flashes the dead character's map for the gap until the process exits
+  // (offline that gap is the engine's final IDBFS persist, several frames).
+  // Never reset: exitToLobby discards the whole view.
+  let gameOverSeen = false
   // True while a server `show_dialog` HTML overlay is up (e.g. trunk's
   // save-transfer prompt on resume). Tracked like crtActive so it can't be
   // orphaned if the server proceeds without an explicit hide_dialog.
@@ -1219,6 +1227,7 @@ export function buildGameView(
       case 'ui-push': {
         disarmCreationGuard()  // an overlay rendered — see the 'txt' case
         const pushMsg = msg as unknown as UiPushMsg
+        if (pushMsg.type === 'game-over') gameOverSeen = true
         // A server overlay supersedes our client-side monster panel and
         // minimap lens; clear/close so subsequent map updates don't rewrite
         // the overlay body or repaint a stale lens.
@@ -1266,7 +1275,7 @@ export function buildGameView(
         if (uiStack.length > 0) showUiPush(uiStack[uiStack.length - 1])
         else if (crtActive) restoreCrt()
         else if (activeMenu) showMenu(activeMenu)
-        else hideOverlay()
+        else if (!gameOverSeen) hideOverlay()
         break
 
       case 'ui-state': {
@@ -1580,7 +1589,7 @@ export function buildGameView(
         if (prev) showMenu(prev)
         else if (uiStack.length > 0) showUiPush(uiStack[uiStack.length - 1])
         else if (crtActive) restoreCrt()
-        else hideOverlay()
+        else if (!gameOverSeen) hideOverlay()
         break
       }
 
@@ -1595,7 +1604,7 @@ export function buildGameView(
         closeClientOverlays()
         titlePromptInput = null
         harvester.reset()
-        hideOverlay()
+        if (!gameOverSeen) hideOverlay()
         break
 
       case 'go_lobby':

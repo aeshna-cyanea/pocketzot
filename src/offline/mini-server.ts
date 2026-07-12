@@ -49,6 +49,14 @@ export function createMiniServer(
   let exitReason: string | null = null
   let exitMessage: string | undefined
   let ended = false
+  // Once the engine has declared its exit reason the game is over — nothing
+  // after it can return to the map. Overlay-teardown messages that arrive in
+  // the remaining span (e.g. screen_end_game's final msgbox popping, newgame
+  // cancel) are dropped so the client keeps the last screen up instead of
+  // flashing the map while the engine finishes its exit persist. The
+  // game-over screen itself is handled client-side (game-view's gameOverSeen
+  // latch) because end_game sends exit_reason only *after* that popup closes.
+  let exitDeclared = false
   let bootTimer: ReturnType<typeof setTimeout> | null = null
   let nudges = 0
   let sawGameContent = false
@@ -89,6 +97,7 @@ export function createMiniServer(
       case 'exit_reason':
         exitReason = String(msg['type'] ?? 'error')
         exitMessage = typeof msg['message'] === 'string' ? msg['message'] : undefined
+        exitDeclared = true
         break
       case 'client_path':   // engine version handshake — nothing to route offline
       case 'flush_messages': // we don't queue, so every message is already flushed
@@ -118,6 +127,7 @@ export function createMiniServer(
       if (starred) handleStarred(parsed as Record<string, unknown>)
       else if (!ended) {
         const m = parsed as ServerMsg
+        if (exitDeclared && (m.msg === 'ui-pop' || m.msg === 'close_menu' || m.msg === 'close_all_menus')) continue
         if (GAME_CONTENT_TYPES.has(m.msg)) sawGameContent = true
         if (m.msg === 'map' || m.msg === 'player') sawDisplay = true
         deliver(m)
