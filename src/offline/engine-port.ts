@@ -23,6 +23,11 @@ export interface EnginePort {
   nudge?(): void
   onOutput: (chunk: string) => void
   onExit: (code: number) => void
+  // Boot-phase progress ("Loading the offline engine..." etc.), covering the
+  // window before the engine's first output — artifact download, wasm
+  // instantiation, first-run cache seeding. The mini-server synthesizes these
+  // into message-log lines; ports with no boot phase (fake) never call it.
+  onProgress?: (text: string) => void
   terminate(): void
 }
 
@@ -42,6 +47,8 @@ export type WorkerOutMsg =
   // Engine stdout/stderr, relayed because WebKit doesn't surface worker
   // console output to the page.
   | { type: 'log'; text: string }
+  // Boot-phase progress for the user (see EnginePort.onProgress).
+  | { type: 'progress'; text: string }
   // ?perf=1: worker-side input→first-output duration for the last input.
   | { type: 'perf'; engineMs: number }
 
@@ -152,6 +159,7 @@ class PerfMeter {
 export class WorkerEnginePort implements EnginePort {
   onOutput: (chunk: string) => void = () => {}
   onExit: (code: number) => void = () => {}
+  onProgress: (text: string) => void = () => {}
   private worker: Worker | null = null
   private meter: PerfMeter | null = null
   // DEV diagnostics: last raw engine output chunks, pre-parse (so losses in
@@ -177,6 +185,7 @@ export class WorkerEnginePort implements EnginePort {
         this.onOutput(m.chunk)
       } else if (m.type === 'exit') this.onExit(m.code)
       else if (m.type === 'log') console.log('[engine]', m.text)
+      else if (m.type === 'progress') this.onProgress(m.text)
       else if (m.type === 'perf') this.meter?.engine(m.engineMs)
     }
     this.post({ type: 'start', perf: this.perf })

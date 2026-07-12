@@ -145,6 +145,15 @@ export function createMiniServer(
       deliver({ msg: 'game_client', version: 'local', content: '' })
       port.onOutput = handleOutput
       port.onExit = end
+      // Boot-phase progress becomes ordinary message-log lines — the same
+      // surface the engine's own startup messages ("Loading databases...")
+      // stream into once it's running, so the whole boot reads as one log.
+      // Deliberately NOT routed through handleOutput: synthetic lines must
+      // never count as game content for the watchdog, nor be scanned by the
+      // pre-game --more-- auto-answer.
+      port.onProgress = (text) => {
+        if (!ended) deliver({ msg: 'msgs', messages: [{ text }] })
+      }
       port.start()
       // The per-client handshake the Python server performs: without attach,
       // TilesFramework::has_receivers() stays false and redraw() — the path

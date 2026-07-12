@@ -192,6 +192,9 @@ async function openArtifactCache(): Promise<Cache | null> {
 // Boot diagnostics: where the artifact bytes actually came from.
 let artifactCacheHits = 0
 let artifactNetFetches = 0
+// Wire bytes fetched (compressed sizes — counted before gunzip), for the
+// user-facing "Downloaded N MB" boot line.
+let artifactNetBytes = 0
 
 // Cache-first fetch of one artifact; tries `paths` in order (gzipped name
 // first, plain fallback for older installs). Never caches an HTML body — a
@@ -208,7 +211,9 @@ async function fetchArtifact(cache: Cache | null, ...paths: string[]): Promise<A
     if ((res.headers.get('content-type') ?? '').includes('text/html')) { lastStatus = 404; continue }
     if (cache) await cache.put(p, res.clone()).catch(() => { /* quota — serve uncached */ })
     artifactNetFetches++
-    return res.arrayBuffer()
+    const buf = await res.arrayBuffer()
+    artifactNetBytes += buf.byteLength
+    return buf
   }
   throw new Error(`artifact ${paths[0]}: HTTP ${lastStatus || 'unreachable'}`)
 }
@@ -250,6 +255,7 @@ async function seedCaches(fs: CrawlFS, cache: Cache | null): Promise<void> {
   } catch { /* first boot — no stamp yet */ }
   if (existing === stamp) return
 
+  post({ type: 'progress', text: 'Preparing first-run data...' })
   // One pack fetch for all ~575 cache files; nothing is written until the
   // whole pack is here, so a failed fetch can't leave a half-seeded set.
   const pack = new Uint8Array(await gunzipIfNeeded(await fetchArtifact(
@@ -270,6 +276,11 @@ async function seedCaches(fs: CrawlFS, cache: Cache | null): Promise<void> {
 }
 
 async function start(): Promise<void> {
+  // Boot-phase progress: the mini-server turns these into message-log lines,
+  // covering the pre-first-output window (download, wasm instantiation, cache
+  // seeding) that would otherwise be a silent black screen. This first line
+  // is the only signal during a first boot's ~13 MB artifact download.
+  post({ type: 'progress', text: 'Loading the offline engine...' })
   const cache = await openArtifactCache()
   let factory: CrawlFactory
   let wasmBinary: Uint8Array
@@ -290,6 +301,14 @@ async function start(): Promise<void> {
     wasmBinary = new Uint8Array(wasmBuf)
     dataBuffer = dataBuf
     post({ type: 'log', text: `artifacts loaded: ${artifactCacheHits} from cache, ${artifactNetFetches} from network` })
+    // Only worth a user-facing line when bytes actually crossed the network
+    // (first boot / build update); the cached path lands here in ~100 ms.
+    if (artifactNetFetches > 0) {
+      post({
+        type: 'progress',
+        text: `Downloaded ${(artifactNetBytes / 1048576).toFixed(1)} MB of engine data (cached for next time).`,
+      })
+    }
     const blob = new Blob([glueBuf], { type: 'text/javascript' })
     const url = URL.createObjectURL(blob)
     try {

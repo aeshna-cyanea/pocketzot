@@ -6,6 +6,7 @@ import type { ClientMsg, ServerMsg } from '../ws/types'
 class StubPort implements EnginePort {
   onOutput: (chunk: string) => void = () => {}
   onExit: (code: number) => void = () => {}
+  onProgress?: (text: string) => void
   nudge?: () => void
   started = false
   controls: string[] = []
@@ -230,6 +231,54 @@ describe('mini-server boot watchdog', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('mini-server boot progress', () => {
+  // Boot-phase progress from the port (artifact download, wasm instantiation,
+  // cache seeding) is synthesized into message-log lines — the same surface
+  // the engine's own startup messages use.
+  it('synthesizes a msgs line from port progress', () => {
+    const { port, delivered, mini } = harness()
+    mini.start()
+    port.onProgress?.('Loading the offline engine...')
+    expect(delivered.at(-1)).toEqual({
+      msg: 'msgs',
+      messages: [{ text: 'Loading the offline engine...' }],
+    })
+  })
+
+  it('suppresses progress after the game has ended', () => {
+    const { port, delivered, mini } = harness()
+    mini.start()
+    port.onExit(0)
+    port.onProgress?.('Loading the offline engine...')
+    expect(delivered.filter(m => m.msg === 'msgs')).toEqual([])
+  })
+
+  it('synthetic progress lines are not game content: the watchdog still fires', () => {
+    vi.useFakeTimers()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const { port, startClean } = harness()
+      startClean()
+      port.onOutput('{"msg":"version","text":"Crawl"}\n')
+      port.onProgress?.('Loading the offline engine...')
+      vi.advanceTimersByTime(4000)
+      expect(port.controls).toEqual([JSON.stringify({ msg: 'spectator_joined' })])
+    } finally {
+      warn.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('synthetic progress lines are never scanned by the pre-game more-answer', () => {
+    const { port, startClean } = harness()
+    startClean()
+    // Even a line that *looks* like a more-prompt must not trigger a space —
+    // only real engine msgs with more:true do.
+    port.onProgress?.('--more--')
+    expect(port.keys).toEqual([])
   })
 })
 
