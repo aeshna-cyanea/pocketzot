@@ -3134,8 +3134,13 @@ html, body {
   :root { --sidebar-lift: max(0.35rem, var(--safe-bottom)); }
   #game-view {
     /* Keep the sidebar clear of the notch/Dynamic Island ear when it's on
-       the right (env resolves 0 when the phone is rotated the other way).
-       The map edge under the opposite ear is fine — it's background. */
+       the right. iOS reports the two landscape side insets SYMMETRICALLY
+       (probe-measured 59px/59px with the island on the left), so this also
+       costs a same-width bar when the ear is on the other side — CSS can't
+       tell the sides apart; reclaiming it would need JS orientation-angle
+       detection (angle 90 = ear left). Accepted for simplicity. The map
+       edge under the ear is fine — it's background (the d-pad float below
+       carries its own safe-left margin). */
     padding-right: var(--safe-right);
     grid-template-columns: minmax(0, 1fr) 16rem;
     /* The 1fr spacer (3rd row) absorbs the sidebar's vertical slack, pinning
@@ -3254,8 +3259,11 @@ html, body {
     z-index: 3;
     /* Bottom margin is the --sidebar-lift variant with the floor lowered
        to match the 0.3rem side margins, so ↓/↘ taps don't ride the home
-       swipe. */
-    margin: 0.3rem 0.3rem max(0.3rem, var(--safe-bottom));
+       swipe. Left margin clears the notch/island ear when it's on the left
+       (insets are symmetric, so this also shifts the d-pad when the ear is
+       on the right — see the #game-view padding-right note); the map stays
+       full-bleed underneath either way. */
+    margin: 0.3rem 0.3rem max(0.3rem, var(--safe-bottom)) max(0.3rem, var(--safe-left));
   }
   .tc-dpad-btn {
     background: color-mix(in srgb, var(--surface2) 20%, transparent);

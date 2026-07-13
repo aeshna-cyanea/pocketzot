@@ -86,8 +86,16 @@ export function maybeMountSafeAreaProbe(): void {
     const r = getComputedStyle(resolved)
     const appH = document.getElementById('app')?.getBoundingClientRect().height ?? 0
     const dm = displayModes.find(([, mq]) => mq.matches)?.[0]
+    // Which physical side the notch/island is on can't be read from env() —
+    // iOS reports landscape left/right insets symmetrically. These two values
+    // are the raw material for inferring it; reading them side by side in
+    // both landscape rotations pins the type↔side mapping empirically.
+    const so = screen.orientation as ScreenOrientation | undefined
+    const legacy = (window as { orientation?: number }).orientation
     chip.textContent =
       `mode: ${standalone ? 'installed' : 'tab'} (display-mode: ${dm ?? '?'})\n` +
+      `orient: ${so?.type ?? 'n/a'} (angle ${so?.angle ?? '?'}` +
+      `, window.orientation ${legacy ?? 'n/a'})\n` +
       `env top:    ${p.paddingTop}\n` +
       `env right:  ${p.paddingRight}\n` +
       `env bottom: ${p.paddingBottom}\n` +
@@ -106,5 +114,8 @@ export function maybeMountSafeAreaProbe(): void {
   const { signal } = listeners
   window.addEventListener('resize', update, { signal })
   window.addEventListener('orientationchange', update, { signal })
+  // A 180° flip (landscape-primary ↔ -secondary) keeps the viewport size, so
+  // resize never fires for it; this is the event that does.
+  screen.orientation?.addEventListener('change', update, { signal })
   window.visualViewport?.addEventListener('resize', update, { signal })
 }
