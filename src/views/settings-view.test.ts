@@ -26,11 +26,18 @@ afterEach(() => {
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)
 const $$ = (sel: string) => [...document.querySelectorAll<HTMLElement>(sel)]
 
+// Strict on ambiguity: sections share segment labels ("Hidden" is both a
+// monster-list and a sprites option), and a document-wide match would silently
+// resolve by render order. Scope with a root — segGroup for a radiogroup.
 function findButton(label: string, root: ParentNode = document): HTMLButtonElement {
-  const btn = [...root.querySelectorAll('button')].find(b => b.textContent === label)
-  if (!btn) throw new Error(`no button "${label}"`)
-  return btn as HTMLButtonElement
+  const hits = [...root.querySelectorAll('button')].filter(b => b.textContent === label)
+  if (!hits.length) throw new Error(`no button "${label}"`)
+  if (hits.length > 1) throw new Error(`ambiguous button "${label}" (${hits.length}) — pass a root`)
+  return hits[0] as HTMLButtonElement
 }
+
+// A segPref radiogroup, by its aria-label (the section heading).
+const segGroup = (label: string) => $(`[aria-label="${label}"]`)!
 
 // A saved custom set whose first two tabs are 3×3 — a second list row to
 // switch to, and a 3-col source for the editor's grid-widening tests.
@@ -356,7 +363,8 @@ describe('settings overlay', () => {
     window.addEventListener(MONSTER_LIST_MODE_CHANGED_EVENT, fired)
     try {
       openSettings()
-      const [hidden, full] = [findButton('Hidden'), findButton('Full')]
+      const seg = segGroup('Monster list')
+      const [hidden, full] = [findButton('Hidden', seg), findButton('Full', seg)]
       expect(full.classList.contains('active')).toBe(true)  // default pref
 
       hidden.click()
@@ -377,14 +385,15 @@ describe('settings overlay', () => {
     window.addEventListener(LOGIN_SPRITES_CHANGED_EVENT, fired)
     try {
       openSettings()
-      const [enable, disable] = [findButton('Enable'), findButton('Disable')]
-      expect(enable.classList.contains('active')).toBe(true)  // default pref
+      const seg = segGroup('Character sprites')  // the monster list also has a "Hidden"
+      const [hidden, shown] = [findButton('Hidden', seg), findButton('Shown', seg)]
+      expect(shown.classList.contains('active')).toBe(true)  // default pref
 
-      disable.click()
+      hidden.click()
       expect(getPref('loginSprites')).toBe(false)
       expect(fired).toHaveBeenCalledTimes(1)
-      expect(disable.classList.contains('active')).toBe(true)
-      expect(enable.classList.contains('active')).toBe(false)
+      expect(hidden.classList.contains('active')).toBe(true)
+      expect(shown.classList.contains('active')).toBe(false)
     } finally {
       window.removeEventListener(LOGIN_SPRITES_CHANGED_EVENT, fired)
     }

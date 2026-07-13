@@ -228,15 +228,15 @@ function renderMonsterListSection(body: HTMLElement): void {
   ]))
 }
 
-// Enable/Disable segments rather than a lone checkbox: matches the page's
-// segmented idiom.
+// Hidden/Shown segments rather than a lone checkbox: matches the page's
+// segmented idiom (state adjectives, like the monster list's).
 function renderSpritesSection(body: HTMLElement): void {
   body.appendChild(el('h2', 'settings-h', 'Character sprites'))
   body.appendChild(el('p', 'settings-hint',
     'Recently played characters shown on the login screen.'))
   body.appendChild(segPref('Character sprites', 'loginSprites', [
-    { value: true, label: 'Enable' },
-    { value: false, label: 'Disable' },
+    { value: false, label: 'Hidden' },
+    { value: true, label: 'Shown' },
   ]))
 }
 

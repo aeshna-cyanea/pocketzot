@@ -62,7 +62,11 @@ export function buildLoginView(
     <div class="login-footer">
       <a href="#" id="login-about">About</a>
       <a href="#" id="login-changelog">What's new</a>
-      <a href="#" id="login-settings">Settings</a>
+      <!-- U+2699 GEAR + U+FE0E (text-presentation selector): without FE0E iOS
+           Safari renders the gear as a colour emoji, ignoring the CSS colour.
+           Same glyph as the in-game HUD chip (stats-view.ts settingsChip). -->
+      <button id="login-settings" class="login-settings-chip" type="button"
+              aria-label="Settings" title="Settings">&#x2699;&#xFE0E;</button>
     </div>
   `
 
@@ -191,10 +195,8 @@ export function buildLoginView(
     e.preventDefault()
     openChangelogDoc()
   })
-  view.querySelector('#login-settings')!.addEventListener('click', (e) => {
-    e.preventDefault()
-    openSettings()
-  })
+  view.querySelector('#login-settings')!.addEventListener('click', () => openSettings())
+
   renderResumeButtons()
   renderOfflineCard()
   renderAvatars()
