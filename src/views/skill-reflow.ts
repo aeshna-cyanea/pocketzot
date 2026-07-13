@@ -207,8 +207,8 @@ export function reflowSkillCrt(lines: string[]): string[] {
   // anywhere (those cells lose both hotkey and sign — get_prefix renders two
   // spaces), so a grid edge made of such rows sits outside [first, last] and
   // would be misfiled as header or help text. Extend the range over adjacent
-  // two-celled lines; the column-header line and the blank separator above the
-  // help text both stop the walk.
+  // grid-shaped lines; the column-header line and the blank separator above
+  // the help text both stop the walk.
   const HEADER_RE = /^\s*Skill\s+Level/
   // The fixed-width grid always pads the left column so a run of spaces sits
   // immediately before the right cell. Prose footers ("…each skill is in
@@ -216,14 +216,26 @@ export function reflowSkillCrt(lines: string[]): string[] {
   // inter-word space) lands just before repRight. Requiring the inter-column
   // gap is what stops the walk from swallowing — and then splitting — a long
   // explanatory line whose two halves both happen to be non-empty.
-  const twoCells = (i: number): boolean =>
-    bestN > 0 && i >= 0 && i < lines.length
-    && !HEADER_RE.test(plains[i])
-    && plains[i][repRight - 1] === ' ' && plains[i][repRight - 2] === ' '
-    && plains[i].slice(0, repRight).trim() !== ''
-    && plains[i].slice(repRight).trim() !== ''
-  while (twoCells(first - 1)) first--
-  while (twoCells(last + 1)) last++
+  //
+  // A mastered cell can also sit alone on its line, past the other column's
+  // end (seen live: mastered Shapeshifting as the right column's last row,
+  // below the last lettered line). One-sided lines have no gap to test, so
+  // instead: a lone right cell is anything past repRight with a blank left
+  // half (prose always starts near column 0), and a lone left cell must start
+  // at the grid's indent — two or more leading spaces — where help prose gets
+  // exactly one.
+  const gridRow = (i: number): boolean => {
+    if (bestN === 0 || i < 0 || i >= lines.length) return false
+    const p = plains[i]
+    if (HEADER_RE.test(p)) return false
+    const left = p.slice(0, repRight).trim() !== ''
+    const right = p.slice(repRight).trim() !== ''
+    if (left && right) return p[repRight - 1] === ' ' && p[repRight - 2] === ' '
+    if (right) return true
+    return left && p.startsWith('  ')
+  }
+  while (gridRow(first - 1)) first--
+  while (gridRow(last + 1)) last++
 
   const leftCells: string[] = []
   const rightCells: string[] = []
@@ -263,16 +275,29 @@ export function reflowSkillCrt(lines: string[]): string[] {
   const pad = ' '.repeat(indent)
   const rightOut = rightCells.map(c => pad + c)
 
-  // Column header(s) above the grid: keep only the left copy. The head isn't
-  // necessarily just the header — a mastered skill (level 27) loses both its
-  // hotkey and training sign, so its row can't anchor, and when it's the first
-  // left-column row (Fighting, typically) it sits above `first` with an empty
-  // right column. It renders fine in place, but only true header lines may be
-  // repeated at the column break below, or the mastered row would duplicate.
+  // Lines above the grid. Three shapes turn up here: the column header, which
+  // renders once per column and is cut down to its left copy (recognised by
+  // HEADER_RE, or by the inter-column gap for other two-sided lines);
+  // full-width prose — the experience menu's "You have gained great
+  // experience…" title — which flows across the split column and must pass
+  // through whole (padding collapsed so it wraps, like footer prose); and
+  // lines with nothing right of the split (blank spacers, a mastered first
+  // row whose line can't anchor), kept verbatim so grid alignment survives.
+  // Only true header lines may be repeated at the column break below, or a
+  // mastered row would duplicate.
   const head: string[] = []
   for (let i = 0; i < first; i++) {
-    const [l] = splitHtmlAtCol(lines[i], repRight)
-    head.push(l.replace(/\s+$/, ''))
+    const p = plains[i]
+    const hasRight = p.slice(repRight).trim() !== ''
+    const gapped = p[repRight - 1] === ' ' && p[repRight - 2] === ' '
+    if (hasRight && (HEADER_RE.test(p) || gapped)) {
+      const [l] = splitHtmlAtCol(lines[i], repRight)
+      head.push(l.replace(/\s+$/, ''))
+    } else if (hasRight) {
+      head.push(lines[i].replace(/ {2,}/g, ' '))
+    } else {
+      head.push(lines[i].replace(/\s+$/, ''))
+    }
   }
   const headRepeat = head.filter(l => HEADER_RE.test(plainText(l)))
 
