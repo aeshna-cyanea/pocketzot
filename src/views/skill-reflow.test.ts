@@ -248,6 +248,66 @@ describe('reflowSkillCrt', () => {
     expect(out).toContain(' Skills enhanced by cross-training are in green.')
   })
 
+  it('aligns a lone mastered right cell below the last lettered row (Shapeshifting case)', () => {
+    // Seen live: mastered Shapeshifting is the right column's last row, and the
+    // left column ended earlier — so the line has a blank left half and sits
+    // below the last anchorable line. It must join the right-column group
+    // aligned, not fall through to the help footer and get its padding
+    // collapsed flush-left.
+    const lines = [
+      `  ${'a - Fighting    +0'.padEnd(19)}${L('c - Spellcasting +11')}`,
+      `  ${'b - Dodging     +1'.padEnd(19)}${L('d - Conjurations +11')}`,
+      `  ${''.padEnd(19)}${L('    Shapeshifting 27  -2')}`,
+      '',
+      ' The species aptitude is in white.',
+    ]
+    const out = reflowSkillCrt(lines).map(text)
+    const idx = out.findIndex(t => /Shapeshifting/.test(t))
+    expect(out[idx]).toBe('      Shapeshifting 27  -2') // aligned under the other names
+    expect(idx).toBeGreaterThan(out.findIndex(t => /Conjurations/.test(t)))
+    expect(out).toContain(' The species aptitude is in white.')
+  })
+
+  it('keeps a lone mastered left cell below the last lettered row in the left group', () => {
+    const lines = [
+      `  ${'a - Fighting    +0'.padEnd(19)}${L('c - Spellcasting +11')}`,
+      `  ${'b - Dodging     +1'.padEnd(19)}${L('d - Conjurations +11')}`,
+      '    Shields       27',
+      '',
+      ' The species aptitude is in white.',
+    ]
+    const out = reflowSkillCrt(lines).map(text)
+    const idx = out.findIndex(t => /Shields/.test(t))
+    expect(out[idx]).toBe('    Shields       27') // alignment untouched
+    expect(idx).toBeLessThan(out.findIndex(t => /Spellcasting/.test(t)))
+  })
+
+  it('does not swallow short help prose adjacent to the grid as a left cell', () => {
+    // A short prose line has content only left of the split, like a lone
+    // mastered left cell — its single leading space is what tells them apart.
+    const lines = [
+      `  ${'a - Fighting    +0'.padEnd(19)}${L('c - Spellcasting +11')}`,
+      ' Targets, if any.',
+    ]
+    const out = reflowSkillCrt(lines).map(text)
+    expect(out).toContain(' Targets, if any.')
+    expect(out.indexOf(' Targets, if any.')).toBeGreaterThan(out.findIndex(t => /Spellcasting/.test(t)))
+  })
+
+  it('passes the experience-menu title through whole (not clipped at the column split)', () => {
+    // Potion of experience: a full-width prose title above the header. Head
+    // lines used to be unconditionally split at the grid column, truncating it
+    // to "…great experience. Select".
+    const lines = [
+      ' You have gained great experience. Select the skills to train.',
+      `  ${'Skill      Level'.padEnd(19)}Skill      Level`,
+      `  ${'a - Fighting    +0'.padEnd(19)}${L('c - Spellcasting +11')}`,
+    ]
+    const out = reflowSkillCrt(lines).map(text)
+    expect(out[0]).toBe(' You have gained great experience. Select the skills to train.')
+    expect(out[1]).toBe('  Skill      Level') // header still deduped to the left copy
+  })
+
   it('splits a mastered right cell (no hotkey, no sign) at the grid column', () => {
     const lines = [
       `  ${'a - Fighting    +0'.padEnd(19)}${L('c - Spellcasting +11')}`,
