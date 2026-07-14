@@ -2,6 +2,7 @@ import type { GameConnection } from './ws/connection'
 import type { GameExit } from './ws/types'
 import { buildLoginView } from './views/login'
 import { buildLobbyView } from './views/lobby'
+import { buildOfflineLobbyView } from './views/offline-lobby'
 import { buildGameView, type SpectateTarget } from './views/game-view'
 import type { TileLoader } from './game/tiles/tile-loader'
 import { attemptResume, clearGameStart, loadPersistedResume, markProactiveClose } from './reconnect'
@@ -39,13 +40,17 @@ export function initApp(appEl: HTMLElement): void {
       connLost()
     }
   })
-  // Offline play: ?offline=1 mounts the game view against the local WASM
-  // engine (or ?engine=fake, a golden-fixture replay) with no server, login,
-  // or lobby. Checked before the resume path so a stale online-resume record
-  // can't hijack the boot. The URL flag is a dev/debug convenience — the real
-  // entry point is the login view's offline card (onOffline below).
-  if (new URLSearchParams(location.search).has('offline')) {
-    void showOfflineGame()
+  // Offline play: ?offline=1 opens the offline lobby (save slots, backup
+  // management) with no server or login. Checked before the resume path so a
+  // stale online-resume record can't hijack the boot. The URL flag is a
+  // dev/debug convenience — the real entry point is the login view's offline
+  // card (onOffline below). ?engine=fake (a golden-fixture replay) skips the
+  // lobby and mounts the game view directly: fixtures have no save slot, and
+  // the replay flows drive rendering, not slot management.
+  const params = new URLSearchParams(location.search)
+  if (params.has('offline')) {
+    if (params.get('engine') === 'fake') void showOfflineGame('local')
+    else showOfflineLobby()
     return
   }
   // A context in sessionStorage means iOS evicted the page mid-game (swap
@@ -61,30 +66,44 @@ export function initApp(appEl: HTMLElement): void {
   }
 }
 
-// Offline (WASM engine) game. Bypasses login/lobby entirely: the engine has
-// no account and no game list. Deliberate parameter choices: gameId '' keeps
-// avatar/crypt writes disabled (both gate on a truthy id); guest=false keeps
-// canResumeAfterClose() false, so the visibilitychange handler never
-// proactively closes the "socket" (LocalConnection never reconnects — see
-// its header). Exit lands on the login view, the app's home, where the
-// offline card shows the ending state (from the offline-state record) — a
-// normal exit is not an error, so nothing goes to the login error slot.
-async function showOfflineGame(): Promise<void> {
+// The offline "server" lobby: the on-device analog of showLobby — save-slot
+// list, new-character flow, backup export/import (views/offline-lobby.ts).
+// No connection exists here; back returns to the login home.
+function showOfflineLobby(exit?: GameExit): void {
+  conn?.close()
+  conn = null
+  state = 'lobby'
+  clearGameStart()
+  setView(buildOfflineLobbyView(
+    (name) => { void showOfflineGame(name) },
+    () => showLogin(),
+    exit,
+  ))
+}
+
+// Offline (WASM engine) game for one save slot — `name` is the character
+// name, which the engine also uses as the save file identity (-name argv).
+// Deliberate parameter choices: gameId '' keeps avatar/crypt writes disabled
+// (both gate on a truthy id); guest=false keeps canResumeAfterClose() false,
+// so the visibilitychange handler never proactively closes the "socket"
+// (LocalConnection never reconnects — see its header). Exit returns to the
+// offline lobby, which shows the same end-of-game dialog as the online one.
+async function showOfflineGame(name: string): Promise<void> {
   const { bootOffline } = await import('./offline/boot')
-  const boot = bootOffline(new URLSearchParams(location.search))
+  const boot = bootOffline(new URLSearchParams(location.search), name)
   state = 'game'
   conn = boot.conn
-  currentUsername = 'local'
+  currentUsername = name
   currentIsGuest = false
   setView(buildGameView(
     boot.conn,
-    () => {
+    (exit) => {
       boot.dispose()
       conn = null
       // Drop the ?offline flag with the session: a later reload (e.g. the
       // iOS eviction path mid-online-game) must not boot back into offline.
       history.replaceState(null, '', location.pathname)
-      showLogin()
+      showOfflineLobby(exit)
     },
     undefined,
     undefined,
@@ -105,7 +124,7 @@ function showLogin(notice?: string): void {
     currentUsername = result.username
     currentIsGuest = result.guest ?? false
     showLobby(currentUsername, currentIsGuest)
-  }, notice, () => { void showOfflineGame() }))
+  }, notice, () => showOfflineLobby()))
 }
 
 function showLobby(username: string, guest: boolean, exit?: GameExit): void {

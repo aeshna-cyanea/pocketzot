@@ -39,6 +39,7 @@ interface CrawlFS {
 }
 
 interface CrawlOverrides {
+  arguments?: string[]
   locateFile?: (path: string) => string
   pocketzotOnOutput?: (chunk: string) => void
   onExit?: (code: number) => void
@@ -275,7 +276,7 @@ async function seedCaches(fs: CrawlFS, cache: Cache | null): Promise<void> {
   post({ type: 'log', text: `seeded ${manifest.files.length} prewarmed cache files (stamp ${stamp})` })
 }
 
-async function start(): Promise<void> {
+async function start(name: string): Promise<void> {
   // Boot-phase progress: the mini-server turns these into message-log lines,
   // covering the pre-first-output window (download, wasm instantiation, cache
   // seeding) that would otherwise be a silent black screen. This first line
@@ -354,6 +355,21 @@ async function start(): Promise<void> {
 
   try {
     module_ = await factory({
+      // pre.js supplies a similar argv when the host doesn't; the override
+      // exists to set the character name, which is also the save slot —
+      // crawl resumes saves/<munged name>.cs when present, else starts a
+      // new game under that name.
+      // -await-connection (upstream passes it too, process_handler.py) blocks
+      // startup until the mini-server's attach lands, so options whose
+      // defaults sample is_controlled_from_web() (prompt_menu,
+      // reduce_animations, …) read true on EVERY read_init_file — without it
+      // a resumed save reads options before ever polling the control queue
+      // and yesno() falls back to log-line prompts. No boot deadlock: the
+      // factory promise resolves before callMain, so once main suspends in
+      // _await_connection the pending queue below drains and wakes it. Do NOT
+      // add the flag to pre.js's default argv — the engine repo's
+      // bake-caches.mjs run has no host to send attach and would hang.
+      arguments: ['-headless', '-webtiles-socket', 'pocketzot', '-dir', '/crawl', '-name', name, '-await-connection'],
       locateFile: (path) => `/offline/${path}`,
       pocketzotOnOutput: (chunk) => {
         if (outBuf.length === 0) queueMicrotask(flushOut)
@@ -386,6 +402,6 @@ self.onmessage = (e: MessageEvent<WorkerInMsg>) => {
   const m = e.data
   if (m.type === 'start') {
     perfOn = m.perf === true
-    void start()
+    void start(m.name)
   } else feed(m)
 }

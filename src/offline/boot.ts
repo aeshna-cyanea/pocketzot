@@ -1,6 +1,6 @@
 // Assembles the offline stack: LocalConnection ↔ mini-server ↔ EnginePort.
-// DEV-only entry (dynamic-imported from app.ts behind ?offline=1, so none of
-// this reaches production bundles while the spike is engine-less).
+// Dynamic-imported from app.ts (offline-lobby slot tap or ?offline=1) so the
+// engine machinery stays out of the main bundle.
 //
 // Engine selection: ?engine=fake replays a golden fixture (see
 // fake-engine.ts; ?fixture=<name> picks one); anything else loads the real
@@ -11,8 +11,11 @@ import { FakeEnginePort } from './fake-engine'
 import { WorkerEnginePort } from './engine-port'
 import { LocalConnection } from './local-connection'
 import { createMiniServer } from './mini-server'
-import { trackOfflineMsg } from './offline-state'
-import { packSave, readOfflineFiles, unpackSave, writeOfflineFiles } from './save-transfer'
+import { offlineMilestoneTracker, offlineTracker } from './offline-state'
+import {
+  buildExportPackFile, downloadPackFile, fetchEngineBuild,
+  readOfflineFiles, unpackSave, writeOfflineFiles,
+} from './save-transfer'
 
 export interface OfflineBoot {
   conn: LocalConnection
@@ -29,7 +32,7 @@ export interface OfflineBoot {
 // checkpoint — exactly what a crash-resume would boot from).
 let engineRunning = false
 
-export function bootOffline(params: URLSearchParams): OfflineBoot {
+export function bootOffline(params: URLSearchParams, name: string): OfflineBoot {
   // Latency meter (__pzPerf in the console): always on in DEV — the phone
   // enters offline via the login footer link, which can't carry a ?perf=1
   // param on an installed PWA with no address bar. The param stays
@@ -38,23 +41,25 @@ export function bootOffline(params: URLSearchParams): OfflineBoot {
   const perf = params.has('perf') || import.meta.env.DEV
   const port = params.get('engine') === 'fake'
     ? new FakeEnginePort(params.get('fixture') ?? undefined)
-    : new WorkerEnginePort(perf)
+    : new WorkerEnginePort(perf, name)
 
-  const conn = new LocalConnection()
-  // Fold real-engine messages into the login card's last-character record.
-  // Fake-fixture replays are excluded — they'd write a phantom "Resume …"
-  // label for a character that exists only in a golden test capture.
   const real = port instanceof WorkerEnginePort
+  const conn = new LocalConnection()
+  // Fold real-engine messages into this slot's character record (name is the
+  // slot identity — game_ended carries none of its own). Fake-fixture replays
+  // are excluded — they'd write a phantom "Resume …" label for a character
+  // that exists only in a golden test capture.
+  const track = real ? offlineTracker(name) : undefined
   const mini = createMiniServer(port, (msg) => {
-    if (real) trackOfflineMsg(msg)
+    track?.(msg)
     conn.deliver(msg)
-  })
+  }, real ? offlineMilestoneTracker(name) : undefined)
   conn.onSend = (msg) => mini.handleClientMsg(msg)
   conn.onShutdown = () => mini.dispose()
 
   // Console diagnostics for the real engine: __pzEngine.debug() logs the
   // worker-side queue/wake snapshot.
-  if (port instanceof WorkerEnginePort) {
+  if (real) {
     (window as unknown as Record<string, unknown>)['__pzEngine'] = port
   }
 
@@ -76,10 +81,11 @@ export function bootOffline(params: URLSearchParams): OfflineBoot {
 }
 
 // --- Save export/import console hooks (__pzSave) ------------------------------
-// DEV surface for save backup/portability; a real UI entry can come with
-// productization. Export downloads a .pzsave pack of the IDBFS mount (minus
-// regenerable caches); import writes one back — from a picked file, or a
-// File/Blob/ArrayBuffer passed directly.
+// Console twins of the offline lobby's Export/Import buttons (the real UI,
+// views/offline-lobby.ts) — kept for mid-game export (the lobby doesn't exist
+// then) and scripted use. Export downloads a .pzsave pack of the IDBFS mount
+// (minus regenerable caches); import writes one back — from a picked file, or
+// a File/Blob/ArrayBuffer passed directly.
 
 function installSaveHooks(): void {
   const w = window as unknown as Record<string, unknown>
@@ -88,19 +94,9 @@ function installSaveHooks(): void {
     async export(): Promise<{ files: number; bytes: number }> {
       const files = await readOfflineFiles()
       if (files.length === 0) throw new Error('no offline data to export — nothing under /crawl yet')
-      let build: string | undefined
-      try {
-        const r = await fetch('/offline/version.json', { cache: 'no-cache' })
-        if (r.ok) build = String((await r.json() as { build?: unknown }).build ?? '') || undefined
-      } catch { /* offline — pack just goes unstamped */ }
-      const pack = packSave(files, { exportedAt: new Date().toISOString(), build })
-      const url = URL.createObjectURL(new Blob([pack.buffer as ArrayBuffer], { type: 'application/octet-stream' }))
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `pocketzot-offline-${new Date().toISOString().slice(0, 10)}.pzsave`
-      a.click()
-      setTimeout(() => URL.revokeObjectURL(url), 60_000)
-      return { files: files.length, bytes: pack.byteLength }
+      const file = buildExportPackFile(files, await fetchEngineBuild())
+      downloadPackFile(file)
+      return { files: files.length, bytes: file.size }
     },
 
     async import(src?: File | Blob | ArrayBuffer | Uint8Array): Promise<{ files: number; exportedAt: string; build?: string }> {

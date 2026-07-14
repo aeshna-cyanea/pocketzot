@@ -1,6 +1,7 @@
 import type { GameConnection } from '../ws/connection'
 import type { GameExit, LobbyEntry, ServerMsg } from '../ws/types'
 import { clearSession, loadSession } from '../auth/session'
+import { escHtml } from '../game/dcss-colors'
 import { getTileLoader, type TileLoader } from '../game/tiles/tile-loader'
 import type { SpectateTarget } from './game-view'
 import { tagFor } from '../servers'
@@ -484,7 +485,8 @@ export function buildLobbyView(
 // Matches the reference's normal_exit set (client.js:exit_reason_message).
 const NORMAL_EXIT = new Set(['quit', 'won', 'bailed out', 'dead', 'saved', 'cancel'])
 
-// Render the post-game exit dialog over the lobby. Mirrors the reference, which
+// Render the post-game exit dialog over the lobby (exported for the offline
+// lobby, which shows the same dialog for engine endings). Mirrors the reference, which
 // has no title — just body content: an optional reason sentence on top, then
 // the summary blurb. The reason sentence appears only for abnormal (crash/
 // error/disconnect) or spectated exits ("Unfortunately your game crashed." /
@@ -493,7 +495,7 @@ const NORMAL_EXIT = new Set(['quit', 'won', 'bailed out', 'dead', 'saved', 'canc
 // even when it repeats the game-over screen just seen, so the recap lives in
 // one place. Suppressed only when there's nothing to say (a first-person normal
 // exit with no summary, e.g. cancel), matching the reference's show condition.
-function maybeShowExitDialog(view: HTMLElement, exit: GameExit): void {
+export function maybeShowExitDialog(view: HTMLElement, exit: GameExit): void {
   const abnormal = !NORMAL_EXIT.has(exit.reason)
   const sentence = abnormal || !!exit.spectated
   if (!sentence && !exit.message) return
@@ -582,10 +584,6 @@ function dumpLabel(reason: string): string {
   if (reason === 'saved') return 'Character dump'
   if (reason === 'crash') return 'Crash log'
   return 'Morgue file'
-}
-
-function escHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
 function versionLabel(gameId: string): string {

@@ -1,7 +1,7 @@
 import type { PlayerMsg } from '../../ws/types'
 import type { InventoryStore } from '../inventory-store'
 import { escHtml, dcssToHtml } from '../dcss-colors'
-import { abbrevPlace } from '../place-abbrev'
+import { compactPlace, nameTitle } from '../char-label'
 
 const BAR_RES = 10000  // basis points; matches reference player.js precision
 
@@ -121,9 +121,7 @@ export class StatsView {
     const god = s.god ?? ''
     const piety = s.piety_rank ?? 0
     const godStr = god && god !== 'No God' ? ` of ${god}` : ''
-    // Titles that begin with a comma (", Duchess of …") join without a
-    // space, per the reference titleline.
-    const nameTitle = name && title ? (title.startsWith(',') ? name + title : `${name} ${title}`) : name || title
+    const titled = nameTitle(name, title)
     // Wizard/explore games are non-scoring; flag them like the reference's
     // #stats_wizmode. Explore mode is reachable from the WebTiles lobby ('+').
     const modeFlag = s.wizard ? ' *WIZARD*' : s.explore ? ' *EXPLORE*' : ''
@@ -131,12 +129,12 @@ export class StatsView {
     const idEl = this.el.querySelector<HTMLElement>('#hud-id')
     if (idEl) {
       // compact: one combined line
-      const idLine = nameTitle && speciesGod ? `${nameTitle} — ${speciesGod}` : nameTitle || speciesGod
+      const idLine = titled && speciesGod ? `${titled} — ${speciesGod}` : titled || speciesGod
       idEl.textContent = idLine + modeFlag
     } else {
       // square: separate title and species lines, as in the reference
       // (#stats_titleline / #stats_species_god in game.html)
-      this.setText('hud-title', nameTitle + modeFlag)
+      this.setText('hud-title', titled + modeFlag)
       this.setText('hud-species', speciesGod)
     }
 
@@ -220,8 +218,7 @@ export class StatsView {
       // Compact abbreviates the branch (D:5, Elf:3 — the lobby/morgue short
       // forms) to protect the line's tightest real estate; square keeps the
       // full name, as the reference does.
-      const compactPlace = depth ? `${abbrevPlace(place)}:${depth}` : abbrevPlace(place)
-      if (placeStr) html += ` <span class="hud-place-chip"><span class="hg-caption">@</span><span>${escHtml(compactPlace)}</span></span>`
+      if (placeStr) html += ` <span class="hud-place-chip"><span class="hg-caption">@</span><span>${escHtml(compactPlace(place, depth))}</span></span>`
       if (god === 'Gozag' && s.gold != null) {
         const valClass = goldAura ? ' class="stat-boosted"' : ''
         html += ` <span class="hg-caption">$</span><span${valClass}>${escHtml(String(s.gold))}</span>`

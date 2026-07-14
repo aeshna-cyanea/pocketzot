@@ -18,21 +18,22 @@ class StubPort implements EnginePort {
   terminate(): void { this.terminated = true }
 }
 
-function harness() {
+function harness(onMilestone?: (fields: Record<string, unknown>) => void) {
   const port = new StubPort()
   const delivered: ServerMsg[] = []
-  const mini = createMiniServer(port, (m) => delivered.push(m))
-  // start() then discard the boot handshake (attach + spectator_joined) so
-  // routing assertions see only what the test itself sends.
+  const mini = createMiniServer(port, (m) => delivered.push(m), onMilestone)
+  // start() then discard the boot handshake (attach) so routing assertions
+  // see only what the test itself sends.
   const startClean = () => { mini.start(); port.controls.length = 0 }
   return { port, delivered, mini, startClean }
 }
 
-// The attach handshake the mini-server must perform on boot — without it the
-// engine's has_receivers() gate stays false and it never emits map/player.
+// The attach handshake the mini-server must perform on boot — the engine runs
+// with -await-connection and blocks in tiles.initialise() until it arrives;
+// it also flips has_receivers()/is_controlled_from_web(), without which the
+// engine never emits map/player and option defaults read wrong.
 const BOOT_CONTROLS = [
   JSON.stringify({ msg: 'attach', primary: true }),
-  JSON.stringify({ msg: 'spectator_joined' }),
 ]
 
 describe('mini-server boot', () => {
@@ -49,6 +50,31 @@ describe('mini-server boot', () => {
     const { port, mini } = harness()
     mini.start()
     expect(port.controls).toEqual(BOOT_CONTROLS)
+  })
+})
+
+describe('mini-server milestone routing', () => {
+  it('hands starred milestones to onMilestone and never to the client', () => {
+    const milestones: Record<string, unknown>[] = []
+    const { port, delivered, mini } = harness((f) => milestones.push(f))
+    mini.start()
+    delivered.length = 0
+    port.onOutput('*{"msg":"milestone","char":"DjCj","milestone":"killed Sigmund.","xl":"5"}\n')
+    expect(milestones).toEqual([
+      { msg: 'milestone', char: 'DjCj', milestone: 'killed Sigmund.', xl: '5' },
+    ])
+    expect(delivered).toEqual([])
+  })
+
+  it('absorbs milestones silently when no hook is given', () => {
+    const { port, delivered, mini } = harness()
+    mini.start()
+    delivered.length = 0
+    const warn = vi.spyOn(console, 'warn')
+    port.onOutput('*{"msg":"milestone","milestone":"entered the Lair of Beasts."}\n')
+    expect(delivered).toEqual([])
+    expect(warn).not.toHaveBeenCalled()
+    warn.mockRestore()
   })
 })
 
@@ -308,6 +334,31 @@ describe('mini-server startup more-prompt auto-answer', () => {
     startClean()
     port.onOutput('{"msg":"msgs","more":false}\n')
     expect(port.keys).toEqual([])
+  })
+})
+
+describe('mini-server exit-declared latch', () => {
+  it('drops overlay teardowns after a real exit_reason (holds the end screen)', () => {
+    const { port, delivered, mini } = harness()
+    mini.start()
+    port.onOutput('*{"msg":"exit_reason","type":"quit","message":"Goodbye."}\n')
+    port.onOutput('{"msg":"ui-pop"}\n{"msg":"close_menu"}\n{"msg":"close_all_menus"}\n{"msg":"msgs","messages":[]}\n')
+    expect(delivered.map(m => m.msg)).toEqual(['game_client', 'msgs'])
+  })
+
+  it('does NOT latch on the boot preamble\'s exit_reason "unknown" reset', () => {
+    // TilesFramework::initialise sends exit_reason "unknown" right after the
+    // version message, as a reset of the server's stored reason — treating it
+    // as a declared exit would drop every overlay teardown for the whole
+    // session (newgame screens that never dismiss, menus that never close).
+    const { port, delivered, mini } = harness()
+    mini.start()
+    port.onOutput('{"msg":"version","text":"Crawl"}\n*{"msg":"exit_reason","type":"unknown"}\n')
+    port.onOutput('{"msg":"ui-push","type":"newgame-choice"}\n{"msg":"ui-pop"}\n')
+    expect(delivered.map(m => m.msg)).toEqual(['game_client', 'version', 'ui-push', 'ui-pop'])
+    // And a later exit without a specific reason still defaults by exit code.
+    port.onExit(0)
+    expect(delivered.at(-1)).toEqual({ msg: 'game_ended', reason: 'saved', message: undefined })
   })
 })
 

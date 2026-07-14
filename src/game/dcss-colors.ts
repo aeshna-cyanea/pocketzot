@@ -40,8 +40,11 @@ export function uiColor(index: number): string {
   return DCSS_UI_COLOR[index & 0xf] ?? DCSS_COLOR_MAP.lightgrey
 }
 
+// Quote-escaping makes the output safe in attribute values too (harmless in
+// text nodes, where &quot; renders as ").
 export function escHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
 }
 
 // Strip DCSS colour markup (`<red>…`, `</lightgrey>`), leaving plain text.

@@ -33,7 +33,8 @@ export interface EnginePort {
 
 // Messages between WorkerEnginePort and engine.worker.ts.
 export type WorkerInMsg =
-  | { type: 'start'; perf?: boolean }
+  // name: the character/save-slot name for the engine's -name argv.
+  | { type: 'start'; perf?: boolean; name: string }
   | { type: 'control'; json: string }
   | { type: 'keys'; text: string }
   // Boot-watchdog rescue: the worker inspects the engine's suspension state
@@ -167,7 +168,11 @@ export class WorkerEnginePort implements EnginePort {
   // console.
   readonly chunks: { ts: number; len: number; head: string }[] = []
 
-  constructor(private readonly perf = false) {}
+  constructor(
+    private readonly perf: boolean,
+    // Character name = save slot: becomes the engine's -name argv.
+    private readonly name: string,
+  ) {}
 
   start(): void {
     if (this.perf) this.meter = new PerfMeter()
@@ -188,7 +193,7 @@ export class WorkerEnginePort implements EnginePort {
       else if (m.type === 'progress') this.onProgress(m.text)
       else if (m.type === 'perf') this.meter?.engine(m.engineMs)
     }
-    this.post({ type: 'start', perf: this.perf })
+    this.post({ type: 'start', perf: this.perf, name: this.name })
   }
 
   sendControl(json: string): void {

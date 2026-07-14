@@ -304,15 +304,36 @@ html, body {
   padding-top: 1rem;
 }
 
-.login-section { margin-bottom: 1.5rem; }
-.login-spectate-section { margin-bottom: 0; }
+/* Two top-level mode groups (Play online / On this device — login.ts). The
+   group label's trailing hairline makes the mode split structural without
+   boxing the groups; sub-labels inside a group are normal-case and dimmer,
+   one clear level below. */
+.login-group { margin-bottom: 1.6rem; }
+.login-group:last-of-type { margin-bottom: 0; }
 
-.login-section-label {
+.login-group-label {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
   font-size: 0.72rem;
   color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  margin-bottom: 0.6rem;
+  margin-bottom: 0.7rem;
+}
+.login-group-label::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--border);
+}
+
+.login-subsection { margin-bottom: 1.1rem; }
+.login-subsection:last-child { margin-bottom: 0; }
+
+.login-sub-label {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  margin-bottom: 0.5rem;
 }
 
 .login-account-list {
@@ -369,12 +390,25 @@ html, body {
 .login-account-card:disabled::after { content: "…"; }
 
 /* Offline entry card (login.ts renderOfflineCard): account-card chrome with a
-   two-line middle — fixed "Play offline" title row + save-state subline. */
+   two-line middle — fixed "Play offline" title + a subrow carrying the most
+   recent character (+N more), with XL/place meta pinned right so truncation
+   can only ever eat the name, never the position. */
 .login-offline-lines {
   grid-area: user;
   display: flex;
   flex-direction: column;
   gap: 0.1rem;
+  min-width: 0;
+}
+.login-offline-lines .login-account-username {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.login-offline-subrow {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6em;
   min-width: 0;
 }
 .login-offline-sub {
@@ -384,6 +418,21 @@ html, body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.login-offline-count {
+  flex: 0 0 auto;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.login-offline-count:empty { display: none; }
+.login-offline-meta {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.login-offline-meta:empty { display: none; }
 
 .login-add-section > summary {
   cursor: pointer;
@@ -828,6 +877,124 @@ html, body {
 .lobby-game-version {
   font-style: italic;
   opacity: 0.7;
+}
+
+/* ── Offline lobby (views/offline-lobby.ts) ──────────────────
+   Shares the online lobby's shell (header/list/rows); these are the
+   offline-only pieces: name form, slot delete + inline confirm, backup row. */
+
+.offline-name-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.75rem;
+}
+
+/* Slot rows carry a delete button where online rows show the "→" cue. */
+.offline-slot-row { padding-right: 0.5rem; }
+.offline-slot-row::after { content: none; }
+
+/* Slot-row metadata line: identity left (truncates), position pinned right
+   (never truncates). Third line = latest milestone, rendered only when one
+   was captured. */
+.offline-slot-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6em;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+.offline-slot-meta-left {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.offline-slot-meta-right {
+  flex: 0 0 auto;
+  margin-left: auto;
+  white-space: nowrap;
+}
+.offline-slot-meta-right:empty { display: none; }
+.offline-slot-milestone {
+  font-size: 0.8rem;
+  font-style: italic;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.offline-slot-delete {
+  flex: 0 0 auto;
+  min-width: 36px;
+  min-height: 36px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.offline-slot-delete:hover { border-color: var(--border); color: var(--danger); }
+.offline-slot-delete:active { background: var(--surface2); }
+
+/* Confirm state stays a single line: the name label ellipsizes, the buttons
+   never wrap. The Delete button counts down taps ("Delete in 3" → 2 → 1) —
+   fixed-width text in the mono font, so it doesn't jiggle. */
+.offline-slot-row.is-confirming {
+  cursor: default;
+  gap: 0.5rem;
+}
+.offline-slot-confirm-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.85rem;
+  color: var(--warn);
+}
+.offline-slot-confirm-del,
+.offline-slot-confirm-cancel {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  padding: 0.4rem 0.6rem;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.offline-slot-confirm-del { color: var(--danger); border-color: rgba(239, 68, 68, 0.35); }
+.offline-slot-confirm-del:disabled { opacity: 0.5; cursor: default; }
+.offline-slot-confirm-del:active,
+.offline-slot-confirm-cancel:active { background: var(--surface2); }
+
+.offline-backup {
+  margin-top: 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+/* The ghost-button hit extension suits edge-of-screen buttons; these two sit
+   side by side mid-page, so give them a visible border instead. */
+.offline-backup .lobby-btn-ghost { border-color: var(--border); }
+.offline-backup-note {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--text-dim);
 }
 
 /* Post-game exit dialog (forwarded from the game view via GameExit). */
@@ -3372,7 +3539,8 @@ html, body {
 @media (orientation: landscape) and (max-height: 500px) {
   .login-card { padding: 1rem 1.25rem; max-width: 380px; }
   .login-title { font-size: 1.2rem; margin-bottom: 0.6rem; }
-  .login-section { margin-bottom: 0.85rem; }
+  .login-group { margin-bottom: 0.85rem; }
+  .login-subsection { margin-bottom: 0.7rem; }
   .login-label { margin-bottom: 0.5rem; font-size: 0.8rem; }
   .login-label input,
   .login-label select,

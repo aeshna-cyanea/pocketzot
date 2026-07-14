@@ -114,6 +114,44 @@ export function unpackSave(bytes: ArrayBuffer | Uint8Array): { meta: SavePackMet
   return { meta, files }
 }
 
+// --- Export-pack assembly ------------------------------------------------------
+// One canonical stamped pack file, shared by the offline lobby's Export
+// button and the __pzSave console hook (boot.ts) so the two surfaces can't
+// drift in meta shape or filename.
+
+// The engine-build stamp for export packs, from the deploy's version.json.
+// Bounded — export may run genuinely offline, where an unbounded fetch would
+// hang forever; packs then just go unstamped.
+export async function fetchEngineBuild(timeoutMs = 1500): Promise<string | undefined> {
+  try {
+    const r = await fetch('/offline/version.json', { cache: 'no-cache', signal: AbortSignal.timeout(timeoutMs) })
+    if (r.ok) return String((await r.json() as { build?: unknown }).build ?? '') || undefined
+  } catch { /* offline — packs just go unstamped */ }
+  return undefined
+}
+
+export function buildExportPackFile(files: SavedFile[], build: string | undefined): File {
+  const pack = packSave(files, { exportedAt: new Date().toISOString(), build })
+  return new File([pack.buffer as ArrayBuffer],
+    `pocketzot-offline-${new Date().toISOString().slice(0, 10)}.pzsave`,
+    { type: 'application/octet-stream' })
+}
+
+// Hand a pack to the browser's plain download path. target=_blank is
+// belt-and-braces for touch browsers that reach this instead of the share
+// sheet: if a preview opens anyway, it opens in its own context instead of
+// replacing the app.
+export function downloadPackFile(file: File): void {
+  const url = URL.createObjectURL(file)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = file.name
+  a.target = '_blank'
+  a.rel = 'noopener'
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 60_000)
+}
+
 // --- IndexedDB access --------------------------------------------------------
 
 function request<T>(r: IDBRequest<T>): Promise<T> {
@@ -163,28 +201,51 @@ async function openDb(): Promise<IDBDatabase> {
   return db
 }
 
-// Whether a resumable save exists in the engine's IDBFS (any
-// /crawl/saves/*.cs file), without creating the database as a side effect —
-// this runs on every login-screen mount, most of which never touch offline
-// play. Returns null when the browser can't be probed non-creatingly
-// (indexedDB.databases missing); callers fall back to the offline-state
-// record's guess.
-export async function hasOfflineSave(): Promise<boolean | null> {
+// The save slots present in the engine's IDBFS — the stem of each
+// /crawl/saves/<stem>.cs file (the engine names the save after the character
+// via strip_filename_unsafe_chars; offline-state.ts slotStem is the client
+// port). Probes without creating the database as a side effect — this runs on
+// every login-screen mount, most of which never touch offline play. Returns
+// null when the browser can't be probed non-creatingly (indexedDB.databases
+// missing); callers fall back to the offline-state records' guess.
+export async function listOfflineSaves(): Promise<string[] | null> {
   try {
     if (typeof indexedDB === 'undefined' || typeof indexedDB.databases !== 'function') return null
     const dbs = await indexedDB.databases()
-    if (!dbs.some((d) => d.name === MOUNT)) return false
+    if (!dbs.some((d) => d.name === MOUNT)) return []
     const db = await openRaw()
     try {
-      if (!db.objectStoreNames.contains(STORE)) return false
+      if (!db.objectStoreNames.contains(STORE)) return []
       const keys = await request(db.transaction(STORE, 'readonly').objectStore(STORE)
         .getAllKeys(IDBKeyRange.bound(`${MOUNT}/saves/`, `${MOUNT}/saves/\uffff`)))
-      return keys.some((k) => typeof k === 'string' && /^[^/]+\.cs$/.test(k.slice(`${MOUNT}/saves/`.length)))
+      const stems: string[] = []
+      for (const k of keys) {
+        if (typeof k !== 'string') continue
+        const m = /^([^/]+)\.cs$/.exec(k.slice(`${MOUNT}/saves/`.length))
+        if (m) stems.push(m[1])
+      }
+      return stems
     } finally {
       db.close()
     }
   } catch {
     return null
+  }
+}
+
+// Delete one save slot's package file. The engine keeps a whole character in
+// the single saves/<stem>.cs package; shared state (bones, morgues, scores)
+// deliberately stays. Only run while no engine is up — the caller (offline
+// lobby) exists exactly when none is.
+export async function deleteOfflineSave(stem: string): Promise<void> {
+  if (!stem || stem.includes('/')) throw new Error(`bad save stem: ${stem}`)
+  const db = await openDb()
+  try {
+    const txn = db.transaction(STORE, 'readwrite')
+    txn.objectStore(STORE).delete(`${MOUNT}/saves/${stem}.cs`)
+    await txnDone(txn)
+  } finally {
+    db.close()
   }
 }
 

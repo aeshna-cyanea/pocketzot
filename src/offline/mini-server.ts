@@ -45,6 +45,11 @@ const GAME_CONTENT_TYPES = new Set(['map', 'msgs', 'ui-push', 'menu', 'player'])
 export function createMiniServer(
   port: EnginePort,
   deliver: (msg: ServerMsg) => void,
+  // Starred milestone messages are server metadata (upstream folds them into
+  // lobby entries), not client protocol — handed to this hook instead of
+  // deliver. Fields are the engine's xlog snapshot: all strings, empty ones
+  // omitted (xlog_json, hiscores.cc).
+  onMilestone?: (fields: Record<string, unknown>) => void,
 ): MiniServer {
   let exitReason: string | null = null
   let exitMessage: string | undefined
@@ -94,15 +99,26 @@ export function createMiniServer(
 
   const handleStarred = (msg: Record<string, unknown>): void => {
     switch (msg['msg']) {
-      case 'exit_reason':
-        exitReason = String(msg['type'] ?? 'error')
+      case 'exit_reason': {
+        // The boot preamble RESETS the stored reason to "unknown"
+        // (TilesFramework::initialise, right after _send_version) — upstream's
+        // server just stashes it as the process's default. It is not an exit:
+        // latching exitDeclared on it would drop every subsequent overlay
+        // teardown for the whole session (newgame screens that never dismiss,
+        // menus that never close). Real exits always carry a specific type.
+        const type = String(msg['type'] ?? 'error')
+        if (type === 'unknown') break
+        exitReason = type
         exitMessage = typeof msg['message'] === 'string' ? msg['message'] : undefined
         exitDeclared = true
+        break
+      }
+      case 'milestone':
+        onMilestone?.(msg)
         break
       case 'client_path':   // engine version handshake — nothing to route offline
       case 'flush_messages': // we don't queue, so every message is already flushed
       case 'dump':           // morgue file lives in the engine FS; no URL to build
-      case 'milestone':
         break
       default:
         console.warn('offline: unknown starred engine message', msg['msg'])
@@ -168,11 +184,13 @@ export function createMiniServer(
       // The per-client handshake the Python server performs: without attach,
       // TilesFramework::has_receivers() stays false and redraw() — the path
       // that emits map/player — short-circuits (menus/options still flow,
-      // which makes the failure mode deceptively partial). spectator_joined
-      // then forces _send_everything(), covering resumed saves where initial
-      // drawing may predate the attach landing in the queue.
+      // which makes the failure mode deceptively partial). The engine runs
+      // with -await-connection (engine.worker.ts argv), so it blocks in
+      // tiles.initialise() until this lands: nothing can be drawn — and no
+      // option default can be sampled — before the attach is processed. That
+      // makes a boot-time spectator_joined resend unnecessary; the watchdog
+      // below still sends one as a rescue if boot goes quiet.
       port.sendControl(JSON.stringify({ msg: 'attach', primary: true }))
-      port.sendControl(JSON.stringify({ msg: 'spectator_joined' }))
     },
 
     handleClientMsg(msg: ClientMsg): void {

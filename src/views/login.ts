@@ -10,9 +10,9 @@ import { decorateLogo } from '../logo'
 import { listAvatars } from '../avatars'
 import { paintAvatars } from './avatar-tiles'
 import { openCrypt } from './crypt-view'
-import { getOfflineLast, offlineLastSaysResumable } from '../offline/offline-state'
-import { abbrevPlace } from '../game/place-abbrev'
-import { hasOfflineSave } from '../offline/save-transfer'
+import { getOfflineChars, loadOfflineSlots, type OfflineChar } from '../offline/offline-state'
+import { compactPlace, nameTitle } from '../game/char-label'
+import { escHtml } from '../game/dcss-colors'
 
 export interface LoginResult {
   conn: WsConnection
@@ -25,8 +25,8 @@ export function buildLoginView(
   // Shown in the error slot on mount — how the app explains an involuntary
   // trip back here (connection lost, auto-resume gave up).
   notice?: string,
-  // Boots offline play (the WASM engine) in place. When absent the offline
-  // card is not rendered.
+  // Opens the offline lobby (save slots for the on-device WASM engine). When
+  // absent the offline card is not rendered.
   onOffline?: () => void,
 ): HTMLElement {
   const view = document.createElement('div')
@@ -72,7 +72,7 @@ export function buildLoginView(
 
   const addAccountSection = hasSessions
     ? `
-      <details id="add-account" class="login-section login-add-section">
+      <details id="add-account" class="login-subsection login-add-section">
         <summary class="login-add-toggle">Add another account</summary>
         <form id="login-form" autocomplete="on" novalidate class="login-add-form">
           ${formInnerHtml}
@@ -80,49 +80,61 @@ export function buildLoginView(
       </details>
     `
     : `
-      <section class="login-section login-signin-section">
-        <div class="login-section-label">Sign in</div>
+      <div class="login-subsection login-signin-section">
+        <div class="login-sub-label">Sign in</div>
         <form id="login-form" autocomplete="on" novalidate>
           ${formInnerHtml}
         </form>
-      </section>
+      </div>
     `
 
+  // The card is organized as two top-level mode groups — "Play online"
+  // (accounts, sign-in, spectate: everything that talks to a WebTiles server)
+  // and "On this device" (the offline WASM engine) — so the two ways to play
+  // read at a glance. Everything online-only must live inside the first
+  // group; keep the offline group last and lean.
   view.innerHTML = `
     <div class="login-card">
       <h1 class="login-title">PocketZot</h1>
       <div id="login-avatars" class="login-avatars"></div>
 
-      ${hasSessions ? `
-      <section id="resume-section" class="login-section">
-        <div class="login-section-label">Your accounts</div>
-        <div id="resume-list" class="login-account-list"></div>
+      <section class="login-group">
+        <div class="login-group-label">Play online</div>
+
+        ${hasSessions ? `
+        <div id="resume-section" class="login-subsection">
+          <div id="resume-list" class="login-account-list"></div>
+        </div>
+        ` : ''}
+
+        <div id="login-error" class="login-error" style="display:none" role="alert"></div>
+
+        ${addAccountSection}
+
+        <div class="login-subsection login-spectate-section">
+          <div class="login-sub-label">Spectate as guest</div>
+          <select id="spectate-select" class="login-spectate-select" aria-label="Server"></select>
+          <div id="spectate-error" class="login-error" style="display:none" role="alert"></div>
+          <button id="spectate-btn" type="button" class="login-btn login-btn-spectate">Spectate →</button>
+        </div>
       </section>
-      ` : ''}
 
       ${onOffline ? `
-      <section id="offline-section" class="login-section">
-        <div class="login-section-label">On this device</div>
+      <section id="offline-section" class="login-group">
+        <div class="login-group-label">On this device</div>
         <button type="button" id="offline-card" class="login-account-card login-offline-card">
           <span class="login-account-tag">⌂</span>
           <span class="login-offline-lines">
             <span class="login-account-username">Play offline</span>
-            <span id="offline-sub" class="login-offline-sub"></span>
+            <span class="login-offline-subrow">
+              <span id="offline-sub" class="login-offline-sub"></span>
+              <span id="offline-count" class="login-offline-count"></span>
+              <span id="offline-meta" class="login-offline-meta"></span>
+            </span>
           </span>
         </button>
       </section>
       ` : ''}
-
-      <div id="login-error" class="login-error" style="display:none" role="alert"></div>
-
-      ${addAccountSection}
-
-      <section class="login-section login-spectate-section">
-        <div class="login-section-label">Spectate as guest</div>
-        <select id="spectate-select" class="login-spectate-select" aria-label="Server"></select>
-        <div id="spectate-error" class="login-error" style="display:none" role="alert"></div>
-        <button id="spectate-btn" type="button" class="login-btn login-btn-spectate">Spectate →</button>
-      </section>
 
       ${siteFooterHtml}
     </div>
@@ -256,39 +268,51 @@ export function buildLoginView(
     window.addEventListener(LOGIN_SPRITES_CHANGED_EVENT, onSpritesPref)
   }
 
-  // Offline card: one tap boots the local engine. The subline says what the
-  // tap will do — resume the saved character or start fresh. Save presence is
-  // guessed synchronously from the offline-state record, then corrected by
-  // the IDB probe when the browser supports probing without side effects
-  // (covers a wiped IDB under a stale record, and an imported save with no
-  // record). The subline is the fallback-varying part; the title row stays
-  // fixed so the card never reflows.
+  // Offline card: one tap opens the offline lobby (save slots, backup
+  // management — views/offline-lobby.ts). The title is always the fixed
+  // "Play offline" — home-card titles name destinations, never player names
+  // (which are accent-colored elsewhere; a title-weight name here would
+  // re-open that contest). The character lives in the subline: the most
+  // recently played one, "+N more" when others exist, with XL/place pinned
+  // right. Slot presence is guessed synchronously from the offline-state
+  // records, then corrected by the IDB probe when the browser supports
+  // probing without side effects (covers a wiped IDB under stale records,
+  // and an imported save with no record). The card is always exactly two
+  // lines, so state swaps never change its height.
   function renderOfflineCard(): void {
     const card = view.querySelector<HTMLButtonElement>('#offline-card')
     const sub = view.querySelector<HTMLElement>('#offline-sub')
-    if (!card || !sub || !onOffline) return
-    const rec = getOfflineLast()
-    const setSub = (resumable: boolean): void => {
-      if (resumable && rec?.name) {
-        // The wire title carries its own joiner ("the Sneak", ", Vainglorious")
-        // — same rule as the HUD titleline (stats-view.ts nameTitle).
-        const who = rec.title
-          ? (rec.title.startsWith(',') ? rec.name + rec.title : `${rec.name} ${rec.title}`)
-          : rec.name
-        // Same compact place form as the HUD chip (stats-view.ts).
-        const place = rec.place
-          ? (rec.depth ? `${abbrevPlace(rec.place)}:${rec.depth}` : abbrevPlace(rec.place))
-          : ''
-        sub.textContent = `Resume ${who}${place ? ` — ${place}` : ''}`
-      } else if (resumable) {
-        sub.textContent = 'Resume saved game'
-      } else {
+    const count = view.querySelector<HTMLElement>('#offline-count')
+    const meta = view.querySelector<HTMLElement>('#offline-meta')
+    if (!card || !sub || !count || !meta || !onOffline) return
+    const setCard = (slots: string[], chars: Record<string, OfflineChar>): void => {
+      count.textContent = ''
+      meta.textContent = ''
+      if (slots.length === 0) {
         sub.textContent = 'Start a new game'
+        return
       }
+      // Records are keyed by live slots (reconciled, or slots came from the
+      // records themselves), so the newest is just the newest value.
+      const rec = Object.values(chars).sort((a, b) => b.when - a.when)[0]
+      if (!rec) {
+        // Saves exist but the browser knows nothing about them (imported
+        // pack, wiped localStorage) — the lobby labels them by stem.
+        sub.textContent = slots.length === 1 ? 'Saved game' : `${slots.length} saved games`
+        return
+      }
+      sub.textContent = nameTitle(rec.name, rec.title)
+      // Own span so the count survives when a long name truncates.
+      if (slots.length > 1) count.textContent = `+${slots.length - 1} more`
+      const parts: string[] = []
+      if (rec.xl != null) parts.push(`XL${rec.xl}`)
+      if (rec.place) parts.push(compactPlace(rec.place, rec.depth))
+      meta.textContent = parts.join(' ')
     }
-    setSub(offlineLastSaysResumable(rec))
-    void hasOfflineSave().then((has) => {
-      if (has !== null && view.isConnected) setSub(has)
+    const guess = getOfflineChars()
+    setCard(Object.keys(guess), guess)
+    void loadOfflineSlots().then(({ stems, chars }) => {
+      if (view.isConnected) setCard(stems, chars)
     })
     card.addEventListener('click', () => {
       card.disabled = true
@@ -428,10 +452,6 @@ export function buildLoginView(
   }
 
   return view
-}
-
-function escHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
 // Install a one-shot handler that fires on the first login_success / login_fail.
