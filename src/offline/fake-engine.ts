@@ -83,7 +83,9 @@ export class FakeEnginePort implements EnginePort {
 
   sendKeys(text: string): void {
     if (this.exited) return
-    if (text.includes('S')) {
+    // The bare save key only — matching any text *containing* 'S' would turn
+    // e.g. a typed name or multi-key macro into a surprise save-and-exit.
+    if (text === 'S') {
       this.emitLines(['*{"msg":"exit_reason","type":"saved"}'])
       this.exited = true
       this.onExit(0)

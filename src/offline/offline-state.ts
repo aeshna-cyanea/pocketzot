@@ -186,6 +186,11 @@ export function offlineTracker(name: string): (msg: ServerMsg) => void {
         else delete next.god
       }
       if (msg.turn !== undefined) next.turn = msg.turn
+      // A batched turn can be newer than both cur.turn and an absent
+      // msg.turn (deltas omit unchanged fields) — fold it in so a
+      // meta-triggered write can't regress the recorded turn to the last
+      // written one.
+      else if (pendingTurn !== undefined) next.turn = pendingTurn
       const metaChanged = !cur
         || cur.name !== next.name || cur.title !== next.title
         || cur.place !== next.place || cur.depth !== next.depth

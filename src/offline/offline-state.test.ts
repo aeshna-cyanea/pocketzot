@@ -114,6 +114,17 @@ describe('offlineTracker', () => {
     expect(getOfflineChars()['Bram']!.turn).toBe(184)
   })
 
+  it('folds the batched turn into a meta write whose delta omits turn', () => {
+    const track = offlineTracker('Bram')
+    track({ msg: 'player', name: 'Bram', turn: 100 } as ServerMsg)
+    track({ msg: 'player', turn: 110 } as ServerMsg) // batched
+    // Meta changes on the same turn, so the delta omits it — the write must
+    // carry the batched 110, not regress to the last written 100.
+    track({ msg: 'player', xl: 2 } as ServerMsg)
+    expect(getOfflineChars()['Bram']!.turn).toBe(110)
+    expect(getOfflineChars()['Bram']!.xl).toBe(2)
+  })
+
   it('flushes the batched turn on game_ended', () => {
     const track = offlineTracker('Bram')
     track({ msg: 'player', name: 'Bram', turn: 100 } as ServerMsg)

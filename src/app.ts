@@ -102,7 +102,13 @@ async function showOfflineGame(name: string): Promise<void> {
       conn = null
       // Drop the ?offline flag with the session: a later reload (e.g. the
       // iOS eviction path mid-online-game) must not boot back into offline.
-      history.replaceState(null, '', location.pathname)
+      // Only that flag — the dev params (?engine=fake, ?fixture, ?perf) must
+      // survive, or the next game this session boots a different engine
+      // than the one under test.
+      const params = new URLSearchParams(location.search)
+      params.delete('offline')
+      const qs = params.toString()
+      history.replaceState(null, '', location.pathname + (qs ? `?${qs}` : ''))
       showOfflineLobby(exit)
     },
     undefined,
