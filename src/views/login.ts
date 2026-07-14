@@ -286,9 +286,14 @@ export function buildLoginView(
     const count = view.querySelector<HTMLElement>('#offline-count')
     const meta = view.querySelector<HTMLElement>('#offline-meta')
     if (!card || !sub || !count || !meta || !onOffline) return
+    // Whether the sub-line is a character name (worth keeping next to the
+    // negative readiness state) or generic filler (which the negative state
+    // replaces outright — squeezing both onto the line truncates each).
+    let hasCharSub = false
     const setCard = (slots: string[], chars: Record<string, OfflineChar>): void => {
       count.textContent = ''
       meta.textContent = ''
+      hasCharSub = false
       if (slots.length === 0) {
         sub.textContent = 'Start a new game'
         return
@@ -302,6 +307,7 @@ export function buildLoginView(
         sub.textContent = slots.length === 1 ? 'Saved game' : `${slots.length} saved games`
         return
       }
+      hasCharSub = true
       sub.textContent = nameTitle(rec.name, rec.title)
       // Own span so the count survives when a long name truncates.
       if (slots.length > 1) count.textContent = `+${slots.length - 1} more`
@@ -325,7 +331,17 @@ export function buildLoginView(
     // A deploy that ships no engine hides the whole section instead.
     let notReady = false
     const applyReadiness = (): void => {
-      if (notReady) meta.textContent = 'Not downloaded'
+      if (!notReady) return
+      if (hasCharSub) {
+        // Keep the character; the negative state takes the meta slot
+        // (outranking the XL/place flavor).
+        meta.textContent = 'Not downloaded'
+      } else {
+        // Generic filler sub — replace it instead of truncating both.
+        sub.textContent = 'Not downloaded'
+        count.textContent = ''
+        meta.textContent = ''
+      }
     }
     void probeReadiness().then((r) => {
       if (!view.isConnected) return
