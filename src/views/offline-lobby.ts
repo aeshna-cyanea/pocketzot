@@ -18,6 +18,7 @@ import {
   buildExportPackFile, deleteOfflineSave, downloadPackFile, fetchEngineBuild,
   readOfflineFiles, unpackSave, writeOfflineFiles,
 } from '../offline/save-transfer'
+import { downloadOfflineData, probeReadiness, type Readiness } from '../offline/artifact-store'
 import { compactPlace, nameTitle } from '../game/char-label'
 import { escHtml } from '../game/dcss-colors'
 import { maybeShowExitDialog } from './lobby'
@@ -56,6 +57,12 @@ export function buildOfflineLobbyView(
       <h2 class="lobby-section-title">Saved Games</h2>
       <div id="offline-saves" class="lobby-list">
         <div class="lobby-loading">Loading…</div>
+      </div>
+      <div id="offline-readiness" class="offline-readiness" hidden>
+        <div class="offline-readiness-row">
+          <span id="offline-ready-status" class="offline-ready-status">Checking offline data…</span>
+          <button type="button" id="offline-download" class="lobby-btn-ghost" hidden></button>
+        </div>
       </div>
       <div class="offline-backup">
         <button type="button" id="offline-export" class="lobby-btn-ghost">Export backup</button>
@@ -236,6 +243,67 @@ export function buildOfflineLobbyView(
     })
     row.replaceWith(clone)
   }
+
+  // --- Readiness: "am I ready for the flight?" -------------------------------
+  // A probe, never a stored flag (artifact-store.ts): the status re-checks the
+  // caches at mount and after every download. The button runs the engine
+  // worker's exact fetch path without booting the engine, plus the tiles
+  // gamedata the worker never touches. Hidden entirely when the deploy ships
+  // no artifacts (the login card hides itself the same way).
+
+  const readinessEl = view.querySelector<HTMLElement>('#offline-readiness')!
+  const readyStatusEl = view.querySelector<HTMLElement>('#offline-ready-status')!
+  const downloadBtn = view.querySelector<HTMLButtonElement>('#offline-download')!
+
+  function renderReadiness(r: Readiness): void {
+    readinessEl.hidden = false
+    downloadBtn.hidden = true
+    if (r.state === 'ready') {
+      if (r.update) {
+        readyStatusEl.textContent = 'Ready for offline play — an engine update is available.'
+        downloadBtn.textContent = 'Update (~21 MB)'
+        downloadBtn.hidden = false
+      } else if (!r.tiles) {
+        readyStatusEl.textContent = 'Ready for offline play (text mode).'
+        downloadBtn.textContent = 'Add tiles (~9 MB)'
+        downloadBtn.hidden = false
+      } else {
+        readyStatusEl.textContent = 'Ready for offline play, with tiles.'
+      }
+    } else if (r.state === 'not-cached') {
+      readyStatusEl.textContent = 'Not downloaded yet — playing offline needs a one-time download.'
+      downloadBtn.textContent = 'Download (~21 MB)'
+      downloadBtn.hidden = false
+    } else if (r.state === 'offline-not-cached') {
+      readyStatusEl.textContent = 'No connection — connect once to download offline play data.'
+    } else {
+      // undeployed: this checkout/deploy ships no engine.
+      readinessEl.hidden = true
+    }
+  }
+
+  async function refreshReadiness(): Promise<void> {
+    const r = await probeReadiness()
+    if (view.isConnected) renderReadiness(r)
+  }
+
+  downloadBtn.addEventListener('click', () => {
+    downloadBtn.disabled = true
+    downloadBtn.hidden = true
+    void downloadOfflineData((label) => { readyStatusEl.textContent = label })
+      .then((stats) => {
+        showNotice(stats.netBytes > 0
+          ? `Downloaded ${(stats.netBytes / 1048576).toFixed(1)} MB.`
+          : 'Offline data verified — everything was already downloaded.')
+      })
+      .catch((e: unknown) => showNotice(`Download failed: ${String(e instanceof Error ? e.message : e)}`))
+      .then(() => {
+        downloadBtn.disabled = false
+        return refreshReadiness()
+      })
+  })
+
+  void refreshReadiness()
 
   // --- Backup export/import --------------------------------------------------
   // Same pack format and rules as the __pzSave console hooks (offline/boot.ts):

@@ -11,6 +11,7 @@ import { listAvatars } from '../avatars'
 import { paintAvatars } from './avatar-tiles'
 import { openCrypt } from './crypt-view'
 import { getOfflineChars, loadOfflineSlots, type OfflineChar } from '../offline/offline-state'
+import { probeReadiness } from '../offline/artifact-store'
 import { compactPlace, nameTitle } from '../game/char-label'
 import { escHtml } from '../game/dcss-colors'
 
@@ -312,7 +313,28 @@ export function buildLoginView(
     const guess = getOfflineChars()
     setCard(Object.keys(guess), guess)
     void loadOfflineSlots().then(({ stems, chars }) => {
-      if (view.isConnected) setCard(stems, chars)
+      if (view.isConnected) {
+        setCard(stems, chars)
+        applyReadiness()
+      }
+    })
+    // Readiness, fallback-only (the card stays quiet when ready): the meta
+    // span flips to the negative state so "installed the app for the flight
+    // but never downloaded" is visible from the home screen. Applied after
+    // setCard too — the async slot correction repaints the meta span.
+    // A deploy that ships no engine hides the whole section instead.
+    let notReady = false
+    const applyReadiness = (): void => {
+      if (notReady) meta.textContent = 'Not downloaded'
+    }
+    void probeReadiness().then((r) => {
+      if (!view.isConnected) return
+      if (r.state === 'undeployed') {
+        view.querySelector('#offline-section')?.remove()
+        return
+      }
+      notReady = r.state !== 'ready'
+      applyReadiness()
     })
     card.addEventListener('click', () => {
       card.disabled = true

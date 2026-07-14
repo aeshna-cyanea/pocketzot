@@ -26,11 +26,16 @@ describe('classify — the design doc routing table', () => {
     expect(run('https://evil.example/assets/index-abc.js', { origin: 'https://evil.example' })).toBe('passthrough')
   })
 
-  it('never touches the engine-artifact or gamedata paths', () => {
+  it('never touches the engine-artifact paths', () => {
     expect(run('/offline/version.json')).toBe('passthrough')
     expect(run('/offline/crawl.wasm.gz')).toBe('passthrough')
-    expect(run('/gamedata/local/tileinfo-player.js')).toBe('passthrough')
-    expect(run('/gamedata/local/player.png')).toBe('passthrough')
+    expect(run('/gamedata/other/thing.js')).toBe('passthrough')
+  })
+
+  it('serves offline-tiles gamedata cache-first (readiness download)', () => {
+    expect(run('/gamedata/local/tileinfo-player.js')).toBe('cache-first')
+    expect(run('/gamedata/local/player.png')).toBe('cache-first')
+    expect(run('/gamedata/local/enums.js')).toBe('cache-first')
   })
 
   it('routes shell navigations network-first, query string irrelevant', () => {

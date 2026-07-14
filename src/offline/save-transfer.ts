@@ -20,6 +20,8 @@
 // prewarm pack reseeds them; ~10 MB, and stale across engine builds) and the
 // prewarm stamp file itself (its absence just makes the next boot reseed).
 
+import { fetchVersion } from './artifact-store'
+
 export interface SavedFile {
   path: string
   mode: number
@@ -119,15 +121,12 @@ export function unpackSave(bytes: ArrayBuffer | Uint8Array): { meta: SavePackMet
 // button and the __pzSave console hook (boot.ts) so the two surfaces can't
 // drift in meta shape or filename.
 
-// The engine-build stamp for export packs, from the deploy's version.json.
-// Bounded — export may run genuinely offline, where an unbounded fetch would
-// hang forever; packs then just go unstamped.
+// The engine-build stamp for export packs, from the deploy's version.json
+// (artifact-store's shared fetch). Bounded — export may run genuinely
+// offline, where an unbounded fetch would hang; packs then just go unstamped.
 export async function fetchEngineBuild(timeoutMs = 1500): Promise<string | undefined> {
-  try {
-    const r = await fetch('/offline/version.json', { cache: 'no-cache', signal: AbortSignal.timeout(timeoutMs) })
-    if (r.ok) return String((await r.json() as { build?: unknown }).build ?? '') || undefined
-  } catch { /* offline — packs just go unstamped */ }
-  return undefined
+  const version = await fetchVersion(timeoutMs)
+  return version.state === 'ok' ? version.build : undefined
 }
 
 export function buildExportPackFile(files: SavedFile[], build: string | undefined): File {

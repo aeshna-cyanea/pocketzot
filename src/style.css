@@ -979,6 +979,26 @@ html, body {
 .offline-slot-confirm-del:active,
 .offline-slot-confirm-cancel:active { background: var(--surface2); }
 
+/* Readiness row (offline lobby): status text left, download button right. */
+.offline-readiness {
+  margin-top: 0.75rem;
+}
+.offline-readiness-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.offline-ready-status {
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+.offline-readiness .lobby-btn-ghost {
+  border-color: var(--border);
+  flex-shrink: 0;
+}
+
 .offline-backup {
   margin-top: 0.75rem;
   display: flex;

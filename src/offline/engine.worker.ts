@@ -187,88 +187,36 @@ function nudge(): void {
 
 // ---- Artifact delivery: Cache API + gzip -----------------------------------
 // The engine artifacts are immutable per build (~46 MB raw; install.sh ships
-// the big three gzipped, ~15 MB total). They're fetched through a Cache API
-// store — plain caches.open() from this dedicated worker; NO service worker
-// exists or is registered, nothing intercepts the app's requests — and kept
-// compressed at rest, gunzipped per boot via DecompressionStream (native
-// zlib speed; well under wasm-instantiation time). /offline/version.json
-// names the current build: on change the cache is cleared and refetched;
-// when it's unreachable (no network) the existing cache boots the engine
-// anyway. The app shell itself is NOT offline-capable yet — that's the
-// deliberate service-worker decision deferred to productization; this layer
-// is the substrate it will sit on.
+// the big three gzipped, ~13 MB total). They're fetched through a Cache API
+// store — plain caches.open() from this dedicated worker; the app-shell
+// service worker passes /offline/* through untouched — and kept compressed
+// at rest, gunzipped per boot via DecompressionStream (native zlib speed;
+// well under wasm-instantiation time). /offline/version.json names the
+// current build: on change the cache is cleared and refetched; when it's
+// unreachable (no network) the existing cache boots the engine anyway. The
+// mechanics live in artifact-store.ts, shared with the readiness surface
+// (offline-lobby download button) so boot and prefetch can never disagree
+// about paths or version handling.
 
-const ARTIFACT_CACHE = 'pz-offline-artifacts'
-// Synthetic cache entry recording which build the cached artifacts belong to.
-const BUILD_KEY = '/offline/__build'
+import {
+  ARTIFACT_CACHE, fetchArtifact, fetchVersion, gunzipIfNeeded,
+  markEngineSetComplete, newStats, openVersionedCache,
+} from './artifact-store'
+
+const workerLog = (text: string): void => post({ type: 'log', text })
 
 async function openArtifactCache(): Promise<Cache | null> {
-  if (typeof caches === 'undefined') return null
-  try {
-    const cache = await caches.open(ARTIFACT_CACHE)
-    let build: string | null = null
-    try {
-      const r = await fetch('/offline/version.json', { cache: 'no-cache' })
-      if (r.ok && (r.headers.get('content-type') ?? '').includes('json'))
-        build = String((await r.json() as { build?: unknown }).build ?? '') || null
-    } catch { /* offline — trust whatever the cache holds */ }
-    if (build !== null) {
-      const stored = await (await cache.match(BUILD_KEY))?.text()
-      if (stored !== build) {
-        for (const req of await cache.keys()) await cache.delete(req)
-        await cache.put(BUILD_KEY, new Response(build))
-        if (stored !== undefined)
-          post({ type: 'log', text: `engine build ${stored} -> ${build}: artifact cache cleared` })
-      }
-    }
-    return cache
-  } catch (e) {
-    // Cache API unavailable/broken — plain network fetches below. Logged
-    // because this silently downgrades every boot to a full re-download.
-    post({ type: 'log', text: `artifact cache unavailable: ${String(e)}` })
-    return null
-  }
+  const version = await fetchVersion()
+  return openVersionedCache(
+    ARTIFACT_CACHE,
+    version.state === 'ok' ? version.build : null,
+    workerLog,
+  )
 }
 
-// Boot diagnostics: where the artifact bytes actually came from.
-let artifactCacheHits = 0
-let artifactNetFetches = 0
-// Wire bytes fetched (compressed sizes — counted before gunzip), for the
-// user-facing "Downloaded N MB" boot line.
-let artifactNetBytes = 0
-
-// Cache-first fetch of one artifact; tries `paths` in order (gzipped name
-// first, plain fallback for older installs). Never caches an HTML body — a
-// SPA-fallback 200 for a missing file must not become a sticky cache entry.
-async function fetchArtifact(cache: Cache | null, ...paths: string[]): Promise<ArrayBuffer> {
-  for (const p of paths) {
-    const hit = cache && await cache.match(p)
-    if (hit) { artifactCacheHits++; return hit.arrayBuffer() }
-  }
-  let lastStatus = 0
-  for (const p of paths) {
-    const res = await fetch(p).catch(() => null)
-    if (!res || !res.ok) { lastStatus = res?.status ?? 0; continue }
-    if ((res.headers.get('content-type') ?? '').includes('text/html')) { lastStatus = 404; continue }
-    if (cache) await cache.put(p, res.clone()).catch(() => { /* quota — serve uncached */ })
-    artifactNetFetches++
-    const buf = await res.arrayBuffer()
-    artifactNetBytes += buf.byteLength
-    return buf
-  }
-  throw new Error(`artifact ${paths[0]}: HTTP ${lastStatus || 'unreachable'}`)
-}
-
-// Transparent gunzip, keyed on magic bytes rather than filename: handles
-// plain files, and a CDN that already content-decoded the body, identically.
-async function gunzipIfNeeded(buf: ArrayBuffer): Promise<ArrayBuffer> {
-  const b = new Uint8Array(buf)
-  if (b.length < 2 || b[0] !== 0x1f || b[1] !== 0x8b) return buf
-  if (typeof DecompressionStream === 'undefined')
-    throw new Error('gzipped engine artifact but DecompressionStream is unavailable')
-  const ds = new DecompressionStream('gzip')
-  return new Response(new Blob([buf]).stream().pipeThrough(ds)).arrayBuffer()
-}
+// Boot diagnostics: where the artifact bytes actually came from. netBytes
+// counts wire bytes (compressed sizes), for the "Downloaded N MB" boot line.
+const stats = newStats()
 
 // First-boot cache seeding, run by the engine glue after IDBFS hydration and
 // before main() (pre.js's pocketzotSeedCaches hook). The engine build ships
@@ -284,7 +232,7 @@ const PREWARM_STAMP_PATH = '/crawl/.pocketzot-prewarm'
 async function seedCaches(fs: CrawlFS, cache: Cache | null): Promise<void> {
   let manifest: { stamp: string | number, files: { path: string, offset: number, size: number }[] }
   try {
-    const raw = await fetchArtifact(cache, '/offline/prewarm/manifest.json')
+    const raw = await fetchArtifact(cache, stats, '/offline/prewarm/manifest.json')
     manifest = JSON.parse(new TextDecoder().decode(raw)) as typeof manifest
   } catch {
     return // no prewarm shipped — the engine builds its caches itself
@@ -300,7 +248,7 @@ async function seedCaches(fs: CrawlFS, cache: Cache | null): Promise<void> {
   // One pack fetch for all ~575 cache files; nothing is written until the
   // whole pack is here, so a failed fetch can't leave a half-seeded set.
   const pack = new Uint8Array(await gunzipIfNeeded(await fetchArtifact(
-    cache, '/offline/prewarm/prewarm.bin.gz', '/offline/prewarm/prewarm.bin')))
+    cache, stats, '/offline/prewarm/prewarm.bin.gz', '/offline/prewarm/prewarm.bin')))
 
   for (const f of manifest.files) {
     const path = `/crawl/${f.path}`
@@ -336,19 +284,19 @@ async function start(name: string): Promise<void> {
     // via HTML tags"), and a blob module bypasses its middleware entirely
     // while behaving identically in production.
     const [glueBuf, wasmBuf, dataBuf] = await Promise.all([
-      fetchArtifact(cache, '/offline/crawl.js'),
-      fetchArtifact(cache, '/offline/crawl.wasm.gz', '/offline/crawl.wasm').then(gunzipIfNeeded),
-      fetchArtifact(cache, '/offline/crawl.data.gz', '/offline/crawl.data').then(gunzipIfNeeded),
+      fetchArtifact(cache, stats, '/offline/crawl.js'),
+      fetchArtifact(cache, stats, '/offline/crawl.wasm.gz', '/offline/crawl.wasm').then(gunzipIfNeeded),
+      fetchArtifact(cache, stats, '/offline/crawl.data.gz', '/offline/crawl.data').then(gunzipIfNeeded),
     ])
     wasmBinary = new Uint8Array(wasmBuf)
     dataBuffer = dataBuf
-    post({ type: 'log', text: `artifacts loaded: ${artifactCacheHits} from cache, ${artifactNetFetches} from network` })
+    post({ type: 'log', text: `artifacts loaded: ${stats.cacheHits} from cache, ${stats.netFetches} from network` })
     // Only worth a user-facing line when bytes actually crossed the network
     // (first boot / build update); the cached path lands here in ~100 ms.
-    if (artifactNetFetches > 0) {
+    if (stats.netFetches > 0) {
       post({
         type: 'progress',
-        text: `Downloaded ${(artifactNetBytes / 1048576).toFixed(1)} MB of engine data (cached for next time).`,
+        text: `Downloaded ${(stats.netBytes / 1048576).toFixed(1)} MB of engine data (cached for next time).`,
       })
     }
     // Version-skew guard: the cached artifact set can be older than this
@@ -456,6 +404,14 @@ async function start(name: string): Promise<void> {
     return
   }
   sampleHeap()
+  // Everything the engine needs was fetched (factory resolved; prewarm went
+  // through seedCaches) — verify it actually landed in the cache and stamp
+  // the readiness marker, so an organic online boot counts as "downloaded"
+  // on the readiness surface. Verification matters: fetchArtifact swallows
+  // quota failures on cache.put, so fetch-success alone proves nothing.
+  void markEngineSetComplete(cache).then((complete) => {
+    if (!complete) workerLog('artifact set incomplete after boot (storage quota?) — not marked offline-ready')
+  })
   for (const m of pending.splice(0)) feed(m)
 }
 

@@ -22,9 +22,15 @@ export const PRECACHE_EXTRAS = [
 export function classify(url, ctx) {
   if (ctx.method !== 'GET' || !ctx.sameOrigin) return 'passthrough'
   const path = url.pathname
-  // The engine-artifact cache (worker-owned, version.json-keyed) and the
-  // offline-tiles gamedata own their caching; intercepting here would
-  // double-cache ~13 MB and fight their version logic.
+  // Offline-tiles gamedata: populated only by the readiness download
+  // (artifact-store.ts, pz-offline-gamedata) — served cache-first here
+  // because tileinfo <script> tags and atlas images can't read the Cache
+  // API themselves; a miss falls through to network, so online tile use is
+  // unaffected.
+  if (path.startsWith('/gamedata/local/')) return 'cache-first'
+  // The engine-artifact cache (worker-owned, version.json-keyed) and any
+  // other gamedata own their caching; intercepting here would double-cache
+  // ~13 MB and fight their version logic.
   if (path.startsWith('/offline/') || path.startsWith('/gamedata/')) {
     return 'passthrough'
   }
