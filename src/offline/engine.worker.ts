@@ -28,6 +28,8 @@ interface CrawlModule {
     wake: unknown
     pushControl(json: string): void
     pushKeys(text: string): void
+    // Heap gauge (absent in engine builds before 2026-07-14).
+    heapBytes?(): number
   }
 }
 
@@ -59,21 +61,59 @@ const post = (m: WorkerOutMsg): void => {
   (self as { postMessage(m: unknown): void }).postMessage(m)
 }
 
-// A wasm trap (or any uncaught error) after startup would otherwise kill the
-// worker in total silence — surface it. The engine keeps its own crash
-// handling for game-level errors; this net is for runtime-level deaths
-// (Asyncify stack overflow, OOM, unreachable).
+// Every exit path funnels through postExit so a crash can't double-report
+// after a normal exit (or vice versa) — the mini-server synthesizes exactly
+// one game_ended from the first exit it sees.
+let exitPosted = false
+function postExit(code: number): void {
+  if (exitPosted) return
+  exitPosted = true
+  post({ type: 'exit', code })
+}
+
+// A wasm trap (or any uncaught error) after startup kills the engine but not
+// the worker — without an exit the client would sit on a frozen map forever:
+// the boot watchdog is disarmed once game content flows, LocalConnection
+// never fires onClose, and no exit_reason is coming. Synthesize the crash
+// exit the same way the artifact-failure path does; the mini-server turns it
+// into game_ended{reason:'crash'}, which keeps the slot record (the save's
+// last persist checkpoint resumes). The engine keeps its own crash handling
+// for game-level errors; this net is for runtime-level deaths (Asyncify
+// stack overflow, OOM, unreachable).
+function crashed(text: string): void {
+  post({ type: 'log', text })
+  if (exitPosted) return
+  post({
+    type: 'lines',
+    chunk: `*${JSON.stringify({ msg: 'exit_reason', type: 'crash', message: 'The offline engine crashed. Your last save checkpoint is intact — resume to pick up from it.' })}\n`,
+  })
+  postExit(1)
+}
 self.addEventListener('error', (e: ErrorEvent) => {
-  post({ type: 'log', text: `worker error: ${e.message} @ ${e.filename}:${e.lineno}` })
+  crashed(`worker error: ${e.message} @ ${e.filename}:${e.lineno}`)
 })
 self.addEventListener('unhandledrejection', (e) => {
   const reason = (e as PromiseRejectionEvent).reason as unknown
-  post({ type: 'log', text: `worker unhandled rejection: ${String(reason)}` })
+  crashed(`worker unhandled rejection: ${String(reason)}`)
 })
 
 let module_: CrawlModule | null = null
 // Inputs arriving while the wasm module is still instantiating.
 const pending: WorkerInMsg[] = []
+
+// Heap gauge: wasm memory only ever grows (ALLOW_MEMORY_GROWTH under a
+// 512 MB MAXIMUM_MEMORY ceiling), so growth events are rare — a handful per
+// session. Sampled once at module-ready and per output flush; each new high
+// posts a `heap` message so on-device sessions passively collect the curve.
+let lastHeapBytes = 0
+
+function sampleHeap(): void {
+  const bytes = module_?.pocketzot.heapBytes?.() ?? 0
+  if (bytes > lastHeapBytes) {
+    lastHeapBytes = bytes
+    post({ type: 'heap', bytes })
+  }
+}
 
 // ?perf=1 latency probe: stamp when an input reaches the worker, report the
 // duration to the batched output flush it produces — the full engine turn
@@ -92,7 +132,7 @@ function feed(m: WorkerInMsg): void {
     post({
       type: 'log',
       text: pz
-        ? `debug: queue=${pz.queue.length} [${pz.queue.slice(0, 3).map(s => s.slice(0, 40)).join(' | ')}] wakePending=${pz.wake != null}`
+        ? `debug: queue=${pz.queue.length} [${pz.queue.slice(0, 3).map(s => s.slice(0, 40)).join(' | ')}] wakePending=${pz.wake != null} heap=${((pz.heapBytes?.() ?? 0) / 1048576).toFixed(1)} MB`
         : `debug: module not ready, ${pending.length} pending`,
     })
     return
@@ -286,6 +326,7 @@ async function start(name: string): Promise<void> {
   let factory: CrawlFactory
   let wasmBinary: Uint8Array
   let dataBuffer: ArrayBuffer
+  let glueSetsCrawlDir = false
   try {
     // All three artifacts go through the cache+gunzip path; wasm and data
     // are handed to the glue as bytes (wasmBinary / getPreloadedPackage), so
@@ -310,6 +351,15 @@ async function start(name: string): Promise<void> {
         text: `Downloaded ${(artifactNetBytes / 1048576).toFixed(1)} MB of engine data (cached for next time).`,
       })
     }
+    // Version-skew guard: the cached artifact set can be older than this
+    // client (openArtifactCache serves the cache whenever version.json is
+    // unreachable or missing — e.g. an artifact-less deploy, or offline once
+    // the shell itself is SW-cached). Engine builds before 2026-07-14 don't
+    // set ENV.CRAWL_DIR in pre.js; booting one dir-less would silently write
+    // saves to MEMFS, where they vanish on reload. Sniff the glue for the
+    // marker (a property name, so it survives minification) and fall back to
+    // the legacy -dir flag when absent.
+    glueSetsCrawlDir = new TextDecoder().decode(glueBuf).includes('CRAWL_DIR')
     const blob = new Blob([glueBuf], { type: 'text/javascript' })
     const url = URL.createObjectURL(blob)
     try {
@@ -326,7 +376,7 @@ async function start(name: string): Promise<void> {
       type: 'lines',
       chunk: `*${JSON.stringify({ msg: 'exit_reason', type: 'error', message: `Offline engine not installed or unreachable (${String(e)}).` })}\n`,
     })
-    post({ type: 'exit', code: 1 })
+    postExit(1)
     return
   }
 
@@ -351,6 +401,7 @@ async function start(name: string): Promise<void> {
     const chunk = outBuf.join('')
     outBuf.length = 0
     post({ type: 'lines', chunk })
+    sampleHeap()
   }
 
   try {
@@ -369,14 +420,23 @@ async function start(name: string): Promise<void> {
       // _await_connection the pending queue below drains and wakes it. Do NOT
       // add the flag to pre.js's default argv — the engine repo's
       // bake-caches.mjs run has no host to send attach and would hang.
-      arguments: ['-headless', '-webtiles-socket', 'pocketzot', '-dir', '/crawl', '-name', name, '-await-connection'],
+      // No -dir on current builds: pre.js sets ENV.CRAWL_DIR instead — the
+      // -dir flag was processed in both of main()'s parse_args passes plus
+      // validate_basedirs, printing "Setting crawl_dir..." 3x into the boot
+      // log; the env path assigns silently. Older cached builds still get
+      // -dir (glueSetsCrawlDir sniff above).
+      arguments: [
+        '-headless', '-webtiles-socket', 'pocketzot',
+        ...(glueSetsCrawlDir ? [] : ['-dir', '/crawl']),
+        '-name', name, '-await-connection',
+      ],
       locateFile: (path) => `/offline/${path}`,
       pocketzotOnOutput: (chunk) => {
         if (outBuf.length === 0) queueMicrotask(flushOut)
         outBuf.push(chunk)
         if (chunk.startsWith('*{"msg":"flush_messages"')) flushOut()
       },
-      onExit: (code) => { flushOut(); post({ type: 'exit', code }) },
+      onExit: (code) => { flushOut(); postExit(code) },
       print: (text) => post({ type: 'log', text }),
       printErr: (text) => post({ type: 'log', text }),
       pocketzotSeedCaches: (fs) => seedCaches(fs, cache),
@@ -392,9 +452,10 @@ async function start(name: string): Promise<void> {
       type: 'lines',
       chunk: `*${JSON.stringify({ msg: 'exit_reason', type: 'error', message: `Offline engine failed to start: ${String(e)}` })}\n`,
     })
-    post({ type: 'exit', code: 1 })
+    postExit(1)
     return
   }
+  sampleHeap()
   for (const m of pending.splice(0)) feed(m)
 }
 

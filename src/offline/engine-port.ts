@@ -52,6 +52,9 @@ export type WorkerOutMsg =
   | { type: 'progress'; text: string }
   // ?perf=1: worker-side input→first-output duration for the last input.
   | { type: 'perf'; engineMs: number }
+  // Heap gauge: posted whenever the engine's wasm memory grows past its
+  // previous high (a handful of events per session — memory never shrinks).
+  | { type: 'heap'; bytes: number }
 
 // Input-latency instrumentation (?perf=1). One sample per input, split into
 // where the milliseconds live:
@@ -167,6 +170,9 @@ export class WorkerEnginePort implements EnginePort {
   // the mini-server's line handling are visible). __pzEngine.chunks in the
   // console.
   readonly chunks: { ts: number; len: number; head: string }[] = []
+  // Heap gauge: the engine's current wasm memory size (high-water — it never
+  // shrinks). __pzEngine.heapBytes in the console; growth also logs a line.
+  heapBytes = 0
 
   constructor(
     private readonly perf: boolean,
@@ -192,6 +198,11 @@ export class WorkerEnginePort implements EnginePort {
       else if (m.type === 'log') console.log('[engine]', m.text)
       else if (m.type === 'progress') this.onProgress(m.text)
       else if (m.type === 'perf') this.meter?.engine(m.engineMs)
+      else if (m.type === 'heap') {
+        const prev = this.heapBytes
+        this.heapBytes = m.bytes
+        console.log('[engine]', `heap ${(m.bytes / 1048576).toFixed(1)} MB${prev ? ` (was ${(prev / 1048576).toFixed(1)})` : ''}`)
+      }
     }
     this.post({ type: 'start', perf: this.perf, name: this.name })
   }
