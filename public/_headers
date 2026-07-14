@@ -14,3 +14,8 @@
 
 /index.html
   Cache-Control: public, max-age=0, must-revalidate
+
+# The SW must revalidate every launch or updates lag up to 24 h
+# (dev-material/service-worker-design.md).
+/sw.js
+  Cache-Control: public, max-age=0, must-revalidate
