@@ -58,16 +58,25 @@ export function buildOfflineLobbyView(
       <div id="offline-saves" class="lobby-list">
         <div class="lobby-loading">Loading…</div>
       </div>
-      <div id="offline-readiness" class="offline-readiness" hidden>
-        <div class="offline-readiness-row">
-          <span id="offline-ready-status" class="offline-ready-status">Checking offline data…</span>
-          <button type="button" id="offline-download" class="lobby-btn-ghost" hidden></button>
+      <h2 class="lobby-section-title">Storage</h2>
+      <div class="offline-device">
+        <div id="offline-readiness" class="offline-device-row" hidden>
+          <span id="offline-ready-glyph" class="offline-device-glyph">●</span>
+          <span class="offline-device-lines">
+            <span id="offline-ready-status" class="offline-device-label">Checking offline data…</span>
+            <span id="offline-ready-sub" class="offline-device-sub" hidden></span>
+          </span>
+          <button type="button" id="offline-download" class="offline-device-btn is-accent" hidden></button>
         </div>
-      </div>
-      <div class="offline-backup">
-        <button type="button" id="offline-export" class="lobby-btn-ghost">Export backup</button>
-        <button type="button" id="offline-import" class="lobby-btn-ghost">Import backup</button>
-        <p class="offline-backup-note">A backup packs every saved game (plus morgues and scores) into one file.</p>
+        <div class="offline-device-row">
+          <span class="offline-device-glyph">⇅</span>
+          <span class="offline-device-lines">
+            <span class="offline-device-label">Backup</span>
+            <span class="offline-device-sub">Saved games, morgues, and scores in one file</span>
+          </span>
+          <button type="button" id="offline-export" class="offline-device-btn">Export</button>
+          <button type="button" id="offline-import" class="offline-device-btn">Import</button>
+        </div>
       </div>
     </div>
   `
@@ -252,32 +261,41 @@ export function buildOfflineLobbyView(
   // no artifacts (the login card hides itself the same way).
 
   const readinessEl = view.querySelector<HTMLElement>('#offline-readiness')!
+  const readyGlyphEl = view.querySelector<HTMLElement>('#offline-ready-glyph')!
   const readyStatusEl = view.querySelector<HTMLElement>('#offline-ready-status')!
+  const readySubEl = view.querySelector<HTMLElement>('#offline-ready-sub')!
   const downloadBtn = view.querySelector<HTMLButtonElement>('#offline-download')!
 
-  function renderReadiness(r: Readiness): void {
+  // One row, four slots: status glyph (● in ok/warn/dim), one-line label,
+  // dim sub-line detail, right-aligned action. Every state fills the same
+  // slots so the card never reflows into a different shape.
+  function setReadiness(
+    tone: 'ok' | 'warn' | 'dim',
+    label: string,
+    sub: string | null,
+    button?: string,
+  ): void {
     readinessEl.hidden = false
-    downloadBtn.hidden = true
+    readyGlyphEl.className = `offline-device-glyph is-${tone}`
+    readyStatusEl.textContent = label
+    readySubEl.hidden = sub === null
+    readySubEl.textContent = sub ?? ''
+    downloadBtn.hidden = button === undefined
+    if (button !== undefined) downloadBtn.textContent = button
+  }
+
+  function renderReadiness(r: Readiness): void {
     if (r.state === 'ready') {
-      if (r.update) {
-        readyStatusEl.textContent = 'Ready for offline play — an engine update is available.'
-        downloadBtn.textContent = 'Update (~21 MB)'
-        downloadBtn.hidden = false
-      } else if (!r.tiles) {
-        readyStatusEl.textContent = 'Ready for offline play (text mode).'
-        downloadBtn.textContent = 'Add tiles (~9 MB)'
-        downloadBtn.hidden = false
-      } else {
-        readyStatusEl.textContent = 'Ready for offline play, with tiles.'
-      }
+      if (r.update) setReadiness('ok', 'Ready for offline play', 'Engine update available', 'Update')
+      else if (!r.tiles) setReadiness('ok', 'Ready for offline play', 'Text mode — tiles not added', 'Add tiles ~ 9 MB')
+      else setReadiness('ok', 'Ready for offline play', 'Engine and tiles downloaded')
     } else if (r.state === 'not-cached') {
-      readyStatusEl.textContent = 'Not downloaded yet — playing offline needs a one-time download.'
-      downloadBtn.textContent = 'Download (~21 MB)'
-      downloadBtn.hidden = false
+      setReadiness('warn', 'Not downloaded', 'Offline play needs a one-time download', 'Download ~ 21 MB')
     } else if (r.state === 'offline-not-cached') {
-      readyStatusEl.textContent = 'No connection — connect once to download offline play data.'
+      setReadiness('warn', 'Not downloaded', 'No connection — connect once to download')
     } else {
-      // undeployed: this checkout/deploy ships no engine.
+      // undeployed: this checkout/deploy ships no engine. The backup row
+      // stays — saves can outlive an artifact-less deploy.
       readinessEl.hidden = true
     }
   }
@@ -289,11 +307,13 @@ export function buildOfflineLobbyView(
 
   downloadBtn.addEventListener('click', () => {
     downloadBtn.disabled = true
-    downloadBtn.hidden = true
-    void downloadOfflineData((label) => { readyStatusEl.textContent = label })
+    void downloadOfflineData((label) => setReadiness('dim', label, null))
       .then((stats) => {
+        // No byte count on purpose: dev/CDN layers can transparently
+        // content-decode the .gz artifacts, inflating netBytes well past
+        // the size the button promised.
         showNotice(stats.netBytes > 0
-          ? `Downloaded ${(stats.netBytes / 1048576).toFixed(1)} MB.`
+          ? 'Downloaded the offline engine and game assets.'
           : 'Offline data verified — everything was already downloaded.')
       })
       .catch((e: unknown) => showNotice(`Download failed: ${String(e instanceof Error ? e.message : e)}`))
