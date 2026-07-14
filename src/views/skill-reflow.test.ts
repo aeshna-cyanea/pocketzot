@@ -1,8 +1,13 @@
 import { describe, it, expect } from 'vitest'
-import { splitHtmlAtCol, reflowSkillCrt } from './skill-reflow'
+import { splitHtmlAtCol, reflowSkillCrt, plainText } from './skill-reflow'
+import { HUMAN_TRAIN, GNOLL_COST, GNOLL_MASTERED_MANUAL } from './skill-reflow.fixtures'
 
-// Strip tags so tests can assert on rendered text without span noise.
-const text = (html: string): string => html.replace(/<[^>]*>/g, '')
+// Measure columns exactly as the reflow does — tags dropped, each entity counted
+// as the one glyph cell it occupies ("Maces &amp; Flails" is 14 columns wide, not
+// 18). Every column assertion below only means anything against this, so it has
+// to be the module's own definition of rendered text, not a second copy of it.
+const text = plainText
+const plain = (lines: string[]): string[] => lines.map(text)
 
 describe('splitHtmlAtCol', () => {
   it('splits plain text at the column', () => {
@@ -15,7 +20,6 @@ describe('splitHtmlAtCol', () => {
   })
 
   it('splits cleanly at a span boundary without leaving an empty span', () => {
-    // Apt span closes exactly at the cut; right cell opens its own span.
     const line = '<span class="a">L    </span><span class="b">R</span>'
     const [l, r] = splitHtmlAtCol(line, 5)
     expect(l).toBe('<span class="a">L    </span>')
@@ -42,280 +46,274 @@ describe('splitHtmlAtCol', () => {
   })
 })
 
-describe('reflowSkillCrt', () => {
-  // A compact stand-in for the real grid: header, two filled rows, an
-  // empty-left row (right column longer than left), then help text. Column
-  // positions mirror the real layout (right column begins at index 20).
-  const L = (s: string): string => `<span class="fg7 bg0">${s}</span>`
-  const lines = [
-    '  Skill      Level    Skill      Level', // header (dup right copy)
-    `  ${'a - Fighting    +0'.padEnd(19)}${L('c - Spellcasting +11')}`,
-    `  ${'b - Dodging     +1'.padEnd(19)}${L('d - Conjurations +11')}`,
-    `  ${''.padEnd(19)}${L('e - Hexes        +11')}`,
-    '',
-    ' The species aptitude is in white.',
+// The wire format the reflow is built on: both column origins are fixed, and the
+// header row is the ruler we measure them with. If these ever fail, the grid
+// geometry has moved and the reflow's core assumption is void.
+describe('captured grid geometry', () => {
+  // Where each capture's grid ends; below it lies free-flowing help text, which
+  // obeys none of this (and which the reflow must therefore not treat as a row).
+  const FIXTURES = [
+    { name: 'human', lines: HUMAN_TRAIN, lastGridRow: 17 },
+    { name: 'gnoll', lines: GNOLL_COST, lastGridRow: 18 },
   ]
 
+  it.each(FIXTURES)('$name: the header names both columns, 39 apart', ({ lines }) => {
+    const header = text(lines[0])
+    expect(header.indexOf('Skill')).toBe(6)
+    expect(header.indexOf('Skill', 7)).toBe(45)
+  })
+
+  it.each(FIXTURES)('$name: no cell ever reaches the split column', ({ lines, lastGridRow }) => {
+    // The left cell's last field (aptitude) is 5 wide and ends at column 39, so
+    // column 40 — where the right cell starts — is blank on every grid row. This
+    // is what makes a fixed-column split safe.
+    for (const line of lines.slice(0, lastGridRow + 1).map(text)) {
+      if (line.length > 40) expect(line[40]).toBe(' ')
+    }
+  })
+
+  it.each(FIXTURES)('$name: help text below the grid is not grid-shaped', ({ lines, lastGridRow }) => {
+    // It flows from column 1 and straight through the split, so a reflow that
+    // guessed the grid's extent from content could swallow and bisect it.
+    const help = lines.slice(lastGridRow + 1).map(text).filter(l => l.trim())
+    expect(help.length).toBeGreaterThan(0)
+    for (const line of help) expect(line[1]).not.toBe(' ')
+  })
+})
+
+describe('reflowSkillCrt', () => {
   it('stacks left-column then right-column skills in a→z order', () => {
-    const out = reflowSkillCrt(lines).map(text)
+    const out = plain(reflowSkillCrt(HUMAN_TRAIN)!)
     const skills = out
-      .map(t => (/^\s*([a-z]) [+\-*] (\w+)/.exec(t)))
+      .map(t => /^\s*([a-z]) [+\-*] ([\w ·]+?)\s{2}/.exec(t))
       .filter(Boolean)
       .map(m => `${m![1]}:${m![2]}`)
-    expect(skills).toEqual(['a:Fighting', 'b:Dodging', 'c:Spellcasting', 'd:Conjurations', 'e:Hexes'])
+    expect(skills).toEqual([
+      'a:Fighting',
+      'b:Maces · Flails',
+      'c:Axes',
+      'd:Polearms',
+      'e:Unarmed Combat',
+      'f:Armour',
+      'g:Dodging',
+      'h:Shields',
+      'i:Stealth',
+      'j:Spellcasting',
+    ])
   })
 
-  it('keeps a single column header (drops the duplicated right copy)', () => {
-    const out = reflowSkillCrt(lines).map(text)
-    expect(out[0]).toBe('  Skill      Level')
+  it('keeps a single column header at the top (drops the duplicated right copy)', () => {
+    const out = plain(reflowSkillCrt(HUMAN_TRAIN)!)
+    expect(out[0]).toBe('      Skill           Level Train  Apt')
   })
 
-  it('re-indents right-column cells to match the left column', () => {
-    const out = reflowSkillCrt(lines).map(text)
-    const indentOf = (s: string): number => /^( *)/.exec(s)![1].length
-    const aRow = out.find(t => /Fighting/.test(t))!
-    const cRow = out.find(t => /Spellcasting/.test(t))!
-    expect(indentOf(cRow)).toBe(indentOf(aRow))
+  it('re-indents right-column cells onto the left column, keeping the fields aligned', () => {
+    const out = plain(reflowSkillCrt(HUMAN_TRAIN)!)
+    const fighting = out.find(t => /Fighting/.test(t))!
+    const spellcasting = out.find(t => /Spellcasting/.test(t))!
+    // Same frame: hotkey at 2, sign at 4, name at 6 — as in the left column.
+    expect(fighting.indexOf('a')).toBe(2)
+    expect(spellcasting.indexOf('j')).toBe(2)
+    expect(fighting.indexOf('Fighting')).toBe(6)
+    expect(spellcasting.indexOf('Spellcasting')).toBe(6)
   })
 
   it('separates the two column groups with a blank line and a repeated header', () => {
-    const out = reflowSkillCrt(lines).map(text)
-    const lastLeft = out.findIndex(t => /Dodging/.test(t)) // last left-column skill
-    const firstRight = out.findIndex(t => /Spellcasting/.test(t)) // first right-column skill
+    const out = plain(reflowSkillCrt(HUMAN_TRAIN)!)
+    const lastLeft = out.findIndex(t => /Stealth/.test(t))
+    const firstRight = out.findIndex(t => /Spellcasting/.test(t))
     expect(firstRight).toBeGreaterThan(lastLeft)
     const between = out.slice(lastLeft + 1, firstRight)
-    expect(between).toContain('') // blank separator
-    expect(between.some(t => /Skill.*Level/.test(t))).toBe(true) // repeated header
+    expect(between).toContain('')
+    expect(between.some(t => /Skill\s+Level/.test(t))).toBe(true)
   })
 
-  it('passes single-spaced help text through unchanged', () => {
-    const out = reflowSkillCrt(lines)
-    expect(out[out.length - 1]).toBe(' The species aptitude is in white.')
+  it('keeps the group separators inside each column, and drops the trailing blanks', () => {
+    const out = plain(reflowSkillCrt(HUMAN_TRAIN)!)
+    const at = (re: RegExp): number => out.findIndex(t => re.test(t))
+    // Blank rows between skill categories survive as blank rows.
+    expect(out[at(/Fighting/) + 1]).toBe('')
+    expect(out[at(/Unarmed Combat/) + 1]).toBe('')
+    // The blank strip that padded the grid out to its full height collapses to a
+    // single line of breathing room before the help text.
+    expect(out[at(/Spellcasting/) + 1]).toBe('')
+    expect(out[at(/Spellcasting/) + 2]).toMatch(/percentage of incoming experience/)
   })
 
   it('reflows the multi-column help footer to one command per line', () => {
-    const input = [
-      '  a - Fighting    +0',
-      '',
-      ' [?] Help                [=] set a skill target',
-      ' [/] auto mode    [*] all skills    [!] targets',
-    ]
-    const out = reflowSkillCrt(input).map(text)
+    const out = plain(reflowSkillCrt(HUMAN_TRAIN)!)
     expect(out).toContain(' [?] Help')
     expect(out).toContain(' [=] set a skill target')
-    expect(out).toContain(' [/] auto mode')
-    expect(out).toContain(' [*] all skills')
-    expect(out).toContain(' [!] targets')
+    expect(out).toContain(' [/] auto|manual mode')
+    expect(out).toContain(' [*] useful|all skills')
+    expect(out).toContain(' [_] enhanced|base level')
+    expect(out).toContain(' [!] training|cost|targets')
   })
 
   it('keeps each help command intact, with colours, when split mid-span', () => {
-    // The next "[" lives inside the previous command's span — as on the wire.
-    const line =
-      ' <span class="fg7 bg0">[</span><span class="fg14 bg0">/</span>' +
-      '<span class="fg7 bg0">] auto mode    [</span><span class="fg14 bg0">*</span>' +
-      '<span class="fg7 bg0">] all</span>'
-    const out = reflowSkillCrt([' a - X  +0', '', line])
-    const star = out.find(l => /\] all/.test(text(l)))!
-    expect(text(star)).toBe(' [*] all')
-    expect(star).toContain('<span class="fg14 bg0">*</span>') // key colour preserved
+    // The next "[" lives inside the previous command's span, as on the wire.
+    const out = reflowSkillCrt(HUMAN_TRAIN)!
+    const star = out.find(l => /useful\|all skills/.test(text(l)))!
+    expect(text(star)).toBe(' [*] useful|all skills')
+    expect(star).toContain('<span class="fg14 bg0">*</span>') // hotkey colour preserved
   })
 
-  it('still collapses padding on non-command (prose) help lines', () => {
-    const input = ['  a - Fighting    +0', '', ' The cost   is   in   cyan.']
-    const out = reflowSkillCrt(input).map(text)
-    expect(out).toContain(' The cost is in cyan.')
-  })
-
-  it('preserves the lightred manual "+4" inside the left cell, colours intact', () => {
-    // Manual fills the fixed-width apt field; the right hotkey stays put.
-    const manualLine =
-      `  <span class="fg7 bg0">a - Fighting    </span><span class="fg15 bg0">+0</span><span class="fg9 bg0">+4</span> ` +
-      `<span class="fg7 bg0">c - Hexes        +11</span>`
-    const out = reflowSkillCrt([manualLine])
-    // a in the left cell with its manual marker, c in the right cell.
-    expect(out.some(l => /a - Fighting/.test(text(l)) && /\+4/.test(text(l)) && l.includes('fg9'))).toBe(true)
-    const cCell = out.find(l => /c - Hexes/.test(text(l)))!
-    expect(cCell).toContain('<span class="fg7 bg0">c - Hexes')
-    // The "+4" must not bleed into the right (c) cell.
-    expect(text(cCell)).not.toMatch(/\+4/)
-  })
-
-  it('leaves non-skill content untouched', () => {
-    const plain = ['Welcome to the dungeon.', '', 'Press any key.']
-    expect(reflowSkillCrt(plain)).toEqual(plain)
-  })
-
-  describe('distributed training (no hotkeys)', () => {
-    // Gnoll-style menu: no skill is selectable, so rows carry only the
-    // training sign — `    + Fighting   0.2   0.2   +8`. Mirrors the wire
-    // (right column starts at index 20 in this compact stand-in).
-    const bare = [
-      '  Skill      Level    Skill      Level',
-      `  ${'+ Fighting     +8'.padEnd(18)}${L('+ Spellcasting  +8')}`,
-      `  ${'+ Dodging      +8'.padEnd(18)}${L('+ Conjurations  +6')}`,
-      `  ${''.padEnd(18)}${L('+ Hexes         +6')}`,
-      '',
-      ' The species aptitude is in white.',
-    ]
-
-    it('stacks left then right columns by the sign anchor', () => {
-      const out = reflowSkillCrt(bare).map(text)
-      const skills = out
-        .map(t => (/^\s*\+ (\w+)/.exec(t)))
-        .filter(Boolean)
-        .map(m => m![1])
-      expect(skills).toEqual(['Fighting', 'Dodging', 'Spellcasting', 'Conjurations', 'Hexes'])
-    })
-
-    it('keeps a single column header', () => {
-      const out = reflowSkillCrt(bare).map(text)
-      expect(out[0]).toBe('  Skill      Level')
-    })
-
-    it('does not anchor on a sign glyph mid-word', () => {
-      // "extra- Cool" style: sign not preceded by a space must not split.
-      const linesWithProse = [...bare, ' costs extra- Cool down first.']
-      const out = reflowSkillCrt(linesWithProse).map(text)
-      expect(out).toContain(' costs extra- Cool down first.')
-    })
-
-    it('ignores bare signs when the menu has lettered rows', () => {
-      // A prose bullet below a lettered grid must not extend the grid range.
-      const withBullet = [
-        '  a - Fighting    +0  c - Spellcasting +11',
-        '',
-        ' - Casting spells of this school.',
-      ]
-      const out = reflowSkillCrt(withBullet).map(text)
-      expect(out).toContain(' - Casting spells of this school.')
-    })
-  })
-
-  it('keeps an all-unanchorable grid edge row (mastered + untrainable cells)', () => {
-    // First grid line: left cell mastered (27, no hotkey/sign), right cell
-    // currently untrainable (no sign) — nothing on the line anchors, but it
-    // must stay a grid row, not get truncated as a second header line.
-    const lines = [
-      '  Skill        Level    Skill        Level',
-      `  ${'  Fighting     27'.padEnd(19)}${L('  Spellcasting  0.0')}`,
-      `  ${'b - Dodging   4.2'.padEnd(19)}${L('d - Conjurations 1.0')}`,
-      '',
-      ' The species aptitude is in white.',
-    ]
-    const out = reflowSkillCrt(lines).map(text)
-    expect(out.some(t => /Fighting\s+27/.test(t))).toBe(true)
-    expect(out.some(t => /Spellcasting\s+0\.0/.test(t))).toBe(true) // right cell not dropped
-    expect(out[0]).toBe('  Skill        Level') // header still deduped to one copy
-  })
-
-  it('repeats only the header — not a mastered row above the grid — at the column break', () => {
-    // Real bug: a mastered skill (27) loses hotkey and sign, so its row can't
-    // anchor; sitting above the first lettered row (wire shape: header,
-    // Fighting, blank, grid) it was swept into `head` and duplicated when the
-    // head block was repeated before the right-column group.
-    const lines = [
-      '  Skill        Level      Skill        Level',
-      '    Fighting     27',
-      '',
-      `  ${'a - Maces       11.7'.padEnd(24)}${L('l - Evocations   7.0')}`,
-      `  ${'b - Axes        18.0'.padEnd(24)}${L('m - Shapeshift   0.0')}`,
-    ]
-    const out = reflowSkillCrt(lines).map(text)
-    expect(out.filter(t => /Fighting/.test(t))).toHaveLength(1)
-    // The mastered row still renders, in its original spot above the grid.
-    const fighting = out.findIndex(t => /Fighting/.test(t))
-    const aRow = out.findIndex(t => /Maces/.test(t))
-    expect(fighting).toBeGreaterThan(-1)
-    expect(fighting).toBeLessThan(aRow)
-    // The header itself is still repeated before the right-column group.
-    const lRow = out.findIndex(t => /Evocations/.test(t))
-    expect(out.slice(aRow + 1, lRow).some(t => /Skill\s+Level/.test(t))).toBe(true)
-  })
-
-  it('does not split a prose footer that touches the right column (no blank above it)', () => {
-    // Real bug: the two-column grid's last skill row is immediately followed by
-    // the explanatory prose (no blank separator on the wire). The prose is long
-    // enough to have text on both sides of the right column, so the grid-range
-    // walk must reject it by the missing inter-column gap, not swallow + split it.
-    const lines = [
-      `  ${'a - Fighting    +0'.padEnd(20)}${L('c - Spellcasting +11')}`,
-      `  ${'b - Dodging     +1'.padEnd(20)}${L('d - Conjurations +11')}`,
-      ' The relative cost of raising each skill is in cyan.',
-      ' Skills enhanced by cross-training are in green.',
-    ]
-    const out = reflowSkillCrt(lines).map(text)
-    expect(out).toContain(' The relative cost of raising each skill is in cyan.')
+  it('leaves the explanatory prose below the grid alone', () => {
+    const out = plain(reflowSkillCrt(HUMAN_TRAIN)!)
+    expect(out).toContain(
+      ' The percentage of incoming experience used to train each skill is in brown.'
+    )
     expect(out).toContain(' Skills enhanced by cross-training are in green.')
   })
 
-  it('aligns a lone mastered right cell below the last lettered row (Shapeshifting case)', () => {
-    // Seen live: mastered Shapeshifting is the right column's last row, and the
-    // left column ended earlier — so the line has a blank left half and sits
-    // below the last anchorable line. It must join the right-column group
-    // aligned, not fall through to the help footer and get its padding
-    // collapsed flush-left.
-    const lines = [
-      `  ${'a - Fighting    +0'.padEnd(19)}${L('c - Spellcasting +11')}`,
-      `  ${'b - Dodging     +1'.padEnd(19)}${L('d - Conjurations +11')}`,
-      `  ${''.padEnd(19)}${L('    Shapeshifting 27  -2')}`,
-      '',
-      ' The species aptitude is in white.',
-    ]
-    const out = reflowSkillCrt(lines).map(text)
-    const idx = out.findIndex(t => /Shapeshifting/.test(t))
-    expect(out[idx]).toBe('      Shapeshifting 27  -2') // aligned under the other names
-    expect(idx).toBeGreaterThan(out.findIndex(t => /Conjurations/.test(t)))
-    expect(out).toContain(' The species aptitude is in white.')
+  it('preserves cell colours through the split', () => {
+    const out = reflowSkillCrt(HUMAN_TRAIN)!
+    const fighting = out.find(l => /Fighting/.test(text(l)))!
+    expect(fighting).toContain('<span class="fg6 bg0">31%') // training % stays brown
+    const spellcasting = out.find(l => /Spellcasting/.test(text(l)))!
+    expect(spellcasting).toContain('<span class="fg8 bg0">j + Spellcasting')
+    expect(spellcasting).toContain('<span class="fg15 bg0">-1') // aptitude stays white
   })
 
-  it('keeps a lone mastered left cell below the last lettered row in the left group', () => {
-    const lines = [
-      `  ${'a - Fighting    +0'.padEnd(19)}${L('c - Spellcasting +11')}`,
-      `  ${'b - Dodging     +1'.padEnd(19)}${L('d - Conjurations +11')}`,
-      '    Shields       27',
-      '',
-      ' The species aptitude is in white.',
-    ]
-    const out = reflowSkillCrt(lines).map(text)
-    const idx = out.findIndex(t => /Shields/.test(t))
-    expect(out[idx]).toBe('    Shields       27') // alignment untouched
-    expect(idx).toBeLessThan(out.findIndex(t => /Spellcasting/.test(t)))
+  describe('distributed training (no hotkeys)', () => {
+    it('stacks left then right columns with no anchor to key off', () => {
+      const out = plain(reflowSkillCrt(GNOLL_COST)!)
+      const skills = out
+        .map(t => /^ {4}\+ ([\w ·]+?)\s{2}/.exec(t))
+        .filter(Boolean)
+        .map(m => m![1])
+      expect(skills).toEqual([
+        'Fighting',
+        'Maces · Flails',
+        'Axes',
+        'Polearms',
+        'Staves',
+        'Unarmed Combat',
+        'Throwing',
+        'Short Blades',
+        'Long Blades',
+        'Ranged Weapons',
+        'Armour',
+        'Dodging',
+        'Shields',
+        'Stealth',
+        'Spellcasting',
+        'Conjurations',
+        'Hexes',
+        'Summonings',
+        'Necromancy',
+        'Forgecraft',
+        'Translocations',
+        'Alchemy',
+        'Fire Magic',
+        'Ice Magic',
+        'Air Magic',
+        'Earth Magic',
+        'Invocations',
+        'Evocations',
+        'Shapeshifting',
+      ])
+    })
+
+    it('files a right-column cell whose left half is blank into the right group', () => {
+      // Wire lines 9 and 13: the left column's group separator falls opposite a
+      // right-column skill, so the line has a cell on one side only.
+      const out = plain(reflowSkillCrt(GNOLL_COST)!)
+      const alchemy = out.findIndex(t => /Alchemy/.test(t))
+      expect(out[alchemy].indexOf('Alchemy')).toBe(6) // aligned, not left as padding
+      expect(alchemy).toBeGreaterThan(out.findIndex(t => /Stealth/.test(t)))
+      // …and the blank it left behind still separates the left column's groups.
+      expect(out[out.findIndex(t => /Throwing/.test(t)) + 1]).toBe('')
+    })
+
+    it('keeps the cost view header (Level/Cost, not Level/Train)', () => {
+      const out = plain(reflowSkillCrt(GNOLL_COST)!)
+      expect(out[0]).toBe('      Skill           Level Cost   Apt')
+    })
   })
 
-  it('does not swallow short help prose adjacent to the grid as a left cell', () => {
-    // A short prose line has content only left of the split, like a lone
-    // mastered left cell — its single leading space is what tells them apart.
-    const lines = [
-      `  ${'a - Fighting    +0'.padEnd(19)}${L('c - Spellcasting +11')}`,
-      ' Targets, if any.',
-    ]
-    const out = reflowSkillCrt(lines).map(text)
-    expect(out).toContain(' Targets, if any.')
-    expect(out.indexOf(' Targets, if any.')).toBeGreaterThan(out.findIndex(t => /Spellcasting/.test(t)))
+  describe('mastered skills (level 27: no hotkey, no sign — nothing to anchor on)', () => {
+    it('keeps a mastered left cell as the grid row it is, once', () => {
+      // Fighting sits directly under the header. Reading it as anything but a
+      // grid row swept it into the head block, where it was then duplicated at
+      // the column break.
+      const out = plain(reflowSkillCrt(GNOLL_MASTERED_MANUAL)!)
+      expect(out.filter(t => /Fighting/.test(t))).toHaveLength(1)
+      const fighting = out.findIndex(t => /Fighting/.test(t))
+      expect(out[fighting].indexOf('Fighting')).toBe(6) // aligned with the signed rows
+      expect(fighting).toBe(1) // still the first row of the grid, under the header
+      expect(out.filter(t => /Skill\s+Level/.test(t))).toHaveLength(2) // one header per column
+    })
+
+    it('keeps a lone mastered right cell in the right column, in order', () => {
+      // Alchemy is mastered AND alone on its line (the left half is a group
+      // separator) — the `Shapeshifting 27 -2` shape. It must join the right
+      // column aligned, not fall through to the help footer.
+      const out = plain(reflowSkillCrt(GNOLL_MASTERED_MANUAL)!)
+      const alchemy = out.findIndex(t => /Alchemy/.test(t))
+      expect(out[alchemy].indexOf('Alchemy')).toBe(6)
+      expect(alchemy).toBeGreaterThan(out.findIndex(t => /Translocations/.test(t)))
+      expect(alchemy).toBeLessThan(out.findIndex(t => /Fire Magic/.test(t)))
+    })
+
+    it('reproduces the game’s own level-column stagger rather than tidying it', () => {
+      // A mastered level prints as a bare integer flush at the field's start;
+      // "%4.1f" levels right-align one column further in. Cells pass through
+      // untouched, so both land exactly where the terminal puts them.
+      const out = plain(reflowSkillCrt(GNOLL_MASTERED_MANUAL)!)
+      expect(out.find(t => /Fighting/.test(t))!.indexOf('27')).toBe(22)
+      expect(out.find(t => /Alchemy/.test(t))!.indexOf('27')).toBe(22)
+      expect(out.find(t => /Axes/.test(t))!.indexOf('4.4')).toBe(23)
+    })
   })
 
-  it('passes the experience-menu title through whole (not clipped at the column split)', () => {
-    // Potion of experience: a full-width prose title above the header. Head
-    // lines used to be unconditionally split at the grid column, truncating it
-    // to "…great experience. Select".
-    const lines = [
-      ' You have gained great experience. Select the skills to train.',
-      `  ${'Skill      Level'.padEnd(19)}Skill      Level`,
-      `  ${'a - Fighting    +0'.padEnd(19)}${L('c - Spellcasting +11')}`,
-    ]
-    const out = reflowSkillCrt(lines).map(text)
-    expect(out[0]).toBe(' You have gained great experience. Select the skills to train.')
-    expect(out[1]).toBe('  Skill      Level') // header still deduped to the left copy
+  describe('skill manuals (the widest the aptitude field ever gets)', () => {
+    // A manual appends a lightred "+4" to the aptitude, filling that field to its
+    // full 5 columns. In the left column that pushes the cell out to column 39 —
+    // one short of the split — leaving a single space before the right cell
+    // instead of the usual run of padding. The right column does not move.
+    //
+    // The wire also runs that lightred span on past the split, over the right
+    // cell's leading blanks, so this is the case that exercises splitting a span
+    // that straddles the cut and reopening it on the far side.
+    it('lets the left cell reach column 39 without touching the split', () => {
+      const axes = text(GNOLL_MASTERED_MANUAL[4])
+      expect(axes.slice(35, 40)).toBe('+8 +4') // aptitude fills its field exactly
+      expect(axes[40]).toBe(' ') // …and still stops short of the right cell
+    })
+
+    it('keeps the manual in the left cell, out of the right one', () => {
+      const out = reflowSkillCrt(GNOLL_MASTERED_MANUAL)!
+      const axes = out.find(l => /Axes/.test(text(l)))!
+      const hexes = out.find(l => /Hexes/.test(text(l)))!
+      expect(text(axes)).toMatch(/\+8 \+4$/)
+      expect(axes).toContain('<span class="fg12 bg0">+4') // manual stays lightred
+      expect(text(hexes)).not.toMatch(/\+4/) // and does not bleed rightwards
+      expect(text(hexes).indexOf('Hexes')).toBe(6) // right cell still aligned
+    })
+
+    it('keeps a right-column manual, which runs to the line’s full width', () => {
+      const out = reflowSkillCrt(GNOLL_MASTERED_MANUAL)!
+      const shapeshifting = out.find(l => /Shapeshifting/.test(text(l)))!
+      expect(text(shapeshifting)).toMatch(/\+7 \+4$/)
+      expect(shapeshifting).toContain('<span class="fg12 bg0">+4')
+    })
   })
 
-  it('splits a mastered right cell (no hotkey, no sign) at the grid column', () => {
-    const lines = [
-      `  ${'a - Fighting    +0'.padEnd(19)}${L('c - Spellcasting +11')}`,
-      `  ${'b - Dodging     +1'.padEnd(19)}${L('    Invocations 27.0')}`,
-    ]
-    const out = reflowSkillCrt(lines).map(text)
-    const dodging = out.find(t => /Dodging/.test(t))!
-    expect(dodging).not.toMatch(/Invocations/) // not misfiled as one wide left row
-    expect(out.some(t => /Invocations 27\.0/.test(t))).toBe(true)
+  it('passes the experience-menu title through whole (not clipped at the split)', () => {
+    // Potion of experience: the same grid, under a full-width prose title.
+    const title = ' You have gained great experience. Select the skills to train.'
+    const out = plain(reflowSkillCrt([title, ...HUMAN_TRAIN])!)
+    expect(out[0]).toBe(title)
+    expect(out[1]).toBe('      Skill           Level Train  Apt') // header still deduped
+    expect(out.some(t => /Spellcasting/.test(t))).toBe(true) // and the grid still stacks
+  })
+
+  it('declines to reflow a grid it cannot measure, rather than guessing', () => {
+    // Without the header row there is no ruler for the columns. Returning null
+    // (not the lines) is what lets game-view keep the screen pannable instead of
+    // word-wrapping a 79-column grid it cannot unstack.
+    expect(reflowSkillCrt(HUMAN_TRAIN.slice(1))).toBeNull()
+    expect(reflowSkillCrt(['Welcome to the dungeon.', '', 'Press any key.'])).toBeNull()
   })
 })

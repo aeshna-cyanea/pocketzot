@@ -20,7 +20,7 @@ import { createShiftToggle } from '../game/input/shift-state'
 import { uiColor, escHtml, dcssToHtml } from '../game/dcss-colors'
 import { parsePromptText, PROMPT_TRIGGER_RE } from './prompt-parse'
 import { extractSkillHotkeys } from './skill-hotkeys'
-import { reflowSkillCrt } from './skill-reflow'
+import { reflowSkillCrt, plainText } from './skill-reflow'
 import { TEX, getTileLoader, type TileLoader } from '../game/tiles/tile-loader'
 import { activeEnumsModule, setEnumsModule } from '../game/map/flag-decode'
 import { formatDcssVersion, isBelowSupportCutoff, parseDcssVersion } from '../util/dcss-version'
@@ -1982,9 +1982,6 @@ export function buildGameView(
     enterOverlayLayout({ touch: false })
     const el = document.createElement('div')
     el.id = 'crt-display'
-    // Skills CRT is reflowed to one column, so it no longer needs to pan; let
-    // it wrap instead (the help text below the grid is full-width).
-    if (crtTag === 'skills') el.classList.add('crt-skills')
     uiOverlay.appendChild(el)
     focusView()
   }
@@ -1997,23 +1994,25 @@ export function buildGameView(
     let rows: string[] = []
     for (let i = 0; i <= maxKey; i++) rows.push(crtLines.get(i) ?? '')
     // The skills menu (`m`) ships a fixed two-column terminal grid; reflow it
-    // into a single column so it fits a phone without horizontal panning.
-    if (crtTag === 'skills') rows = reflowSkillCrt(rows)
+    // into a single column so it fits a phone without horizontal panning. Only
+    // then may it wrap: a grid the reflow couldn't measure is still 79 columns
+    // wide, and must stay pannable rather than word-wrap mid-row.
+    const reflowed = crtTag === 'skills' ? reflowSkillCrt(rows) : null
+    el.classList.toggle('crt-skills', reflowed !== null)
+    if (reflowed) rows = reflowed
     for (const html of rows) {
       const line = document.createElement('div')
       line.className = 'crt-line'
       line.innerHTML = html
       el.appendChild(line)
     }
-    if (crtTag === 'skills') updateSkillLetterButtons()
+    if (crtTag === 'skills') updateSkillLetterButtons(rows)
   }
 
-  function updateSkillLetterButtons(): void {
-    const lines: string[] = []
-    uiOverlay.querySelectorAll<HTMLElement>('.crt-line').forEach(line => {
-      lines.push(line.textContent ?? '')
-    })
-    const letters = extractSkillHotkeys(lines)
+  // `rows` is what we just rendered — read the hotkeys from it, not back out of
+  // the DOM we wrote it to.
+  function updateSkillLetterButtons(rows: string[]): void {
+    const letters = extractSkillHotkeys(rows.map(plainText))
     let row = menuControls.querySelector<HTMLElement>('.skill-letter-row')
     if (!row) {
       row = document.createElement('div')
