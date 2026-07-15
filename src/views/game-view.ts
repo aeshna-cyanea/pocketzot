@@ -667,7 +667,10 @@ export function buildGameView(
     }
   }
 
-  const touchControls: TouchControls = buildTouchControls((msg) => {
+  // Shared input dispatch for the touch-control buttons AND the phone back
+  // button (popstate below): the client-panel/lens/menu-nav guards here are
+  // what give an injected Esc the same meaning as a tapped one.
+  function dispatchTouchInput(msg: ClientMsg): void {
     if (isHarvesting()) return  // suppress d-pad/macro input during silent harvest
     // The monster panel is a client-only overlay and the touch controls stay
     // visible over it (both orientations, like any plain menu). Route their
@@ -694,7 +697,9 @@ export function buildGameView(
     if (msg.msg === 'key' && handleScrollerKeycode(msg.keycode)) return
     conn.send(msg)
     afterUserSend(msg)
-  }, spectating ? {} : {
+  }
+
+  const touchControls: TouchControls = buildTouchControls(dispatchTouchInput, spectating ? {} : {
     spellTab: { render: renderSpellGrid, hasSpells: () => harvester.spells.length > 0 },
   })
 
@@ -848,11 +853,42 @@ export function buildGameView(
   }
   window.addEventListener(MONSTER_LIST_MODE_CHANGED_EVENT, onMonsterListModePref)
 
+  // Phone back button: behaves exactly like the on-screen Esc button —
+  // same dispatch, same guards, no special cases. Without this, Back
+  // navigates the tab away and tears down the socket mid-game; users reach
+  // for it when a screen won't close (Android's universal dismiss gesture).
+  // A single sentinel history entry absorbs the pop, re-arms itself, and
+  // routes Esc; with nothing open Esc is a no-op, so Back never exits a
+  // running game (deliberate — accidental exit is the disaster case; the
+  // lobby button and home gesture remain). The chat sheet is deliberately
+  // NOT closed by Back: it's a companion pane carried across screens, and
+  // no other Esc path targets it either. Side effect, not a target: any
+  // other history-back lands here too — e.g. iOS Safari's in-browser edge
+  // swipe now stays in-app and reads as an Esc (installed PWAs have no
+  // swipe-back). Same lifecycle as the pref listeners above: released in
+  // exitToLobby, isConnected self-unhook as the backstop.
+  function onPopState(): void {
+    if (!view.isConnected) {
+      window.removeEventListener('popstate', onPopState)
+      return
+    }
+    history.pushState({ pz: 'game' }, '')
+    dispatchTouchInput({ msg: 'key', keycode: 27 })
+  }
+  // Reloads and auto-resumes land with the sentinel already on top —
+  // don't stack another (each stale entry would cost one dead Back press
+  // after the view is gone).
+  if ((history.state as { pz?: string } | null)?.pz !== 'game') {
+    history.pushState({ pz: 'game' }, '')
+  }
+  window.addEventListener('popstate', onPopState)
+
   // Every deliberate return to the lobby funnels through here so this view's
   // window listeners don't outlive it (each game builds a fresh view).
   function exitToLobby(exit?: GameExit): void {
     window.removeEventListener(RENDER_MODE_CHANGED_EVENT, onRenderModePref)
     window.removeEventListener(MONSTER_LIST_MODE_CHANGED_EVENT, onMonsterListModePref)
+    window.removeEventListener('popstate', onPopState)
     touchControls.destroy()
     onLobby(exit)
   }
