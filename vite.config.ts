@@ -51,10 +51,20 @@ function swPrecache(): Plugin {
         ...parseRootHeaders(),
         'Content-Type': 'text/html; charset=utf-8',
       }
+      const classifySrc = readFileSync(resolve(projectRoot, 'src/sw/classify.js'), 'utf8')
+        .replace(/^export /gm, '')
+      const template = readFileSync(resolve(projectRoot, 'src/sw/sw.js'), 'utf8')
       const assets = [...assetPaths, ...PRECACHE_EXTRAS]
+      // The version names the whole SW generation (cache = pz-shell-<hash>),
+      // so it must cover the SW's own code too: a template/classify-only
+      // change would otherwise reuse the active generation's cache name, and
+      // its install would overwrite entries a live SW is serving (plus a
+      // failed install's cleanup would delete them outright).
       const hash = createHash('sha256')
         .update(shellHtml)
         .update(JSON.stringify(shellHeaders))
+        .update(classifySrc)
+        .update(template)
       for (const path of assets) {
         hash.update(path).update(readFileSync(resolve(outDir, path.slice(1))))
       }
@@ -64,9 +74,6 @@ function swPrecache(): Plugin {
         shellHeaders,
         assets,
       }
-      const classifySrc = readFileSync(resolve(projectRoot, 'src/sw/classify.js'), 'utf8')
-        .replace(/^export /gm, '')
-      const template = readFileSync(resolve(projectRoot, 'src/sw/sw.js'), 'utf8')
       // Function replacements: the payloads contain `$`-sequences that
       // String.replace would otherwise expand.
       writeFileSync(

@@ -39,10 +39,22 @@ self.addEventListener('install', (event) => {
       await cache.put(SHELL_URL, new Response(PRECACHE.shellHtml, {
         headers: PRECACHE.shellHeaders,
       }))
-      await cache.addAll(PRECACHE.assets)
+      // Not addAll: precache fetches must bypass the browser HTTP cache
+      // (and any stale CDN copy). /assets/* is served immutable+1y, so a
+      // chunk whose hash survives a deploy would be re-precached from the
+      // OLD deploy's stored response — stale response HEADERS included.
+      // Seen live: the engine-worker chunk kept its hash across a
+      // CSP-headers deploy, phones re-precached it with the old CSP, and
+      // the worker's blob-URL glue import stayed blocked. The version
+      // query busts every cache layer; put() stores under the clean URL.
+      await Promise.all(PRECACHE.assets.map(async (path) => {
+        const response = await fetch(path + '?pz-precache=' + PRECACHE.version, { cache: 'reload' })
+        if (!response.ok) throw new Error('precache ' + path + ': HTTP ' + response.status)
+        await cache.put(path, response)
+      }))
     } catch (err) {
       // All-or-nothing at the storage layer too: without this, a failed
-      // addAll leaves a shell-only residue cache behind (unservable, but
+      // precache leaves a partial residue cache behind (unservable, but
       // orphaned until a later generation's activate reaps it).
       await caches.delete(CACHE_NAME)
       throw err
@@ -127,7 +139,7 @@ async function cacheFirst(request) {
   // assets; a miss still falls through to network. ignoreVary is
   // load-bearing: servers stamp `Vary: Origin` on assets, and the page's
   // crossorigin module-script/stylesheet requests carry an Origin header
-  // the install-time addAll fetch didn't — without it, every offline
+  // the install-time precache fetch didn't — without it, every offline
   // chunk load Vary-misses the cache and dies on the network fallback.
   const cached = await caches.match(request, { ignoreVary: true })
   return cached || fetch(request)
