@@ -69,8 +69,8 @@ describe('wire parsing and rendering', () => {
   it('extracts plain names from the linkified spectator list', () => {
     const { view } = make()
     view.handleSpectators(1, WIRE_NAMES_LINKIFIED)
-    expect(view.sheet.querySelector('.chat-names')!.textContent).toBe('⊙ RoinerR, tdpma')
-    expect(view.chip.textContent).toContain('⊙1')
+    expect(view.sheet.querySelector('.chat-names')!.textContent).toBe('◉ RoinerR, tdpma')
+    expect(view.chip.textContent).toContain('◉1')
   })
 
   it('clears the names row when the spectator list empties', () => {
@@ -168,9 +168,31 @@ describe('chip visibility — player role (fallback-only)', () => {
     const { view } = make()
     view.handleSpectators(1, WIRE_NAMES_LINKIFIED)
     expect(chipVisible(view)).toBe(true)
-    expect(view.chip.textContent).toContain('⊙1')
+    expect(view.chip.textContent).toContain('◉1')
     view.handleSpectators(0, '')
     expect(chipVisible(view)).toBe(false)
+  })
+
+  it('is vetoed by chipAllowed (overlay owns the map); resync restores it', () => {
+    let overlayUp = false
+    const { view } = make({ chipAllowed: () => !overlayUp })
+    view.handleSpectators(1, WIRE_NAMES_LINKIFIED)
+    expect(chipVisible(view)).toBe(true)
+    // Overlay takes the screen: the host resyncs and the chip retracts.
+    overlayUp = true
+    view.syncChip()
+    expect(chipVisible(view)).toBe(false)
+    // Chat landing mid-overlay stays vetoed but still counts as unread…
+    view.handleChat(WIRE_CHAT, false)
+    expect(chipVisible(view)).toBe(false)
+    // …and a mid-overlay spectator update can't resurrect the chip either.
+    view.handleSpectators(2, WIRE_NAMES_LINKIFIED)
+    expect(chipVisible(view)).toBe(false)
+    // Map returns: chip back, badge carrying the missed message.
+    overlayUp = false
+    view.syncChip()
+    expect(chipVisible(view)).toBe(true)
+    expect(view.chip.textContent).toContain('1')
   })
 
   it('a real unread message keeps the chip alive after the spectator leaves', () => {
@@ -189,10 +211,10 @@ describe('chip visibility — spectator role (always on)', () => {
   it('is visible from construction, count-less until told otherwise', () => {
     const { view } = make({ alwaysShowChip: true })
     expect(chipVisible(view)).toBe(true)
-    // Bare # rather than a misleading ⊙0 while the count is unknown.
+    // Bare # rather than a misleading ◉0 while the count is unknown.
     expect(view.chip.textContent).toBe('#')
     view.handleSpectators(2, WIRE_NAMES_LINKIFIED)
-    expect(view.chip.textContent).toContain('⊙2')
+    expect(view.chip.textContent).toContain('◉2')
   })
 })
 

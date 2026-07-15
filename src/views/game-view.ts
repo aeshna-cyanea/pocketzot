@@ -207,6 +207,13 @@ export function buildGameView(
   // tap detection (see its constructor); we only supply the behavior.
   statsView.setOnPlaceTap(() => minimapOpen ? closeMinimap() : openMinimap())
   statsView.setOnSettingsTap(() => openSettings())
+  // Declared ahead of ChatView (not with its map/log siblings below): the
+  // chipAllowed veto reads its display, and the ChatView constructor runs an
+  // initial syncChip — a later `const` would be a TDZ crash at mount.
+  const uiOverlay = document.createElement('div')
+  uiOverlay.id = 'ui-overlay'
+  uiOverlay.style.display = 'none'
+
   // WebTiles chat. The view handles history/pill/chip; we supply transport.
   // Spectators always get the chip — chat is half the point of watching;
   // players only once someone shows up.
@@ -219,6 +226,11 @@ export function buildGameView(
     // signal. (serverPromptActive also counts a silent spell harvest;
     // losing a pill to that sub-second window is fine.)
     pillAllowed: () => !serverPromptActive(),
+    // The floating chip is map furniture: when an overlay takes the map area
+    // it retracts with the map (enterOverlayLayout/hideOverlay resync it)
+    // instead of painting over the menu's top-right. Spectators are exempt —
+    // their chip lives in the spectator bar, which overlays never cover.
+    chipAllowed: spectating ? undefined : () => uiOverlay.style.display === 'none',
   })
   // Programmatic focus pulls (hardware keys onto the view, or a server text
   // prompt) must never fire while the user is typing in chat: when
@@ -443,10 +455,6 @@ export function buildGameView(
   // servers where neither is known yet at mount.
   maybeShowVersionNotice(gameId, loader?.version)
 
-  const uiOverlay = document.createElement('div')
-  uiOverlay.id = 'ui-overlay'
-  uiOverlay.style.display = 'none'
-
   const msgLog = document.createElement('div')
   msgLog.id = 'game-messages'
   msgLog.addEventListener('click', (e) => {
@@ -667,14 +675,16 @@ export function buildGameView(
     }
   }
 
-  const touchControls: TouchControls = buildTouchControls((msg) => {
+  // Shared input dispatch for the touch-control buttons AND the phone back
+  // button (popstate below): the client-panel/lens/menu-nav guards here are
+  // what give an injected Esc the same meaning as a tapped one.
+  function dispatchTouchInput(msg: ClientMsg): void {
     if (isHarvesting()) return  // suppress d-pad/macro input during silent harvest
-    // The monster panel is a client-only overlay. In landscape it covers just
-    // the map, so the sidebar keyboard stays visible (the display:none hide
-    // that works in portrait is undone whenever a server message re-reveals
-    // the sidebar). Route its Esc to close the panel — mirroring the physical
-    // Esc handler in docKeyHandler — and swallow every other key so a stray
-    // tap can't drive the hidden game beneath the overlay.
+    // The monster panel is a client-only overlay and the touch controls stay
+    // visible over it (both orientations, like any plain menu). Route their
+    // Esc to close the panel — mirroring the physical Esc handler in
+    // docKeyHandler — and swallow every other key so a stray tap can't drive
+    // the hidden game beneath the overlay.
     if (monsterPanelOpen) {
       if (msg.msg === 'key' && msg.keycode === 27) closeMonsterPanel()
       return
@@ -695,7 +705,9 @@ export function buildGameView(
     if (msg.msg === 'key' && handleScrollerKeycode(msg.keycode)) return
     conn.send(msg)
     afterUserSend(msg)
-  }, spectating ? {} : {
+  }
+
+  const touchControls: TouchControls = buildTouchControls(dispatchTouchInput, spectating ? {} : {
     spellTab: { render: renderSpellGrid, hasSpells: () => harvester.spells.length > 0 },
   })
 
@@ -849,11 +861,42 @@ export function buildGameView(
   }
   window.addEventListener(MONSTER_LIST_MODE_CHANGED_EVENT, onMonsterListModePref)
 
+  // Phone back button: behaves exactly like the on-screen Esc button —
+  // same dispatch, same guards, no special cases. Without this, Back
+  // navigates the tab away and tears down the socket mid-game; users reach
+  // for it when a screen won't close (Android's universal dismiss gesture).
+  // A single sentinel history entry absorbs the pop, re-arms itself, and
+  // routes Esc; with nothing open Esc is a no-op, so Back never exits a
+  // running game (deliberate — accidental exit is the disaster case; the
+  // lobby button and home gesture remain). The chat sheet is deliberately
+  // NOT closed by Back: it's a companion pane carried across screens, and
+  // no other Esc path targets it either. Side effect, not a target: any
+  // other history-back lands here too — e.g. iOS Safari's in-browser edge
+  // swipe now stays in-app and reads as an Esc (installed PWAs have no
+  // swipe-back). Same lifecycle as the pref listeners above: released in
+  // exitToLobby, isConnected self-unhook as the backstop.
+  function onPopState(): void {
+    if (!view.isConnected) {
+      window.removeEventListener('popstate', onPopState)
+      return
+    }
+    history.pushState({ pz: 'game' }, '')
+    dispatchTouchInput({ msg: 'key', keycode: 27 })
+  }
+  // Reloads and auto-resumes land with the sentinel already on top —
+  // don't stack another (each stale entry would cost one dead Back press
+  // after the view is gone).
+  if ((history.state as { pz?: string } | null)?.pz !== 'game') {
+    history.pushState({ pz: 'game' }, '')
+  }
+  window.addEventListener('popstate', onPopState)
+
   // Every deliberate return to the lobby funnels through here so this view's
   // window listeners don't outlive it (each game builds a fresh view).
   function exitToLobby(exit?: GameExit): void {
     window.removeEventListener(RENDER_MODE_CHANGED_EVENT, onRenderModePref)
     window.removeEventListener(MONSTER_LIST_MODE_CHANGED_EVENT, onMonsterListModePref)
+    window.removeEventListener('popstate', onPopState)
     touchControls.destroy()
     onLobby(exit)
   }
@@ -943,7 +986,7 @@ export function buildGameView(
     // through the real message path (pill, unread badge, sheet history), for
     // eyeballing pill behavior in either role without a second chatter.
     // Nothing touches the wire. First it fakes the demo chatters joining as
-    // spectators (so the ⊙N count chip appears, in the playing role too),
+    // spectators (so the ◉N count chip appears, in the playing role too),
     // then the default script covers the interesting cases: a short line, a
     // quick follow-up that replaces the pill mid-display, a long line that
     // ellipsizes, and a fresh pill after the previous one expired. Pass your
@@ -1678,6 +1721,9 @@ export function buildGameView(
       menuControls.style.display = 'none'
       mapView.element.style.display = ''
       touchControls.element.style.display = ''
+      // The chip's overlay veto keys off uiOverlay's display — every toggle
+      // of it needs a resync or the chip lags until the next chat event.
+      chatView.syncChip()
     }
   }
 
@@ -1698,6 +1744,7 @@ export function buildGameView(
       menuControls.style.display = ''
       mapView.element.style.display = 'none'
       touchControls.element.style.display = 'none'
+      chatView.syncChip()  // overlay back → chip veto re-engages
     } else {
       showHud()
       msgLog.style.display = ''
@@ -2137,35 +2184,40 @@ export function buildGameView(
       btns = [{ label: '⎋', keycode: 27 }]
     }
     for (const def of btns) {
-      const btn = document.createElement('button')
-      btn.className = 'menu-ctrl-btn'
-      btn.innerHTML = glyphHtml(def.label)
+      const fire = def.shift
+        ? () => menuShift.tap()
+        : () => {
+            if (def.key) conn.send({ msg: 'input', text: def.key })
+            else if (def.keycode) conn.send({ msg: 'key', keycode: def.keycode })
+          }
+      const btn = makeMenuCtrlBtn(def.label, fire)
       if (def.dynamic) btn.dataset.dynamic = 'accept'
       if (def.shift) {
         btn.dataset.shift = 'true'
         applyShiftBtnState(btn)
-        btn.addEventListener('click', () => {
-          menuShift.tap()
-          focusView()
-        })
-        btn.addEventListener('touchstart', (e) => {
-          e.preventDefault()
-          menuShift.tap()
-        }, { passive: false })
-      } else {
-        btn.addEventListener('click', () => {
-          if (def.key) conn.send({ msg: 'input', text: def.key })
-          else if (def.keycode) conn.send({ msg: 'key', keycode: def.keycode })
-          focusView()
-        })
-        btn.addEventListener('touchstart', (e) => {
-          e.preventDefault()
-          if (def.key) conn.send({ msg: 'input', text: def.key })
-          else if (def.keycode) conn.send({ msg: 'key', keycode: def.keycode })
-        }, { passive: false })
       }
       menuControls.appendChild(btn)
     }
+  }
+
+  // One menu-ctrl bar button: fires on touchstart (preventDefault suppresses
+  // the synthesized click, so phones respond instantly without double-firing)
+  // with click as the mouse path — the only one that re-focuses the view.
+  // Shared by buildMenuControls and the monster panel's client-local ⎋ so
+  // the tap feel can't drift between server-bound and local buttons.
+  function makeMenuCtrlBtn(label: string, fire: () => void): HTMLButtonElement {
+    const btn = document.createElement('button')
+    btn.className = 'menu-ctrl-btn'
+    btn.innerHTML = glyphHtml(label)
+    btn.addEventListener('click', () => {
+      fire()
+      focusView()
+    })
+    btn.addEventListener('touchstart', (e) => {
+      e.preventDefault()
+      fire()
+    }, { passive: false })
+    return btn
   }
 
   function applyShiftBtnState(btn: HTMLElement): void {
@@ -2741,23 +2793,27 @@ export function buildGameView(
   function openMonsterPanel(): void {
     monsterPanelOpen = true
     renderOverlay('Monsters', () => {
-      // Client-only overlay: hide the touch d-pad (its Esc would send Esc to
-      // the server, which is not what we want for a local panel) and add an
-      // inline close button to the header.
-      const headerEl = uiOverlay.querySelector('.overlay-title')
-      if (headerEl) {
-        const closeBtn = document.createElement('button')
-        closeBtn.className = 'overlay-close'
-        closeBtn.textContent = '×'
-        closeBtn.addEventListener('click', () => closeMonsterPanel())
-        headerEl.appendChild(closeBtn)
-      }
       const body = document.createElement('div')
       body.className = 'overlay-body fg7'
       body.appendChild(monsterPanel.element)
+      // Glance-and-close: the body flexes below the content-sized list, so
+      // the whole clear area under the last row is a no-reach dismiss target
+      // (plus the no-monsters placeholder). Deliberately NOT closest('.mp-row')
+      // inversion: taps in the gaps/padding around rows hit .mp-list and stay
+      // inert, so a near-miss on a monster can't dismiss the panel. When the
+      // list fills the screen the ⎋ bar below is the close affordance.
+      body.addEventListener('click', (e) => {
+        const t = e.target as HTMLElement
+        if (t === body || t.classList.contains('mp-empty')) closeMonsterPanel()
+      })
       uiOverlay.appendChild(body)
     })
-    touchControls.element.style.display = 'none'
+    // Client-only overlay, but the touch controls stay up (renderOverlay's
+    // default) — the same chrome as inventory and every other plain menu, so
+    // the control band never swaps across open → row-tap describe → close.
+    // Their Esc closes the panel locally and every other key is swallowed by
+    // the monsterPanelOpen guard in the touch dispatch (same deal in both
+    // orientations; landscape always worked this way).
 
     monsterPanel.setOnPickCoord((x, y) => {
       if (uiStack.length === 0 && !crtActive && !activeMenu) {
@@ -2858,11 +2914,14 @@ export function buildGameView(
     // Every server-driven overlay passes through here; the map-area minimap
     // lens must not linger over (or under) it, and neither may a chat pill
     // already mid-display (new pills are vetoed via pillAllowed, but that
-    // can't retract one in flight).
+    // can't retract one in flight). The floating chat chip retracts too
+    // (syncChip below, once the overlay is visible and chipAllowed reads
+    // false) — hideOverlay's resync brings it back with the map.
     closeMinimap({ suspend: true })
     chatView.hidePill()
     uiOverlay.innerHTML = ''
     uiOverlay.style.display = ''
+    chatView.syncChip()
     mapView.element.style.display = 'none'
     msgLog.style.display = 'none'
     hud.style.display = 'none'
@@ -3044,6 +3103,7 @@ export function buildGameView(
     autoCloseKbdIfOurs()
     uiOverlay.style.display = 'none'
     uiOverlay.innerHTML = ''
+    chatView.syncChip()  // chip retracts while an overlay is up; map's back
     mapView.element.style.display = ''
     menuControls.style.display = 'none'
     menuControls.innerHTML = ''

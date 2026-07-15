@@ -2408,18 +2408,6 @@ html, body {
   flex-shrink: 0;
 }
 
-.overlay-close {
-  background: none;
-  border: none;
-  color: var(--text-dim);
-  font-size: 1.2rem;
-  line-height: 1;
-  padding: 0 0.25rem;
-  margin-left: auto;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
 .tile-stack {
   position: relative;
   display: inline-block;
@@ -2443,7 +2431,6 @@ html, body {
      vertical middle of the block. */
   margin-top: calc((1lh - 32px) / 2);
 }
-.overlay-close:active { color: var(--text); }
 
 .overlay-list {
   display: flex;
@@ -3962,7 +3949,7 @@ html, body {
 .tc-btn.tri { font-size: 0.72rem; letter-spacing: -0.02em; }
 
 /* ── Chat (chat-view.ts) ──────────────────────────────────────
-   Glyph language, no emoji: ⊙ = spectators, # = chat, * = server notice,
+   Glyph language, no emoji: ◉ = spectators, # = chat, * = server notice,
    » = send. Chip lives in the spectator bar when spectating; while playing
    it floats over the map's top-right and only exists once someone watches. */
 

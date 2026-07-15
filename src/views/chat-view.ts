@@ -5,7 +5,7 @@
 // (player vs spectator) wants them.
 //
 // Glyph conventions (no emoji — they fight the CRT aesthetic and render
-// differently per platform): ⊙ = spectators (an eye), # = chat (IRC channel),
+// differently per platform): ◉ = spectators (an eye), # = chat (IRC channel),
 // * prefix = meta/server notices, » = send.
 
 const HISTORY_CAP = 200
@@ -27,6 +27,12 @@ export interface ChatViewOpts {
    *  the screen, a floating preview over it is noise. Vetoed messages
    *  still count toward the unread badge, so nothing is lost. */
   pillAllowed?: () => boolean
+  /** Host veto for the chip. The floating (player-role) chip is map
+   *  furniture — while an overlay owns the map area it must retract like
+   *  the pill and minimap do, instead of painting over the menu. Unread
+   *  keeps counting while vetoed; the badge catches up on return. The host
+   *  calls syncChip() when the veto's value changes. */
+  chipAllowed?: () => boolean
 }
 
 interface ChatLine {
@@ -103,7 +109,7 @@ function appendLinkified(el: HTMLElement, text: string): void {
 export class ChatView {
   /** Bottom sheet (history + input). Mounted once, hidden until opened. */
   readonly sheet: HTMLElement
-  /** Entry chip: `⊙N  #` with an unread badge. Host decides placement. */
+  /** Entry chip: `◉N  #` with an unread badge. Host decides placement. */
   readonly chip: HTMLButtonElement
   /** Transient one-line preview shown while the sheet is closed. */
   readonly pill: HTMLElement
@@ -233,7 +239,7 @@ export class ChatView {
     const div = document.createElement('div')
     div.innerHTML = names
     const plain = (div.textContent ?? '').trim()
-    this.headerNamesEl.textContent = plain ? `⊙ ${plain}` : ''
+    this.headerNamesEl.textContent = plain ? `◉ ${plain}` : ''
     if (!plain) this.headerNamesEl.classList.remove('chat-names-open')
     this.syncChip()
   }
@@ -330,7 +336,9 @@ export class ChatView {
     this.pill.style.display = 'none'
   }
 
-  private syncChip(): void {
+  /** Public so the host can re-evaluate when its chipAllowed veto flips
+   *  (overlay taking/returning the screen); chat events call it themselves. */
+  syncChip(): void {
     if (this.hidden) return
     // Fallback-only (player role): the chip earns its pixels only while
     // someone is watching, or a real message went unread (a spectator may chat
@@ -338,12 +346,13 @@ export class ChatView {
     // a meta "/help" notice on every game start, and join/leave notices are
     // meta too — none of that should summon chat UI for an unwatched player.
     // Spectator role opts out via alwaysShowChip.
-    const show = this.opts.alwaysShowChip
-      || this.spectatorCount > 0 || this.unread > 0
+    const show = (!this.opts.chipAllowed || this.opts.chipAllowed())
+      && (this.opts.alwaysShowChip
+        || this.spectatorCount > 0 || this.unread > 0)
     this.chip.style.display = show ? '' : 'none'
     // No count yet (or genuinely zero): show a bare `#` rather than a
-    // misleading ⊙0 — the join-time update_spectators can lag or be missed.
-    this.chipEyeEl.textContent = this.spectatorCount > 0 ? `⊙${this.spectatorCount}` : ''
+    // misleading ◉0 — the join-time update_spectators can lag or be missed.
+    this.chipEyeEl.textContent = this.spectatorCount > 0 ? `◉${this.spectatorCount}` : ''
     const n = this.unread
     this.chipBadgeEl.textContent = n > 0 ? (n > 9 ? '9+' : String(n)) : ''
     this.chipBadgeEl.style.display = n > 0 ? '' : 'none'
