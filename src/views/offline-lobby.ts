@@ -287,10 +287,10 @@ export function buildOfflineLobbyView(
   function renderReadiness(r: Readiness): void {
     if (r.state === 'ready') {
       if (r.update) setReadiness('ok', 'Ready for offline play', 'Engine update available', 'Update')
-      else if (!r.tiles) setReadiness('ok', 'Ready for offline play', 'Text mode — tiles not added', 'Add tiles ~ 9 MB')
+      else if (!r.tiles) setReadiness('ok', 'Ready for offline play', 'Text mode — tiles not added', 'Add tiles ~9 MB')
       else setReadiness('ok', 'Ready for offline play', 'Engine and tiles downloaded')
     } else if (r.state === 'not-cached') {
-      setReadiness('warn', 'Not downloaded', 'Offline play needs a one-time download', 'Download ~ 21 MB')
+      setReadiness('warn', 'Not downloaded', 'Offline play needs a one-time download', 'Download ~21 MB')
     } else if (r.state === 'offline-not-cached') {
       setReadiness('warn', 'Not downloaded', 'No connection — connect once to download')
     } else {
@@ -309,12 +309,9 @@ export function buildOfflineLobbyView(
     downloadBtn.disabled = true
     void downloadOfflineData((label) => setReadiness('dim', label, null))
       .then((stats) => {
-        // No byte count on purpose: dev/CDN layers can transparently
-        // content-decode the .gz artifacts, inflating netBytes well past
-        // the size the button promised.
         showNotice(stats.netBytes > 0
-          ? 'Downloaded the offline engine and game assets.'
-          : 'Offline data verified — everything was already downloaded.')
+          ? 'Downloaded offline data.'
+          : 'Offline data verified. Everything was already downloaded.')
       })
       .catch((e: unknown) => showNotice(`Download failed: ${String(e instanceof Error ? e.message : e)}`))
       .then(() => {
