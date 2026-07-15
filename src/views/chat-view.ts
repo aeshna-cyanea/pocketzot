@@ -27,6 +27,12 @@ export interface ChatViewOpts {
    *  the screen, a floating preview over it is noise. Vetoed messages
    *  still count toward the unread badge, so nothing is lost. */
   pillAllowed?: () => boolean
+  /** Host veto for the chip. The floating (player-role) chip is map
+   *  furniture — while an overlay owns the map area it must retract like
+   *  the pill and minimap do, instead of painting over the menu. Unread
+   *  keeps counting while vetoed; the badge catches up on return. The host
+   *  calls syncChip() when the veto's value changes. */
+  chipAllowed?: () => boolean
 }
 
 interface ChatLine {
@@ -330,7 +336,9 @@ export class ChatView {
     this.pill.style.display = 'none'
   }
 
-  private syncChip(): void {
+  /** Public so the host can re-evaluate when its chipAllowed veto flips
+   *  (overlay taking/returning the screen); chat events call it themselves. */
+  syncChip(): void {
     if (this.hidden) return
     // Fallback-only (player role): the chip earns its pixels only while
     // someone is watching, or a real message went unread (a spectator may chat
@@ -338,8 +346,9 @@ export class ChatView {
     // a meta "/help" notice on every game start, and join/leave notices are
     // meta too — none of that should summon chat UI for an unwatched player.
     // Spectator role opts out via alwaysShowChip.
-    const show = this.opts.alwaysShowChip
-      || this.spectatorCount > 0 || this.unread > 0
+    const show = (!this.opts.chipAllowed || this.opts.chipAllowed())
+      && (this.opts.alwaysShowChip
+        || this.spectatorCount > 0 || this.unread > 0)
     this.chip.style.display = show ? '' : 'none'
     // No count yet (or genuinely zero): show a bare `#` rather than a
     // misleading ⊙0 — the join-time update_spectators can lag or be missed.

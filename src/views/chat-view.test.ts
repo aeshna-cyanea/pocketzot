@@ -173,6 +173,28 @@ describe('chip visibility — player role (fallback-only)', () => {
     expect(chipVisible(view)).toBe(false)
   })
 
+  it('is vetoed by chipAllowed (overlay owns the map); resync restores it', () => {
+    let overlayUp = false
+    const { view } = make({ chipAllowed: () => !overlayUp })
+    view.handleSpectators(1, WIRE_NAMES_LINKIFIED)
+    expect(chipVisible(view)).toBe(true)
+    // Overlay takes the screen: the host resyncs and the chip retracts.
+    overlayUp = true
+    view.syncChip()
+    expect(chipVisible(view)).toBe(false)
+    // Chat landing mid-overlay stays vetoed but still counts as unread…
+    view.handleChat(WIRE_CHAT, false)
+    expect(chipVisible(view)).toBe(false)
+    // …and a mid-overlay spectator update can't resurrect the chip either.
+    view.handleSpectators(2, WIRE_NAMES_LINKIFIED)
+    expect(chipVisible(view)).toBe(false)
+    // Map returns: chip back, badge carrying the missed message.
+    overlayUp = false
+    view.syncChip()
+    expect(chipVisible(view)).toBe(true)
+    expect(view.chip.textContent).toContain('1')
+  })
+
   it('a real unread message keeps the chip alive after the spectator leaves', () => {
     const { view } = make()
     view.handleSpectators(1, WIRE_NAMES_LINKIFIED)
