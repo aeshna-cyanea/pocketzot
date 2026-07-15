@@ -61,7 +61,7 @@ export function buildOfflineLobbyView(
       <h2 class="lobby-section-title">Storage</h2>
       <div class="offline-device">
         <div id="offline-readiness" class="offline-device-row" hidden>
-          <span id="offline-ready-glyph" class="offline-device-glyph">●</span>
+          <span id="offline-ready-glyph" class="offline-device-glyph is-dot">●</span>
           <span class="offline-device-lines">
             <span id="offline-ready-status" class="offline-device-label">Checking offline data…</span>
             <span id="offline-ready-sub" class="offline-device-sub" hidden></span>
@@ -72,7 +72,7 @@ export function buildOfflineLobbyView(
           <span class="offline-device-glyph">⇅</span>
           <span class="offline-device-lines">
             <span class="offline-device-label">Backup</span>
-            <span class="offline-device-sub">Saved games, morgues, and scores in one file</span>
+            <span class="offline-device-sub">Saves, morgues, and scores in one file</span>
           </span>
           <button type="button" id="offline-export" class="offline-device-btn">Export</button>
           <button type="button" id="offline-import" class="offline-device-btn">Import</button>
@@ -276,10 +276,12 @@ export function buildOfflineLobbyView(
     button?: string,
   ): void {
     readinessEl.hidden = false
-    readyGlyphEl.className = `offline-device-glyph is-${tone}`
+    readyGlyphEl.className = `offline-device-glyph is-dot is-${tone}`
     readyStatusEl.textContent = label
-    readySubEl.hidden = sub === null
-    readySubEl.textContent = sub ?? ''
+    // null = no detail: keep the line reserved (nbsp) so the label doesn't
+    // hop vertically when a two-line state switches to download progress.
+    readySubEl.hidden = false
+    readySubEl.textContent = sub ?? ' '
     downloadBtn.hidden = button === undefined
     if (button !== undefined) downloadBtn.textContent = button
   }
@@ -290,7 +292,7 @@ export function buildOfflineLobbyView(
       else if (!r.tiles) setReadiness('ok', 'Ready for offline play', 'Text mode — tiles not added', 'Add tiles ~9 MB')
       else setReadiness('ok', 'Ready for offline play', 'Engine and tiles downloaded')
     } else if (r.state === 'not-cached') {
-      setReadiness('warn', 'Not downloaded', 'Offline play needs a one-time download', 'Download ~21 MB')
+      setReadiness('dim', 'Not downloaded', 'Offline play needs a one-time download', 'Download ~21 MB')
     } else if (r.state === 'offline-not-cached') {
       setReadiness('warn', 'Not downloaded', 'No connection — connect once to download')
     } else {
