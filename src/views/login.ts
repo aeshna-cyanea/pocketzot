@@ -91,7 +91,7 @@ export function buildLoginView(
 
   // The card is organized as two top-level mode groups — "Play online"
   // (accounts, sign-in, spectate: everything that talks to a WebTiles server)
-  // and "On this device" (the offline WASM engine) — so the two ways to play
+  // and "Play offline" (the offline WASM engine) — so the two ways to play
   // read at a glance. Everything online-only must live inside the first
   // group; keep the offline group last and lean.
   view.innerHTML = `
@@ -122,15 +122,14 @@ export function buildLoginView(
 
       ${onOffline ? `
       <section id="offline-section" class="login-group">
-        <div class="login-group-label">On this device</div>
+        <div class="login-group-label">Play offline</div>
         <button type="button" id="offline-card" class="login-account-card login-offline-card">
           <span class="login-account-tag">⌂</span>
           <span class="login-offline-lines">
-            <span class="login-account-username">Play offline</span>
+            <span id="offline-title" class="login-account-username"></span>
             <span class="login-offline-subrow">
               <span id="offline-sub" class="login-offline-sub"></span>
               <span id="offline-count" class="login-offline-count"></span>
-              <span id="offline-meta" class="login-offline-meta"></span>
             </span>
           </span>
         </button>
@@ -270,79 +269,65 @@ export function buildLoginView(
   }
 
   // Offline card: one tap opens the offline lobby (save slots, backup
-  // management — views/offline-lobby.ts). The title is always the fixed
-  // "Play offline" — home-card titles name destinations, never player names
-  // (which are accent-colored elsewhere; a title-weight name here would
-  // re-open that contest). The character lives in the subline: the most
-  // recently played one, "+N more" when others exist, with XL/place pinned
-  // right. Slot presence is guessed synchronously from the offline-state
-  // records, then corrected by the IDB probe when the browser supports
-  // probing without side effects (covers a wiped IDB under stale records,
-  // and an imported save with no record). The card is always exactly two
-  // lines, so state swaps never change its height.
+  // management — views/offline-lobby.ts). With the group label naming the
+  // action ("Play offline"), the card is titled like the online account
+  // cards — by what you'll resume: the most recently played character, or
+  // "New game" when no saves exist. The subline shows that character's
+  // XL/place plus "+N more" when other saves exist, or the fixed
+  // "On this device" when there's no character to describe. Slot presence
+  // is guessed synchronously from the offline-state records, then corrected
+  // by the IDB probe when the browser supports probing without side effects
+  // (covers a wiped IDB under stale records, and an imported save with no
+  // record). The card is always exactly two lines, so state swaps never
+  // change its height.
   function renderOfflineCard(): void {
     const card = view.querySelector<HTMLButtonElement>('#offline-card')
+    const title = view.querySelector<HTMLElement>('#offline-title')
     const sub = view.querySelector<HTMLElement>('#offline-sub')
     const count = view.querySelector<HTMLElement>('#offline-count')
-    const meta = view.querySelector<HTMLElement>('#offline-meta')
-    if (!card || !sub || !count || !meta || !onOffline) return
-    // Whether the sub-line is a character name (worth keeping next to the
-    // negative readiness state) or generic filler (which the negative state
-    // replaces outright — squeezing both onto the line truncates each).
-    let hasCharSub = false
+    if (!card || !title || !sub || !count || !onOffline) return
     const setCard = (slots: string[], chars: Record<string, OfflineChar>): void => {
       count.textContent = ''
-      meta.textContent = ''
-      hasCharSub = false
-      if (slots.length === 0) {
-        sub.textContent = 'Start a new game'
-        return
-      }
       // Records are keyed by live slots (reconciled, or slots came from the
       // records themselves), so the newest is just the newest value.
-      const rec = Object.values(chars).sort((a, b) => b.when - a.when)[0]
+      const rec = slots.length > 0
+        ? Object.values(chars).sort((a, b) => b.when - a.when)[0]
+        : undefined
       if (!rec) {
-        // Saves exist but the browser knows nothing about them (imported
-        // pack, wiped localStorage) — the lobby labels them by stem.
-        sub.textContent = slots.length === 1 ? 'Saved game' : `${slots.length} saved games`
-        return
+        // No saves, or saves the browser knows nothing about (imported
+        // pack, wiped localStorage) — the lobby labels the latter by stem.
+        title.textContent = slots.length === 0 ? 'New game'
+          : slots.length === 1 ? 'Saved game' : `${slots.length} saved games`
+        sub.textContent = 'On this device'
+      } else {
+        title.textContent = nameTitle(rec.name, rec.title)
+        const parts: string[] = []
+        if (rec.xl != null) parts.push(`XL${rec.xl}`)
+        if (rec.place) parts.push(compactPlace(rec.place, rec.depth))
+        sub.textContent = parts.join(' ') || 'On this device'
+        // Own span so the count survives when a long sub truncates.
+        if (slots.length > 1) count.textContent = `+${slots.length - 1} more`
       }
-      hasCharSub = true
-      sub.textContent = nameTitle(rec.name, rec.title)
-      // Own span so the count survives when a long name truncates.
-      if (slots.length > 1) count.textContent = `+${slots.length - 1} more`
-      const parts: string[] = []
-      if (rec.xl != null) parts.push(`XL${rec.xl}`)
-      if (rec.place) parts.push(compactPlace(rec.place, rec.depth))
-      meta.textContent = parts.join(' ')
+      applyReadiness()
+    }
+    // Readiness, fallback-only (the card stays quiet when ready): the
+    // subline flips to the negative state so "installed the app for the
+    // flight but never downloaded" is visible from the home screen. It
+    // takes the whole line — the title still names the character, and
+    // squeezing flavor next to the warning truncates both. Applied after
+    // every setCard repaint. A deploy that ships no engine hides the whole
+    // section instead.
+    let notReady = false
+    const applyReadiness = (): void => {
+      if (!notReady) return
+      sub.textContent = 'Not downloaded'
+      count.textContent = ''
     }
     const guess = getOfflineChars()
     setCard(Object.keys(guess), guess)
     void loadOfflineSlots().then(({ stems, chars }) => {
-      if (view.isConnected) {
-        setCard(stems, chars)
-        applyReadiness()
-      }
+      if (view.isConnected) setCard(stems, chars)
     })
-    // Readiness, fallback-only (the card stays quiet when ready): the meta
-    // span flips to the negative state so "installed the app for the flight
-    // but never downloaded" is visible from the home screen. Applied after
-    // setCard too — the async slot correction repaints the meta span.
-    // A deploy that ships no engine hides the whole section instead.
-    let notReady = false
-    const applyReadiness = (): void => {
-      if (!notReady) return
-      if (hasCharSub) {
-        // Keep the character; the negative state takes the meta slot
-        // (outranking the XL/place flavor).
-        meta.textContent = 'Not downloaded'
-      } else {
-        // Generic filler sub — replace it instead of truncating both.
-        sub.textContent = 'Not downloaded'
-        count.textContent = ''
-        meta.textContent = ''
-      }
-    }
     void probeReadiness().then((r) => {
       if (!view.isConnected) return
       if (r.state === 'undeployed') {

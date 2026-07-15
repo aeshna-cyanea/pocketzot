@@ -390,9 +390,9 @@ html, body {
 .login-account-card:disabled::after { content: "…"; }
 
 /* Offline entry card (login.ts renderOfflineCard): account-card chrome with a
-   two-line middle — fixed "Play offline" title + a subrow carrying the most
-   recent character (+N more), with XL/place meta pinned right so truncation
-   can only ever eat the name, never the position. */
+   two-line middle — the most recent character (or "New game") as the title +
+   a subrow with its XL/place and "+N more" (or "On this device" when there's
+   no character; the not-downloaded readiness fallback takes the whole line). */
 .login-offline-lines {
   grid-area: user;
   display: flex;
@@ -425,14 +425,6 @@ html, body {
   white-space: nowrap;
 }
 .login-offline-count:empty { display: none; }
-.login-offline-meta {
-  flex: 0 0 auto;
-  margin-left: auto;
-  font-size: 0.78rem;
-  color: var(--text-dim);
-  white-space: nowrap;
-}
-.login-offline-meta:empty { display: none; }
 
 .login-add-section > summary {
   cursor: pointer;
