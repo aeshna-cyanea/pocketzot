@@ -69,8 +69,8 @@ describe('wire parsing and rendering', () => {
   it('extracts plain names from the linkified spectator list', () => {
     const { view } = make()
     view.handleSpectators(1, WIRE_NAMES_LINKIFIED)
-    expect(view.sheet.querySelector('.chat-names')!.textContent).toBe('⊙ RoinerR, tdpma')
-    expect(view.chip.textContent).toContain('⊙1')
+    expect(view.sheet.querySelector('.chat-names')!.textContent).toBe('◉ RoinerR, tdpma')
+    expect(view.chip.textContent).toContain('◉1')
   })
 
   it('clears the names row when the spectator list empties', () => {
@@ -168,7 +168,7 @@ describe('chip visibility — player role (fallback-only)', () => {
     const { view } = make()
     view.handleSpectators(1, WIRE_NAMES_LINKIFIED)
     expect(chipVisible(view)).toBe(true)
-    expect(view.chip.textContent).toContain('⊙1')
+    expect(view.chip.textContent).toContain('◉1')
     view.handleSpectators(0, '')
     expect(chipVisible(view)).toBe(false)
   })
@@ -211,10 +211,10 @@ describe('chip visibility — spectator role (always on)', () => {
   it('is visible from construction, count-less until told otherwise', () => {
     const { view } = make({ alwaysShowChip: true })
     expect(chipVisible(view)).toBe(true)
-    // Bare # rather than a misleading ⊙0 while the count is unknown.
+    // Bare # rather than a misleading ◉0 while the count is unknown.
     expect(view.chip.textContent).toBe('#')
     view.handleSpectators(2, WIRE_NAMES_LINKIFIED)
-    expect(view.chip.textContent).toContain('⊙2')
+    expect(view.chip.textContent).toContain('◉2')
   })
 })
 

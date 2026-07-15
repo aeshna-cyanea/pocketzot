@@ -3717,7 +3717,7 @@ html, body {
 .tc-btn.tri { font-size: 0.72rem; letter-spacing: -0.02em; }
 
 /* ── Chat (chat-view.ts) ──────────────────────────────────────
-   Glyph language, no emoji: ⊙ = spectators, # = chat, * = server notice,
+   Glyph language, no emoji: ◉ = spectators, # = chat, * = server notice,
    » = send. Chip lives in the spectator bar when spectating; while playing
    it floats over the map's top-right and only exists once someone watches. */
 

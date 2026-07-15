@@ -978,7 +978,7 @@ export function buildGameView(
     // through the real message path (pill, unread badge, sheet history), for
     // eyeballing pill behavior in either role without a second chatter.
     // Nothing touches the wire. First it fakes the demo chatters joining as
-    // spectators (so the ⊙N count chip appears, in the playing role too),
+    // spectators (so the ◉N count chip appears, in the playing role too),
     // then the default script covers the interesting cases: a short line, a
     // quick follow-up that replaces the pill mid-display, a long line that
     // ellipsizes, and a fresh pill after the previous one expired. Pass your

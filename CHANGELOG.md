@@ -11,15 +11,15 @@ Notable changes to PocketZot, newest first.
 
 ## 2026-07-15
 
-- The phone's back button now works like Esc: it closes the open menu or
-  panel instead of leaving the game.
 - While playing, the chat/spectator chip no longer floats over menus.
 - Made it easier to exit the monster panel. Esc closes it, like any menu,
   and tapping empty space below the list also closes it.
+- The phone's back button now works like Esc: it closes the open menu or
+  panel instead of leaving the game.
 
 ## 2026-07-11
 
-- Chat added: tap the ⊙ spectator count to read and send messages
+- Chat added: tap the ◉ spectator count to read and send messages
   while playing or spectating. When playing, the count appears once a
   spectator is present. New messages show a brief preview. Tap the message
   preview or the unread count to view.
