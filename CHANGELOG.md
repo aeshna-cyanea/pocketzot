@@ -9,6 +9,14 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-07-15
+
+- The phone's back button now works like Esc: it closes the open menu or
+  panel instead of leaving the game.
+- While playing, the chat/spectator chip no longer floats over menus.
+- Made it easier to exit the monster panel. Esc closes it, like any menu,
+  and tapping empty space below the list also closes it.
+
 ## 2026-07-11
 
 - Chat added: tap the ⊙ spectator count to read and send messages
@@ -226,11 +234,11 @@ Notable changes to PocketZot, newest first.
   or trunk servers after the server had been updated.
 - In describe menus, very long monster descriptions now stay a single tappable
   entry instead of splitting into separate rows.
-- Menu highlight follows the d-pad immediately on up/down, instead of after a server
-  round-trip.
+- Menu highlight follows the d-pad immediately on up/down, instead of
+  after a server round-trip.
 - D-pad diagonals page through long menus and jump to top/bottom.
-- Fixed a visible jump-back after paging on phone-width menus with tall description
-  rows.
+- Fixed a visible jump-back after paging on phone-width menus with tall
+  description rows.
 
 ## 2026-05-18
 
