@@ -248,6 +248,26 @@ export async function deleteOfflineSave(stem: string): Promise<void> {
   }
 }
 
+// Normalize an IDBFS record's `contents` to a compact Uint8Array copy.
+// null = not a file (absent, or a directory entry, which carries no contents).
+function contentsToBytes(c: unknown): Uint8Array | null {
+  if (c instanceof ArrayBuffer) return new Uint8Array(c.slice(0))
+  if (ArrayBuffer.isView(c)) return new Uint8Array(c.buffer.slice(c.byteOffset, c.byteOffset + c.byteLength))
+  return null
+}
+
+// Read one file's bytes from the mount, or null when it doesn't exist.
+export async function readOfflineFile(path: string): Promise<Uint8Array | null> {
+  const db = await openDb()
+  try {
+    const v = await request(db.transaction(STORE, 'readonly').objectStore(STORE).get(path)) as
+      { contents?: unknown } | undefined
+    return contentsToBytes(v?.contents)
+  } finally {
+    db.close()
+  }
+}
+
 // Snapshot every real file under the mount (one readonly transaction —
 // atomic vs the engine's own syncfs batches), minus regenerable caches.
 export async function readOfflineFiles(): Promise<SavedFile[]> {
@@ -260,12 +280,8 @@ export async function readOfflineFiles(): Promise<SavedFile[]> {
     keys.forEach((key, i) => {
       if (typeof key !== 'string' || !key.startsWith(`${MOUNT}/`) || isRegenerable(key)) return
       const v = values[i] as { timestamp?: unknown; mode?: unknown; contents?: unknown } | undefined
-      const c = v?.contents
-      if (c == null) return // directory entry
-      let data: Uint8Array
-      if (c instanceof ArrayBuffer) data = new Uint8Array(c.slice(0))
-      else if (ArrayBuffer.isView(c)) data = new Uint8Array(c.buffer.slice(c.byteOffset, c.byteOffset + c.byteLength))
-      else return
+      const data = contentsToBytes(v?.contents)
+      if (data === null) return // directory entry
       const ts = v?.timestamp
       out.push({
         path: key,

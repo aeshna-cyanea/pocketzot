@@ -22,6 +22,7 @@ import { downloadOfflineData, probeReadiness, type Readiness } from '../offline/
 import { compactPlace, nameTitle } from '../game/char-label'
 import { escHtml } from '../game/dcss-colors'
 import { maybeShowExitDialog } from './lobby'
+import { openRcEditor } from './rc-editor'
 import { attachScrollCue } from '../util/scroll-cue'
 
 export function buildOfflineLobbyView(
@@ -76,6 +77,14 @@ export function buildOfflineLobbyView(
           </span>
           <button type="button" id="offline-export" class="offline-device-btn">Export</button>
           <button type="button" id="offline-import" class="offline-device-btn">Import</button>
+        </div>
+        <div class="offline-device-row">
+          <span class="offline-device-glyph">✎</span>
+          <span class="offline-device-lines">
+            <span class="offline-device-label">Options file</span>
+            <span class="offline-device-sub">init.txt</span>
+          </span>
+          <button type="button" id="offline-rc" class="offline-device-btn">Edit</button>
         </div>
       </div>
     </div>
@@ -382,6 +391,14 @@ export function buildOfflineLobbyView(
     downloadPackFile(file)
     return true
   }
+
+  // --- Options (RC) file -----------------------------------------------------
+  // Safe here for the same reason as import: no engine owns IDBFS while a
+  // lobby is mounted. The editor writes only on Save (rc-editor.ts).
+
+  view.querySelector('#offline-rc')!.addEventListener('click', () => {
+    void openRcEditor(showNotice).catch((e: unknown) => showNotice(`Could not open the options file: ${String(e)}`))
+  })
 
   view.querySelector('#offline-import')!.addEventListener('click', () => {
     const input = document.createElement('input')

@@ -9,7 +9,10 @@
          full-screen — WebKit bug #254868), so style.css forces 100vh on
          html/body/#app there. Full write-up:
          dev-material/ios-safe-area-viewport.md. -->
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <!-- maximum-scale=1 suppresses iOS's auto-zoom when a sub-16px input gains
+         focus (the rc editor textarea, landscape login fields); like
+         user-scalable=no it does not block real pinch gestures on iOS 10+. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="theme-color" content="#1c1917" />

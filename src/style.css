@@ -1044,6 +1044,69 @@ html, body {
   border-color: rgba(245, 158, 11, 0.35);
 }
 
+/* ── Offline options (RC) file editor (views/rc-editor.ts) ───
+   Full-screen fixed column over the offline lobby: slim header, flex-fill
+   textarea, Esc/Save footer. */
+.rc-editor {
+  position: fixed;
+  inset: 0;
+  z-index: 220; /* same layer as .doc-backdrop; mounted later, so on top */
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: var(--safe-frame-pad);
+  background: var(--bg);
+}
+.rc-editor-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.rc-editor-title { color: var(--accent); font-size: 1rem; }
+.rc-editor-path { color: var(--text-dim); font-size: 0.8rem; }
+.rc-editor-text {
+  flex: 1;
+  min-height: 0;
+  resize: none;
+  padding: 0.6rem 0.75rem;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  /* Sub-16px is safe from iOS's focus auto-zoom only because the viewport
+     meta sets maximum-scale=1 (index.html) — keep the two in sync. */
+  font-size: var(--fs-overlay);
+  line-height: 1.45;
+}
+.rc-editor-text:focus {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+.rc-editor-text::placeholder { color: var(--text-dim); opacity: 0.6; }
+.rc-editor-error { color: var(--danger); font-size: 0.8rem; }
+.rc-editor-footer { display: flex; gap: 0.6rem; }
+.rc-editor-esc,
+.rc-editor-save {
+  flex: 1;
+  padding: 0.55rem 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.rc-editor-save {
+  color: var(--accent);
+  border-color: rgba(245, 158, 11, 0.35);
+}
+.rc-editor-esc:active,
+.rc-editor-save:active { background: var(--surface2); }
+.rc-editor-save:disabled { opacity: 0.5; cursor: default; }
+
 /* Post-game exit dialog (forwarded from the game view via GameExit). */
 .lobby-exit-backdrop {
   position: fixed;
