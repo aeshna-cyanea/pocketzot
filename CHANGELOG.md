@@ -9,6 +9,12 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-07-16
+
+- Fixed the place name's tap target, which opens the minimap, being clipped
+  to a fraction of its intended size.
+- The minimap now avoids drawing under the device status bar and cutouts.
+
 ## 2026-07-15
 
 - While playing, the chat/spectator chip no longer floats over menus.
