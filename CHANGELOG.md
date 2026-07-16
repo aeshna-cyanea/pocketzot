@@ -14,6 +14,9 @@ Notable changes to PocketZot, newest first.
 - Fixed the place name's tap target, which opens the minimap, being clipped
   to a fraction of its intended size.
 - The minimap now avoids drawing under the device status bar and cutouts.
+- In tiles mode, the monster list now shows remaining health the way the
+  map does, replacing the console-version health chips, which remain in
+  ASCII mode.
 
 ## 2026-07-15
 

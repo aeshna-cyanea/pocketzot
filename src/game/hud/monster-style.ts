@@ -103,15 +103,16 @@ export interface StatusOverlayOpts { includeMdam?: boolean; bg?: number | number
 // all? The single source of truth for the empty case — buildStatusOverlays'
 // fast path uses it to skip allocating, and appendIconOverlays uses it to
 // skip the async icons-module load for the (common) status-free monster
-// before paying a Promise. includeMdam surfaces always pass, since MDAM is
-// decoded on the slow path. fgFlags is value-cached in both backends, so
-// this stays allocation-free in steady state.
+// before paying a Promise. includeMdam surfaces pass whenever the monster
+// carries any damage; uninjured falls through to the other checks. fgFlags
+// is value-cached in both backends, so this stays allocation-free in
+// steady state.
 export function mayHaveStatusOverlays(
   fg: number | number[] | undefined,
   icons: readonly number[],
   opts: StatusOverlayOpts = {},
 ): boolean {
-  if (opts.includeMdam) return true
+  if (opts.includeMdam && decodeMdam(fg) !== 'uninjured') return true
   if (icons.length > 0) return true
   if (opts.bg !== undefined && bgFlags(opts.bg).REMEMBERED_INVIS) return true
   const f = fgFlags(fg)
@@ -157,7 +158,8 @@ export function buildStatusOverlays(
   // Fast path: most map cells carry no status bits and no server icons. The
   // canvas map calls this once per rendered cell, so bail before allocating an
   // overlays array + result object in the empty case. (includeMdam surfaces —
-  // the describe popup — are rare and skip the fast path so MDAM still decodes.)
+  // the describe popup, tile-mode monster-list rows — skip it whenever the
+  // monster is damaged, so MDAM still decodes below.)
   if (!mayHaveStatusOverlays(fg, icons, opts)) return EMPTY_STATUS_OVERLAYS
 
   const f = fgFlags(fg)

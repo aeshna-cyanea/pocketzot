@@ -2,7 +2,7 @@ import { afterEach, describe, it, expect } from 'vitest'
 import { setEnumsModule } from '../map/flag-decode'
 import {
   decodeMdam, decodeFgStatuses, decodeFgThreatTier,
-  buildStatusOverlays, mdamIconName, fgTileIndex,
+  buildStatusOverlays, mayHaveStatusOverlays, mdamIconName, fgTileIndex,
   nameColor, threatColor, isExcluded, monsterSort,
   mdamTier, MDAM_COLORS, THREAT_COLORS, FRIENDLY_COLOR, NEUTRAL_COLOR,
   filterAndSortMonsters,
@@ -226,6 +226,12 @@ describe('buildStatusOverlays', () => {
     expect(buildStatusOverlays(FG_MDAM_LIGHT_LO, [], noSizes).overlays).toEqual([])
     expect(buildStatusOverlays(FG_MDAM_LIGHT_LO, [], noSizes, { includeMdam: true }).overlays)
       .toEqual([{ name: 'MDAM_LIGHTLY_DAMAGED', xofs: 0, yofs: 0 }])
+  })
+
+  it('includeMdam keeps the uninjured fast path (no overlays, predicate bails)', () => {
+    expect(mayHaveStatusOverlays(0, [], { includeMdam: true })).toBe(false)
+    expect(mayHaveStatusOverlays(FG_MDAM_LIGHT_LO, [], { includeMdam: true })).toBe(true)
+    expect(buildStatusOverlays(0, [], noSizes, { includeMdam: true }).overlays).toEqual([])
   })
 })
 
