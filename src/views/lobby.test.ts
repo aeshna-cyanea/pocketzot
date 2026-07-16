@@ -1,6 +1,10 @@
 // @vitest-environment happy-dom
 
 import { describe, it, expect, vi } from 'vitest'
+import { fakeStorage } from '../test/fake-storage'
+
+vi.stubGlobal('localStorage', fakeStorage())
+
 import { buildLobbyView, selectPrimaryGameIds } from './lobby'
 import type { WsConnection } from '../ws/connection'
 import type { ServerMsg } from '../ws/types'
@@ -275,5 +279,38 @@ describe('lobby renders the headline buttons', () => {
       { label: 'DCSS 0.34', isTrunk: false },
       { label: 'DCSS trunk', isTrunk: true },
     ])
+  })
+})
+
+describe('lobby account menu', () => {
+  it('lists Settings / About / What\'s new / Logout, in that order', () => {
+    const { view } = setupLobby()
+    const labels = [...view.querySelectorAll('#lobby-account-menu button')]
+      .map(b => b.textContent)
+    expect(labels).toEqual(['Settings', 'About', "What's new", 'Logout'])
+  })
+
+  it('Settings opens the settings overlay', () => {
+    const { view } = setupLobby()
+    view.querySelector<HTMLButtonElement>('#lobby-settings')!.click()
+    expect(document.querySelector('[aria-label="Settings"].doc-card')).not.toBeNull()
+    document.body.innerHTML = ''
+  })
+
+  // The unread state starts true here (fresh fakeStorage = fresh install), so
+  // both the chip's corner dot and the menu item's dot render; opening the doc
+  // marks the entry seen and the handler strips the dots in place.
+  it('shows unread dots that clear when What\'s new is opened', () => {
+    const { view } = setupLobby()
+    expect(view.querySelector('#lobby-account-chip .unread-dot-corner')).not.toBeNull()
+    expect(view.querySelector('#lobby-changelog .unread-dot')).not.toBeNull()
+
+    view.querySelector<HTMLButtonElement>('#lobby-changelog')!.click()
+    expect(view.querySelector('.unread-dot')).toBeNull()
+    document.body.innerHTML = ''
+
+    // A rebuilt view (fresh navigation) stays dotless via the stored pref.
+    const { view: view2 } = setupLobby()
+    expect(view2.querySelector('.unread-dot')).toBeNull()
   })
 })

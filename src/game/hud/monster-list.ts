@@ -58,6 +58,8 @@ interface RowData {
   barColor: string
   color: string
   label: string
+  // Console-style health-chip color; consumed by the ASCII builder only.
+  // Tile rows show damage as the per-sprite MDAM overlay instead.
   hpColor: string
   memberCells: (Cell | undefined)[]
 }
@@ -494,8 +496,10 @@ export class MonsterListView {
         // fields, and avoids hand-rolled hashing bugs. The suffix is a
         // visual input too: the last row carries the "+N" overflow, so a
         // changed hidden-monster count must rebuild that row.
+        // (No d.hpColor term: tile rows draw damage from each member's fg,
+        // already covered by memberSig; the chip is ASCII-only.)
         const memberSig = d.memberCells.map((c) => [c?.fg ?? 0, c?.t_bg ?? 0, c?.doll ?? null, c?.mcache ?? null, c?.icons ?? null, c?.highlighted_summoner ?? false])
-        sig = JSON.stringify([d.hasBar, d.barColor, d.color, d.label, d.hpColor, rowSuffix ?? null, memberSig])
+        sig = JSON.stringify([d.hasBar, d.barColor, d.color, d.label, rowSuffix ?? null, memberSig])
         build = () => this.buildTileRow({ ...d, suffix: rowSuffix })
       }
 
@@ -549,19 +553,14 @@ export class MonsterListView {
       if (halo) prependDngnLayer(this.loader, stack, halo, TILE_SCALE)
       if (cell?.t_bg !== undefined) prependDngnIndex(this.loader, stack, bgFlags(cell.t_bg).value, TILE_SCALE)
 
-      // Damage shows as the ml-hp bar (rowData), so no MDAM overlay here.
-      appendIconOverlays(this.loader, stack, cell?.fg, cell?.icons ?? [], TILE_SCALE, { bg: cell?.t_bg })
+      // Damage shows as the per-sprite MDAM overlay (as on the map), so no
+      // ml-hp chip on tile rows — and unlike the chip, every member of a
+      // grouped row shows its own damage state.
+      appendIconOverlays(this.loader, stack, cell?.fg, cell?.icons ?? [], TILE_SCALE, { bg: cell?.t_bg, includeMdam: true })
 
       glyphs.appendChild(stack)
     }
     row.appendChild(glyphs)
-
-    if (opts.hpColor) {
-      const hp = document.createElement('span')
-      hp.className = 'ml-hp'
-      hp.style.background = opts.hpColor
-      row.appendChild(hp)
-    }
 
     const name = document.createElement('span')
     name.className = 'ml-name'

@@ -9,6 +9,17 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-07-16
+
+- A dot on "What's new" now marks unread release notes.
+- Fixed the place name's tap target, which opens the minimap, being clipped
+  to a fraction of its intended size.
+- The minimap now avoids drawing under the device status bar and cutouts.
+- In tiles mode, the monster list now shows remaining health the way the
+  map does, replacing the console-version health chips, which remain in
+  ASCII mode.
+- Other improvements.
+
 ## 2026-07-15
 
 - While playing, the chat/spectator chip no longer floats over menus.
