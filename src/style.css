@@ -1663,7 +1663,17 @@ html, body {
        content. */
     top: max(0.25rem, var(--safe-top));
     left: 0.25rem;
-    max-width: calc(100% - 0.5rem);
+    /* The 7.5rem reservation keeps the panel's right edge (where the
+       collapse chevron floats) clear of the map's top-right corner, which
+       the floating chat chip owns at a higher z — an unbounded panel
+       parks the chevron exactly under the chip, untappable. Reserved
+       unconditionally, not just while the chip exists: the panel is
+       shrink-to-fit, so the cap only bites when a name is long, and
+       wrapping such a name into a corner card beats a full-width banner
+       anyway. No tighter bound: shrink-to-fit already hugs short content,
+       so extra caps can't prevent banners — they'd only force wraps on
+       wide (tablet) viewports where single lines fit fine. */
+    max-width: calc(100% - 7.5rem);
   }
 }
 
