@@ -1,6 +1,7 @@
 import aboutMd from '../../ABOUT.md?raw'
 import changelogMd from '../../CHANGELOG.md?raw'
 import { openDocView } from './doc-view'
+import { getPref, setPref } from '../prefs'
 
 // The committed ABOUT.md / CHANGELOG.md are the canonical project surfaces: they
 // ship inside the JS bundle, so every build — including forks — carries the
@@ -37,7 +38,27 @@ export function openAboutDoc(): void {
   openDocView('About', prep(md), { resolveLink: resolveAboutLink })
 }
 
+// Unread "What's new" state: each changelog entry is a dated `## YYYY-MM-DD`
+// heading (newest first), and the bundle a user is running always carries the
+// changelog it shipped with — so "unread" is just "the newest entry's date
+// isn't the one they last opened the doc at". A missing pref counts as unread
+// on purpose: a fresh install shows the dot once until the first open.
+const newestChangelogDate = /^##\s+(\d{4}-\d{2}-\d{2})/m.exec(changelogMd)?.[1] ?? null
+
+export function isChangelogUnread(): boolean {
+  return newestChangelogDate !== null && getPref('changelogSeen') !== newestChangelogDate
+}
+
+// The badge the "What's new" entry points (login footer, lobby menu) append to
+// their label — '' while read, so callers can inline it in view templates.
+// Views clear the rendered dots themselves after openChangelogDoc.
+export function unreadDotHtml(extraClass = ''): string {
+  if (!isChangelogUnread()) return ''
+  return `<span class="unread-dot${extraClass ? ` ${extraClass}` : ''}"></span>`
+}
+
 export function openChangelogDoc(): void {
+  if (newestChangelogDate !== null) setPref('changelogSeen', newestChangelogDate)
   openDocView("What's new", prep(changelogMd))
 }
 

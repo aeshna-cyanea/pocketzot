@@ -5,7 +5,8 @@ import { getTileLoader, type TileLoader } from '../game/tiles/tile-loader'
 import type { SpectateTarget } from './game-view'
 import { tagFor } from '../servers'
 import { fitToWidth } from './fit-terminal'
-import { openAboutDoc, openChangelogDoc } from './docs'
+import { openAboutDoc, openChangelogDoc, unreadDotHtml } from './docs'
+import { openSettings } from './settings-view'
 import { clearGameStart, FORCE_TERMINATE_WARNING, rememberGameStart } from '../reconnect'
 import { classifyTransition } from '../ws/transition'
 import { isBelowSupportCutoff, parseDcssVersion } from '../util/dcss-version'
@@ -63,10 +64,12 @@ export function buildLobbyView(
           <span class="lobby-chip-sep">·</span>
           <span class="lobby-chip-tag">${escHtml(serverTag)}</span>
           <span class="lobby-chip-caret">▾</span>
+          ${unreadDotHtml('unread-dot-corner')}
         </button>
         <div id="lobby-account-menu" class="lobby-account-menu" hidden>
+          <button id="lobby-settings" type="button" class="lobby-account-menu-item">Settings</button>
           <button id="lobby-about" type="button" class="lobby-account-menu-item">About</button>
-          <button id="lobby-changelog" type="button" class="lobby-account-menu-item">What's new</button>
+          <button id="lobby-changelog" type="button" class="lobby-account-menu-item">What's new${unreadDotHtml()}</button>
           <button id="lobby-logout" type="button" class="lobby-account-menu-item">Logout</button>
         </div>
       </div>
@@ -136,6 +139,10 @@ export function buildLobbyView(
     })
     closeAccountMenu = closeMenu
 
+    view.querySelector('#lobby-settings')!.addEventListener('click', () => {
+      closeMenu()
+      openSettings()
+    })
     view.querySelector('#lobby-about')!.addEventListener('click', () => {
       closeMenu()
       openAboutDoc()
@@ -143,6 +150,8 @@ export function buildLobbyView(
     view.querySelector('#lobby-changelog')!.addEventListener('click', () => {
       closeMenu()
       openChangelogDoc()
+      // Opening the doc marked it seen — clear both this view's dots.
+      view.querySelectorAll('.unread-dot').forEach(el => el.remove())
     })
 
     logoutBtn.addEventListener('click', () => {

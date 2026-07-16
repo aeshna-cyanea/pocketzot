@@ -34,6 +34,11 @@ export interface Prefs {
   // only entry point it is). Avatar recipes keep being captured while off, so
   // re-enabling restores a fully populated shelf.
   loginSprites: boolean
+  // Date (## YYYY-MM-DD heading) of the newest CHANGELOG.md entry the user has
+  // opened "What's new" for. null (or any mismatch) = unread dot shows; a
+  // fresh install deliberately starts unread so the first launch surfaces the
+  // release notes. See isChangelogUnread in views/docs.ts.
+  changelogSeen: string | null
 }
 
 const DEFAULTS: Prefs = {
@@ -42,6 +47,7 @@ const DEFAULTS: Prefs = {
   mapRenderMode: 'ascii',
   controlSetId: 'standard',
   loginSprites: true,
+  changelogSeen: null,
 }
 
 function load(): Prefs {

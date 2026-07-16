@@ -4,7 +4,7 @@ import { listSessions, saveSession, type StoredSession } from '../auth/session'
 import { SESSION_EXPIRED_NOTICE, tokenLogin } from '../auth/token-login'
 import { findServer, KNOWN_SERVERS, SPECTATE_SERVERS, labelFor } from '../servers'
 import { getLastSpectateServer, getPref, setLastSpectateServer, LOGIN_SPRITES_CHANGED_EVENT } from '../prefs'
-import { openAboutDoc, openChangelogDoc } from './docs'
+import { openAboutDoc, openChangelogDoc, unreadDotHtml } from './docs'
 import { openSettings } from './settings-view'
 import { decorateLogo } from '../logo'
 import { listAvatars } from '../avatars'
@@ -55,7 +55,7 @@ export function buildLoginView(
   const siteFooterHtml = `
     <div class="login-footer">
       <a href="#" id="login-about">About</a>
-      <a href="#" id="login-changelog">What's new</a>
+      <a href="#" id="login-changelog">What's new${unreadDotHtml()}</a>
       <!-- U+2699 GEAR + U+FE0E (text-presentation selector): without FE0E iOS
            Safari renders the gear as a colour emoji, ignoring the CSS colour.
            Same glyph as the in-game HUD chip (stats-view.ts settingsChip). -->
@@ -175,6 +175,7 @@ export function buildLoginView(
   view.querySelector('#login-changelog')!.addEventListener('click', (e) => {
     e.preventDefault()
     openChangelogDoc()
+    view.querySelector('#login-changelog .unread-dot')?.remove()
   })
   view.querySelector('#login-settings')!.addEventListener('click', () => openSettings())
 

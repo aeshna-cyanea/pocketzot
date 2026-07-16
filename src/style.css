@@ -476,6 +476,29 @@ html, body {
   text-decoration: underline;
 }
 
+/* Unread badge on the "What's new" entry points (login footer link, lobby
+   account-menu item) — trails the label so menu labels stay column-aligned.
+   Accent, not --danger: it flags fresh release notes, not a problem. */
+.unread-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-left: 0.4rem;
+  vertical-align: 0.1em;
+}
+
+/* Variant pinned to the lobby account chip's corner, so the closed menu
+   still advertises the unread item without reflowing the chip's inline
+   user·server▾ row. */
+.unread-dot-corner {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  margin-left: 0;
+}
+
 /* ── Lobby view ───────────────────────────────────────────── */
 /* Frame: pinned nav bar + scrolling content. The bar (not the view) owns the
    safe-top inset so scrolled content never rides up under the dynamic island,
@@ -528,6 +551,7 @@ html, body {
 }
 
 .lobby-account-chip {
+  position: relative;  /* anchors the unread-dot-corner badge */
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
@@ -594,6 +618,7 @@ html, body {
   text-align: left;
   cursor: pointer;
   border-radius: 3px;
+  white-space: nowrap;  /* the unread dot rides the label, never a 2nd line */
 }
 .lobby-account-menu-item:active { background: var(--surface2); }
 
