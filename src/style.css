@@ -1842,6 +1842,14 @@ html, body {
 .hud-place-chip {
   padding: 0.5rem;
   margin: -0.5rem;
+  /* inline-block: a plain inline's padding isn't reliably hit-testable where
+     it overhangs the parent's border box (WebKit ignored the right-padding
+     strip); an atomic inline hit-tests its whole padded box. Verified no text
+     shift. Positioned so that box also paints (and thus hit-tests) above the
+     neighboring rows' inline text, which otherwise overlaps the grown target
+     (the compact rows sit flush against each other). */
+  display: inline-block;
+  position: relative;
 }
 
 /* Unlike the place chip, the settings gear is deliberately visible: it's the
@@ -2036,6 +2044,12 @@ html, body {
   font-size: 0.7rem;
   line-height: 1.2;
   overflow: hidden;
+  /* overflow:hidden clips hit-testing too, which was amputating the place
+     chip's padded tap target down to its ~13px text. Grow the clip box with
+     this cancelling pad/margin pair (values must match .hud-place-chip's) so
+     the chip's vertical padding stays tappable; net row height is unchanged. */
+  padding: 0.5rem 0;
+  margin: -0.5rem 0;
 }
 /* word-spacing tightens the literal spaces between the XL/progress/@/$ readouts
    to the unified 5.3px inter-readout gap (matches AC↔EV, Noise↔Time, etc.). */
