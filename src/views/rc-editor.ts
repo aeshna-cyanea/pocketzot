@@ -8,7 +8,7 @@
 // while no engine runs — the offline lobby (the sole caller) is mounted
 // exactly then; a live engine's next persist would clobber the write.
 //
-// Esc (button, key, or back) discards; only Save writes.
+// Escape discards; only Save writes.
 
 import { readOfflineFile, writeOfflineFiles } from '../offline/save-transfer'
 import { mountOverlay } from './overlay'
@@ -44,7 +44,7 @@ export async function openRcEditor(onSaved: (notice: string) => void): Promise<v
               autocorrect="off" autocomplete="off"></textarea>
     <div class="rc-editor-error" role="alert" hidden></div>
     <div class="rc-editor-footer">
-      <button type="button" class="rc-editor-esc">Esc</button>
+      <button type="button" class="rc-editor-esc" aria-label="Discard">⎋</button>
       <button type="button" class="rc-editor-save">Save</button>
     </div>
   `

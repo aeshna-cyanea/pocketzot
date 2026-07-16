@@ -1046,7 +1046,7 @@ html, body {
 
 /* ── Offline options (RC) file editor (views/rc-editor.ts) ───
    Full-screen fixed column over the offline lobby: slim header, flex-fill
-   textarea, Esc/Save footer. */
+   textarea, discard/Save footer. */
 .rc-editor {
   position: fixed;
   inset: 0;
@@ -1099,6 +1099,9 @@ html, body {
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
+/* The escape glyph is thinner than text at the same size, so bump it to sit
+   visually level with the "Save" label beside it (cf. .menu-ctrl-glyph). */
+.rc-editor-esc { font-size: 1.25rem; line-height: 1; padding-block: 0.4rem; }
 .rc-editor-save {
   color: var(--accent);
   border-color: rgba(245, 158, 11, 0.35);
