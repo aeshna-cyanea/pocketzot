@@ -26,6 +26,10 @@ function stubFetch(routes: Routes): void {
 const VERSION_OK: Routes = {
   '/offline/version.json': { body: '{"build":"abc123"}', type: 'application/json' },
 }
+// A version.json from an install.sh that stamps the game version.
+const VERSION_LABELED: Routes = {
+  '/offline/version.json': { body: '{"build":"abc123","version":"0.34.1"}', type: 'application/json' },
+}
 
 let store: ReturnType<typeof fakeCaches>
 
@@ -68,20 +72,35 @@ describe('fetchVersion', () => {
     stubFetch({ '/offline/version.json': { body: '<!doctype html>', type: 'text/html' } })
     expect(await fetchVersion()).toEqual({ state: 'undeployed' })
   })
+
+  it('carries the game-version label when the deploy stamps one', async () => {
+    stubFetch(VERSION_LABELED)
+    expect(await fetchVersion()).toEqual({ state: 'ok', build: 'abc123', version: '0.34.1' })
+  })
 })
 
 describe('openVersionedCache', () => {
   it('clears the cache when the build changes, keeps it when unknown', async () => {
     const c = await seedEngineSet()
-    await openVersionedCache(ARTIFACT_CACHE, 'build-1')
+    await openVersionedCache(ARTIFACT_CACHE, { build: 'build-1' })
     await c.put('/offline/crawl.js', new Response('glue'))
     // Unknown build (offline): everything stays.
     await openVersionedCache(ARTIFACT_CACHE, null)
     expect(await c.match('/offline/crawl.js')).toBeTruthy()
     // New build: wholesale clear, new __build stamp.
-    await openVersionedCache(ARTIFACT_CACHE, 'build-2')
+    await openVersionedCache(ARTIFACT_CACHE, { build: 'build-2' })
     expect(await c.match('/offline/crawl.js')).toBeUndefined()
     expect(await (await c.match('/offline/__build'))?.text()).toBe('build-2')
+  })
+
+  it('stamps the game-version label, including onto an unchanged build', async () => {
+    const c = await artifactCache()
+    await openVersionedCache(ARTIFACT_CACHE, { build: 'build-1' })
+    expect(await c.match('/offline/__version')).toBeUndefined()
+    // Same build, version.json regenerated with the label added.
+    await openVersionedCache(ARTIFACT_CACHE, { build: 'build-1', version: '0.34.1' })
+    expect(await (await c.match('/offline/__version'))?.text()).toBe('0.34.1')
+    expect(await (await c.match('/offline/__build'))?.text()).toBe('build-1')
   })
 })
 
@@ -160,12 +179,31 @@ describe('probeReadiness', () => {
     stubFetch({ '/offline/version.json': { body: '{"build":"NEWER"}', type: 'application/json' } })
     expect(await probeReadiness()).toEqual({ state: 'ready', tiles: false, update: true })
   })
+
+  it('labels the downloadable and cached sets with their game versions', async () => {
+    stubFetch(VERSION_LABELED)
+    expect(await probeReadiness()).toEqual({ state: 'not-cached', version: '0.34.1' })
+
+    // Cached + stamped set, offline: the cached label still names it.
+    const c = await seedEngineSet()
+    await markEngineSetComplete(c as unknown as Cache)
+    await c.put('/offline/__build', new Response('abc123'))
+    await c.put('/offline/__version', new Response('0.34.1'))
+    stubFetch({ '/offline/version.json': null })
+    expect(await probeReadiness()).toEqual(
+      { state: 'ready', tiles: false, update: false, version: '0.34.1' })
+
+    // A newer labeled deploy names the update target too.
+    stubFetch({ '/offline/version.json': { body: '{"build":"NEWER","version":"0.35-a0"}', type: 'application/json' } })
+    expect(await probeReadiness()).toEqual(
+      { state: 'ready', tiles: false, update: true, version: '0.34.1', updateVersion: '0.35-a0' })
+  })
 })
 
 describe('downloadOfflineData', () => {
   it('fetches engine + tiles, stamps both markers, reports stats', async () => {
     stubFetch({
-      ...VERSION_OK,
+      ...VERSION_LABELED,
       '/offline/crawl.js': { body: 'glue' },
       '/offline/crawl.wasm.gz': { body: 'wasm' },
       '/offline/crawl.data.gz': { body: 'data' },
@@ -185,7 +223,8 @@ describe('downloadOfflineData', () => {
     const tiles = store.caches.get(GAMEDATA_CACHE)!
     expect(await engine.match('/offline/__complete')).toBeTruthy()
     expect(await tiles.match('/gamedata/local/__complete')).toBeTruthy()
-    expect(await probeReadiness()).toEqual({ state: 'ready', tiles: true, update: false })
+    expect(await probeReadiness()).toEqual(
+      { state: 'ready', tiles: true, update: false, version: '0.34.1' })
   })
 
   it('refuses to run without a reachable deploy', async () => {

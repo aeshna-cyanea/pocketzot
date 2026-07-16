@@ -209,7 +209,7 @@ async function openArtifactCache(): Promise<Cache | null> {
   const version = await fetchVersion()
   return openVersionedCache(
     ARTIFACT_CACHE,
-    version.state === 'ok' ? version.build : null,
+    version.state === 'ok' ? version : null,
     workerLog,
   )
 }

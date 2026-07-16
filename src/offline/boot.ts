@@ -74,7 +74,7 @@ export function bootOffline(params: URLSearchParams, name: string): OfflineBoot 
   // readiness download (or plain network while online).
   if (real) {
     void fetchVersion().then((v) =>
-      openVersionedCache(GAMEDATA_CACHE, v.state === 'ok' ? v.build : null))
+      openVersionedCache(GAMEDATA_CACHE, v.state === 'ok' ? v : null))
   }
 
   // Ask the browser to exempt this origin's storage from eviction — the

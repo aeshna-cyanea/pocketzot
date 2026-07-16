@@ -70,21 +70,21 @@ export function buildOfflineLobbyView(
           <button type="button" id="offline-download" class="offline-device-btn is-accent" hidden></button>
         </div>
         <div class="offline-device-row">
-          <span class="offline-device-glyph">⇅</span>
-          <span class="offline-device-lines">
-            <span class="offline-device-label">Backup</span>
-            <span class="offline-device-sub">Saves, morgues, and scores in one file</span>
-          </span>
-          <button type="button" id="offline-export" class="offline-device-btn">Export</button>
-          <button type="button" id="offline-import" class="offline-device-btn">Import</button>
-        </div>
-        <div class="offline-device-row">
           <span class="offline-device-glyph">✎</span>
           <span class="offline-device-lines">
             <span class="offline-device-label">Options file</span>
             <span class="offline-device-sub">init.txt</span>
           </span>
           <button type="button" id="offline-rc" class="offline-device-btn">Edit</button>
+        </div>
+        <div class="offline-device-row">
+          <span class="offline-device-glyph">⇅</span>
+          <span class="offline-device-lines">
+            <span class="offline-device-label">Backup</span>
+            <span class="offline-device-sub">Saves, morgues, scores, and options</span>
+          </span>
+          <button type="button" id="offline-export" class="offline-device-btn">Export</button>
+          <button type="button" id="offline-import" class="offline-device-btn">Import</button>
         </div>
       </div>
     </div>
@@ -296,12 +296,24 @@ export function buildOfflineLobbyView(
   }
 
   function renderReadiness(r: Readiness): void {
+    // Sub-lines name the game version of the pack ("DCSS 0.34.1") when the
+    // deploy/cache declares one (version.json `version`, __version stamp —
+    // artifact-store.ts); older installs fall back to the unversioned copy.
     if (r.state === 'ready') {
-      if (r.update) setReadiness('ok', 'Ready for offline play', 'Engine update available', 'Update')
-      else if (!r.tiles) setReadiness('ok', 'Ready for offline play', 'Text mode — tiles not added', 'Add tiles ~9 MB')
-      else setReadiness('ok', 'Ready for offline play', 'Engine and tiles downloaded')
+      if (r.update) {
+        setReadiness('ok', 'Ready for offline play',
+          r.updateVersion ? `Update available — DCSS ${r.updateVersion}` : 'Engine update available',
+          'Update')
+      } else if (!r.tiles) {
+        setReadiness('ok', 'Ready for offline play',
+          r.version ? `DCSS ${r.version} — text mode` : 'Text mode — tiles not added',
+          'Add tiles ~9 MB')
+      } else {
+        setReadiness('ok', 'Ready for offline play',
+          r.version ? `DCSS ${r.version} — engine and tiles` : 'Engine and tiles downloaded')
+      }
     } else if (r.state === 'not-cached') {
-      setReadiness('dim', 'Not downloaded', 'Offline play needs a one-time download', 'Download ~21 MB')
+      setReadiness('dim', 'Not downloaded', r.version ? `DCSS ${r.version}` : null, 'Download ~21 MB')
     } else if (r.state === 'offline-not-cached') {
       setReadiness('warn', 'Not downloaded', 'No connection — connect once to download')
     } else {

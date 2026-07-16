@@ -30,6 +30,12 @@ const BUILD_KEYS: Record<string, string> = {
   [ARTIFACT_CACHE]: '/offline/__build',
   [GAMEDATA_CACHE]: '/gamedata/local/__build',
 }
+// Game-version label of the cached set ("0.34.1"), stamped alongside __build
+// so the readiness surface can name what's on the device while offline.
+const VERSION_KEYS: Record<string, string> = {
+  [ARTIFACT_CACHE]: '/offline/__version',
+  [GAMEDATA_CACHE]: '/gamedata/local/__version',
+}
 const COMPLETE_KEYS: Record<string, string> = {
   [ARTIFACT_CACHE]: '/offline/__complete',
   [GAMEDATA_CACHE]: '/gamedata/local/__complete',
@@ -67,7 +73,9 @@ export const newStats = (): FetchStats => ({ cacheHits: 0, netFetches: 0, netByt
 // --- version.json ------------------------------------------------------------
 
 export type VersionInfo =
-  | { state: 'ok'; build: string }
+  // `version` is the game version the pack was built from (CRAWL_VERSION_SHORT,
+  // e.g. "0.34.1" or "0.35-a0") — display-only, absent on older installs.
+  | { state: 'ok'; build: string; version?: string }
   // Confirmed 200-but-not-json or 404: this deploy ships no artifacts.
   | { state: 'undeployed' }
   // Network failure — offline, or the server is unreachable.
@@ -80,8 +88,12 @@ export async function fetchVersion(timeoutMs = 4000): Promise<VersionInfo> {
       signal: typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(timeoutMs) : undefined,
     })
     if (r.ok && (r.headers.get('content-type') ?? '').includes('json')) {
-      const build = String((await r.json() as { build?: unknown }).build ?? '')
-      if (build) return { state: 'ok', build }
+      const json = await r.json() as { build?: unknown; version?: unknown }
+      const build = String(json.build ?? '')
+      if (build) {
+        const version = typeof json.version === 'string' && json.version !== '' ? json.version : undefined
+        return version !== undefined ? { state: 'ok', build, version } : { state: 'ok', build }
+      }
     }
     return { state: 'undeployed' }
   } catch {
@@ -91,26 +103,32 @@ export async function fetchVersion(timeoutMs = 4000): Promise<VersionInfo> {
 
 // --- versioned caches ----------------------------------------------------------
 
-// Open one of the two stores, clearing it wholesale when `build` names a
+// Open one of the two stores, clearing it wholesale when `v.build` names a
 // different engine build than its contents (null = version unknown right
 // now — trust whatever the cache holds; an offline boot must not wipe it).
+// Callers with a fetchVersion result pass its ok-state through, which also
+// stamps the game-version label (__version) for the readiness surface.
 export async function openVersionedCache(
   name: string,
-  build: string | null,
+  v: { build: string; version?: string } | null,
   log?: Log,
 ): Promise<Cache | null> {
   if (typeof caches === 'undefined') return null
   try {
     const cache = await caches.open(name)
-    if (build !== null) {
+    if (v !== null) {
       const buildKey = BUILD_KEYS[name]
       const stored = await (await cache.match(buildKey))?.text()
-      if (stored !== build) {
+      if (stored !== v.build) {
         for (const req of await cache.keys()) await cache.delete(req)
-        await cache.put(buildKey, new Response(build))
+        await cache.put(buildKey, new Response(v.build))
         if (stored !== undefined)
-          log?.(`engine build ${stored} -> ${build}: ${name} cleared`)
+          log?.(`engine build ${stored} -> ${v.build}: ${name} cleared`)
       }
+      // Unconditional: a version.json regenerated with the label added (or
+      // fixed) leaves the content-derived build id untouched.
+      if (v.version !== undefined)
+        await cache.put(VERSION_KEYS[name], new Response(v.version))
     }
     return cache
   } catch (e) {
@@ -209,10 +227,13 @@ async function hasMarker(name: string): Promise<boolean> {
 export type Readiness =
   // Engine set verified cached; tiles = gamedata set too; update = we are
   // online and the deploy has a newer build (the cached set still boots
-  // offline by design).
-  | { state: 'ready'; tiles: boolean; update: boolean }
+  // offline by design). version labels the CACHED set ("0.34.1", from the
+  // __version stamp); updateVersion labels what an update would install —
+  // both display-only and absent when the install predates the stamp.
+  | { state: 'ready'; tiles: boolean; update: boolean; version?: string; updateVersion?: string }
   // Online, deploy confirmed, nothing (complete) cached — downloadable.
-  | { state: 'not-cached' }
+  // version labels the downloadable pack when the deploy declares it.
+  | { state: 'not-cached'; version?: string }
   // This deploy ships no artifacts — hide the offline surfaces.
   | { state: 'undeployed' }
   // No network and no cached set: can't play, can't download right now.
@@ -227,16 +248,24 @@ export async function probeReadiness(): Promise<Readiness> {
     fetchVersion(),
   ])
   if (engineReady) {
-    let update = false
-    if (version.state === 'ok') {
-      try {
-        const stored = await (await (await caches.open(ARTIFACT_CACHE)).match(BUILD_KEYS[ARTIFACT_CACHE]))?.text()
-        update = stored !== undefined && stored !== version.build
-      } catch { /* unreadable — no update hint */ }
-    }
-    return { state: 'ready', tiles: tilesReady, update }
+    const r: Readiness = { state: 'ready', tiles: tilesReady, update: false }
+    try {
+      const cache = await caches.open(ARTIFACT_CACHE)
+      const storedVersion = await (await cache.match(VERSION_KEYS[ARTIFACT_CACHE]))?.text()
+      if (storedVersion) r.version = storedVersion
+      if (version.state === 'ok') {
+        const stored = await (await cache.match(BUILD_KEYS[ARTIFACT_CACHE]))?.text()
+        r.update = stored !== undefined && stored !== version.build
+        if (r.update && version.version !== undefined) r.updateVersion = version.version
+      }
+    } catch { /* unreadable — no update hint / no label */ }
+    return r
   }
-  if (version.state === 'ok') return { state: 'not-cached' }
+  if (version.state === 'ok') {
+    return version.version !== undefined
+      ? { state: 'not-cached', version: version.version }
+      : { state: 'not-cached' }
+  }
   if (version.state === 'undeployed') return { state: 'undeployed' }
   return { state: 'offline-not-cached' }
 }
@@ -258,7 +287,7 @@ export async function downloadOfflineData(
   const stats = newStats()
 
   onProgress('Downloading engine…')
-  const cache = await openVersionedCache(ARTIFACT_CACHE, version.build)
+  const cache = await openVersionedCache(ARTIFACT_CACHE, version)
   if (!cache) throw new Error('cache storage unavailable')
   await Promise.all([
     fetchArtifact(cache, stats, ...ENGINE_GLUE),
@@ -273,7 +302,7 @@ export async function downloadOfflineData(
   if (!await markEngineSetComplete(cache))
     throw new Error('engine data did not fit in storage')
 
-  const gamedata = await openVersionedCache(GAMEDATA_CACHE, version.build)
+  const gamedata = await openVersionedCache(GAMEDATA_CACHE, version)
   if (gamedata) {
     const files = await gamedataFileList(gamedata, stats)
     if (files) {
