@@ -1814,6 +1814,14 @@ html, body {
   align-items: center;
   justify-content: center;
   padding: 0.25rem;
+  /* #map-wrap runs full-bleed under the status bar/Dynamic Island (portrait)
+     and the notch ear (landscape) — fine for the map's background ambience,
+     but the lens canvas is content: a player at the level's top edge renders
+     a dot exactly under the island. Clear the insets like the monster list
+     and #ui-overlay do (sides are 0 in portrait, top is 0 in landscape). */
+  padding-top: max(0.25rem, var(--safe-top));
+  padding-left: max(0.25rem, var(--safe-left));
+  padding-right: max(0.25rem, var(--safe-right));
   /* Keep the canvas clear of the floating log along the map's bottom edge. */
   padding-bottom: calc(var(--msglog-h) + 0.25rem);
   background: rgba(0, 0, 0, 0.92);
@@ -3239,7 +3247,9 @@ html, body {
   .minimap-lens,
   #game-view.spell-row .minimap-lens {
     padding-top: calc(var(--msglog-h) + 0.25rem);
-    padding-bottom: 0.25rem;
+    /* The landscape map cell reaches the physical screen bottom (no touch
+       controls below it), so keep the canvas out of the home-indicator zone. */
+    padding-bottom: max(0.25rem, var(--safe-bottom));
   }
 
   #map-wrap { grid-area: map; }
