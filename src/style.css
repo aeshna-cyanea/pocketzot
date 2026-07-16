@@ -3165,11 +3165,19 @@ html, body {
 
   /* Inventory / menus / ui-push overlays render only over the map area
      (not over the sidebar), and stack above the floating log, d-pad and
-     monster list via z-index. */
+     monster list via z-index. Unlike the map (background ambience), their
+     left edge is content flush with the physical screen edge, so clear the
+     notch/island ear like the d-pad float does — iOS reports the two side
+     insets symmetrically, so this pads ear-on-the-right rotations too
+     (same accepted cost as the #game-view padding-right above). The map
+     cell also reaches the screen bottom here (portrait parks the menu keys
+     there), so keep the last rows clear of the home-indicator zone. */
   #ui-overlay {
     grid-area: map;
     position: relative;
     z-index: 5;
+    padding-left: max(0.5rem, var(--safe-left));
+    padding-bottom: max(0.75rem, var(--safe-bottom));
   }
 
   /* No `chat` area in this template — the portrait grid-area would resolve
