@@ -59,6 +59,13 @@ interface MenuMsg {
   title?: { text: string }
   items?: MenuItem[]
   more?: string
+  // webtiles_write_more sends both variants: with the default keyhelp
+  // template these differ (scrollable vs unscrollable nav help; the
+  // unscrollable one is "" for singleselect), while a set_more() menu
+  // writes the same string to both. That signature is how a prompt
+  // reopened with yesno()'s error text is told apart from nav noise
+  // (see showMenu's promptMoreIsInfo).
+  alt_more?: string
   // Authoritative item count. Inventory paging shrinks/grows this via
   // update_menu; we truncate the items list to match (otherwise stale
   // entries from the prior category linger when the new one is shorter).
@@ -2659,10 +2666,19 @@ export function buildGameView(
       overlayContent.appendChild(footerEl)
     }, { float: floatPrompt })
     uiOverlay.classList.toggle('prompt-menu', promptFamily)
-    // Survives a re-render of the same menu (ui-pop restore): msg.more was
-    // mutated by the update_menu that raised the alert.
+    // yesno()'s rejected-key error never arrives as update_menu: set_more
+    // runs after pop.show() returned, so Menu::update_more's webtiles send
+    // is skipped (`if (!alive) return`) and the loop *reopens* the popup as
+    // a fresh menu message with the error already in `more`. Detect it by
+    // webtiles_write_more's signature — the default keyhelp template sends
+    // different more/alt_more variants, a set_more() menu sends identical
+    // strings — and show the footer for the latter: a non-template more is
+    // real information, whoever set it. The promptInitialMore comparison
+    // additionally survives a re-render of the same menu (ui-pop restore)
+    // after an alive-path update_menu raised the alert.
+    const promptMoreIsInfo = (msg.more ?? '') !== '' && msg.more === msg.alt_more
     uiOverlay.classList.toggle('prompt-menu-alert',
-      promptFamily && (msg.more ?? '') !== promptInitialMore)
+      promptFamily && (promptMoreIsInfo || (msg.more ?? '') !== promptInitialMore))
     if (msg.tag === 'shop' || msg.tag === 'stash' || msg.tag === 'acquirement') {
       buildMenuControls(msg.tag, msg.flags)
       menuControls.style.display = ''

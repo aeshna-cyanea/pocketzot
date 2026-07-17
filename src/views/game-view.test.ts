@@ -545,14 +545,21 @@ describe('menu handler', () => {
   })
 })
 
-// A yesno() popup as the engine emits it (trunk prompt.cc yesno(): a Menu
-// with tag "prompt"; wire shape per Menu::webtiles_write_menu). With
-// MF_ARROWS_SELECT the opening `more` is the nav-help keyhelp *template*
-// (webtiles_write_more sends different more/alt_more), and default_answer
-// 'N' arrives as last_hovered on the No row. The rejected-key error path
-// (prompt.cc: allow_lowercase=false, typed lowercase → pop.set_more) reuses
-// the same channel: Menu::update_more emits update_menu with the error as
-// both more and alt_more (non-template).
+// A yesno() popup as the engine emits it (prompt.cc yesno(): a Menu with
+// tag "prompt"; wire shape per Menu::webtiles_write_menu). With
+// MF_ARROWS_SELECT the opening `more` is the nav-help keyhelp *template* —
+// webtiles_write_more sends different more/alt_more variants (the
+// unscrollable one is "" for singleselect) — and default_answer 'N'
+// arrives as last_hovered on the No row.
+//
+// The rejected-key error (prompt.cc: allow_lowercase=false, typed
+// lowercase → pop.set_more) reaches the client two different ways:
+// - yesno()'s own loop: set_more runs after pop.show() returned, so
+//   update_more's webtiles send is skipped (`if (!alive) return`) and the
+//   next iteration REOPENS the popup — close_menu, then a fresh menu
+//   message with the error as both more and alt_more (non-template).
+// - a set_more on a still-open menu emits update_menu with the same
+//   identical more/alt_more pair.
 const yesnoPrompt = () => ({
   msg: 'menu',
   'ui-centred': false,
@@ -612,7 +619,19 @@ describe('prompt footer error reveal (yesno set_more channel)', () => {
     expect(overlay(h).classList.contains('prompt-menu-alert')).toBe(false)
   })
 
-  it('a changed more (the rejected-key error) raises the alert and renders the text', () => {
+  it('the real yesno error sequence — reopen with more == alt_more — shows the footer from the start', () => {
+    // What the engine actually does on a rejected key: close the popup and
+    // push a fresh menu whose more IS the error (never an update_menu).
+    const h = setup()
+    h.dispatch(yesnoPrompt())
+    h.dispatch({ msg: 'close_menu' })
+    h.dispatch({ ...yesnoPrompt(), more: UPPERCASE_ERR, alt_more: UPPERCASE_ERR })
+    expect(overlay(h).classList.contains('prompt-menu-alert')).toBe(true)
+    expect(overlay(h).querySelector('.overlay-footer')?.textContent)
+      .toContain('Uppercase [Y]es or [N]o only, please.')
+  })
+
+  it('a changed more on a still-open menu (alive-path update_menu) raises the alert too', () => {
     const h = setup()
     h.dispatch(yesnoPrompt())
     h.dispatch(errUpdate())
