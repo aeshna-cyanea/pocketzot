@@ -2565,6 +2565,54 @@ html, body {
   height: 0;
 }
 
+/* yesno() popups (menu tag "prompt"): question title + 2-3 answer rows.
+   Centre the block vertically; the list shrinks to its content instead of
+   flex-growing, and a pathologically tall question falls back to top-aligned
+   (`safe`; browsers without safe-alignment keep the plain center). */
+#ui-overlay.prompt-menu {
+  justify-content: center;
+  justify-content: safe center;
+}
+#ui-overlay.prompt-menu .overlay-list {
+  flex: 0 1 auto;
+  height: auto;
+}
+/* The prompt's initial `more` is only the generic nav help ([Up|Down]
+   select …) — noise under two answer rows. (No [enter]-default hint is
+   lost: webtiles popups always set MF_ARROWS_SELECT, which disables it in
+   prompt.cc.) But the same channel later carries yesno()'s error text —
+   pop.set_more("Uppercase [Y]es or [N]o only, please.") on a rejected key
+   — so a changed `more` re-reveals the footer via .prompt-menu-alert
+   (set by game-view's update_menu handler). */
+#ui-overlay.prompt-menu:not(.prompt-menu-alert) .overlay-footer { display: none; }
+/* Floating prompt modal (yesno() arriving from normal play): the overlay
+   becomes a dim backdrop over the still-visible game — spanning the map,
+   hud and chat rows so everything above the touch controls dims, leaving
+   the d-pad/Esc live — with the content in a bordered card, matching the
+   reference .ui-popup-outer (1px black border + 2px bronze outline). */
+#ui-overlay.overlay-float {
+  grid-row: 1 / 4;
+  background: rgba(0, 0, 0, 0.65);
+}
+.overlay-card {
+  align-self: center;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: min(20rem, 85%);
+  max-width: 100%;
+  max-height: 100%;
+  padding: 0.8rem 1rem;
+  background: var(--bg);
+  border: 1px solid #000;
+  outline: 2px solid #7d623c;
+}
+/* Rows here are short and never wrap, so centre the ✓/✗ tile and the text
+   in the row instead of the wrapping-row treatment (tile pulled up onto the
+   first text line), which pokes the tile out of the hover-highlight bar. */
+#ui-overlay.prompt-menu .overlay-item { align-items: center; }
+#ui-overlay.prompt-menu .overlay-item .tile-stack { margin-top: 0; }
+
 .overlay-item {
   display: flex;
   align-items: flex-start;
@@ -2968,9 +3016,10 @@ html, body {
 #touch-controls {
   /* D-pad cell size (consumed by .tc-dpad / .tc-dpad-btn) — also sets the
      whole strip's height via the max-height calc below. 3.3rem ≈ 53px,
-     still above the 44pt tap floor; was 3.6rem (see
-     dev-material/vertical-space-savings.md). */
-  --tc-dpad: 3.3rem;
+     3.5rem ≈ 56px,
+     above the 44pt tap floor; was 3.6rem, then 3.3rem — the audited
+     minimum (dev-material/vertical-space-savings.md) */
+  --tc-dpad: 3.5rem;
   /* Resting palette one step darker than the app-wide tokens: at night the
      map is sparse dim glyphs on near-black, so --text/--surface2 buttons
      outshine the play area. Presses brighten (--tc-press + accent label) —
@@ -3523,6 +3572,14 @@ html, body {
     padding-left: max(0.5rem, var(--safe-left));
     padding-bottom: max(0.75rem, var(--safe-bottom));
   }
+  /* The portrait float rule's rows 1-3 would clip against this template's
+     5 rows; the map column spans them all, so the backdrop should too. */
+  #ui-overlay.overlay-float { grid-row: 1 / -1; }
+  /* Here the d-pad floats *inside* the map area (no separate touch row),
+     so the full-span backdrop would dim and block it — lift it above the
+     float backdrop (z 5) only, keeping the prompt answerable by arrows/Esc
+     like portrait. Full-screen overlays still cover it as before. */
+  #ui-overlay.overlay-float ~ #touch-controls .tc-dpad { z-index: 6; }
 
   /* No `chat` area in this template — the portrait grid-area would resolve
      to an implicit column off the right edge. Full-width implicit bottom

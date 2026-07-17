@@ -109,8 +109,11 @@ export interface OverlayScreenCtx {
   focusView(): void
 }
 
-// ?-/ search prompts ("Describe what?", "Find what?", level travel, ...)
-// arrive as ui-push msgwin-get-line. The server drives the field via
+// ?/ search prompts ("Describe what?", "Find what?", ...) arrive as ui-push
+// msgwin-get-line — only when a popup layout is already open or no game is
+// running (message.cc:1646); in-play line prompts (Ctrl-F, travel depth)
+// use the in-log init_input path, and G's branch picker is a tag:"travel"
+// menu. The server drives the field via
 // ui-state-sync (widget_id "input") and we echo each edit back, so
 // generation_id must match. game-view's ui-state-sync handler finds the
 // field by its .input-dialog-field class.

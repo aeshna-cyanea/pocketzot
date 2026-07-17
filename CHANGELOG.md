@@ -9,6 +9,11 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-07-17
+
+- Made prompt menus easier to reach and polished their appearance. Prompts
+  now float over the center of the map instead of covering the whole screen.
+
 ## 2026-07-16
 
 - Made it harder to accidentally press touch controls while dragging down

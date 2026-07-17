@@ -564,6 +564,183 @@ describe('menu handler', () => {
   })
 })
 
+// A yesno() popup as the engine emits it (prompt.cc yesno(): a Menu with
+// tag "prompt"; wire shape per Menu::webtiles_write_menu). With
+// MF_ARROWS_SELECT the opening `more` is the nav-help keyhelp *template* —
+// webtiles_write_more sends different more/alt_more variants (the
+// unscrollable one is "" for singleselect) — and default_answer 'N'
+// arrives as last_hovered on the No row.
+//
+// The rejected-key error (prompt.cc: allow_lowercase=false, typed
+// lowercase → pop.set_more) reaches the client two different ways:
+// - yesno()'s own loop: set_more runs after pop.show() returned, so
+//   update_more's webtiles send is skipped (`if (!alive) return`) and the
+//   next iteration REOPENS the popup — close_menu, then a fresh menu
+//   message with the error as both more and alt_more (non-template).
+// - a set_more on a still-open menu emits update_menu with the same
+//   identical more/alt_more pair.
+const yesnoPrompt = () => ({
+  msg: 'menu',
+  'ui-centred': false,
+  tag: 'prompt',
+  last_hovered: 1,
+  title: { text: 'Save game and exit? ' },
+  more: '<lightgrey>[<w>Up</w>|<w>Down</w>] select  [<w>Esc</w>] close</lightgrey>',
+  alt_more: '<lightgrey>[<w>Esc</w>] close</lightgrey>',
+  total_items: 2,
+  chunk_start: 0,
+  items: [
+    { level: 2, text: 'Y - Yes', hotkeys: [89, 121] },
+    { level: 2, text: 'N - No', hotkeys: [78, 110] },
+  ],
+})
+const UPPERCASE_ERR = '<lightred>Uppercase [Y]es or [N]o only, please.</lightred>'
+const errUpdate = () => ({ msg: 'update_menu', more: UPPERCASE_ERR, alt_more: UPPERCASE_ERR })
+
+describe('floating prompt (yesno/travel popups)', () => {
+  it('floats over the visible game in a card, with the default answer highlighted', () => {
+    const h = setup()
+    h.dispatch({ msg: 'player', hp: 10, hp_max: 10 })  // latch hudRevealed
+    h.dispatch(yesnoPrompt())
+    expect(overlay(h).classList.contains('overlay-float')).toBe(true)
+    expect(overlay(h).classList.contains('prompt-menu')).toBe(true)
+    expect(overlay(h).querySelector('.overlay-card')).toBeTruthy()
+    // The game stays visible behind the backdrop.
+    expect(isHidden(msgLog(h))).toBe(false)
+    expect(isHidden(hud(h))).toBe(false)
+    // Seeded server hover (yesno's default answer) renders immediately.
+    expect(overlay(h).querySelector('.item-hovered')?.textContent).toContain('N - No')
+  })
+
+  it('restores the playfield hidden by a covering ui-push when the prompt re-floats (G → ? → Esc)', () => {
+    const h = setup()
+    h.dispatch({ msg: 'player', hp: 10, hp_max: 10 })
+    h.dispatch(yesnoPrompt())
+    h.dispatch({ msg: 'ui-push', type: 'formatted-scroller', title: 'Help', body: 'Travel help.' })
+    const mapEl = h.view.querySelector<HTMLElement>('#map-grid')!
+    expect(isHidden(mapEl)).toBe(true)     // full-screen overlay hid the game
+    expect(isHidden(msgLog(h))).toBe(true)
+    expect(isHidden(hud(h))).toBe(true)
+    h.dispatch({ msg: 'ui-pop' })          // prompt re-floats…
+    expect(overlay(h).classList.contains('overlay-float')).toBe(true)
+    expect(isHidden(mapEl)).toBe(false)    // …over the restored game, not a black screen
+    expect(isHidden(msgLog(h))).toBe(false)
+    expect(isHidden(hud(h))).toBe(false)
+  })
+})
+
+// Non-prompt menus arrive with a hover seed too — Menu::show gives every
+// MF_ARROWS_SELECT menu a hover on its first selectable item (set_hovered(0)
+// + cycle_hover past headers) and webtiles_write_menu emits it. Policy: that
+// seed is noise outside the prompt family, so it must stay hidden AND out of
+// the cursor arithmetic until the user opts in by arrowing — otherwise the
+// first Down computes from a position the user never saw and skips an item.
+describe('non-prompt menu hover seeding', () => {
+  const arrowsMenu = () => ({
+    msg: 'menu',
+    tag: 'inv',
+    flags: 0x40000,  // MF_ARROWS_SELECT
+    last_hovered: 1, // server's cursor: first item after the header
+    title: { text: 'Inventory' },
+    total_items: 3,
+    chunk_start: 0,
+    items: [
+      { level: 1, text: 'Hand Weapons' },
+      { level: 2, text: 'a - a +0 short sword', hotkeys: [97] },
+      { level: 2, text: 'b - a +0 buckler', hotkeys: [98] },
+    ],
+  })
+  const arrowDown = () => document.dispatchEvent(new KeyboardEvent('keydown',
+    { key: 'ArrowDown', code: 'ArrowDown', bubbles: true } as KeyboardEventInit))
+
+  it('ignores the seed: no highlight on open, and the first Down lands on the first item', () => {
+    const h = setup()
+    h.dispatch(arrowsMenu())
+    expect(overlay(h).querySelector('.item-hovered')).toBeNull()
+    arrowDown()
+    expect(overlay(h).querySelector('.item-hovered')?.textContent).toContain('short sword')
+    expect(sent(h)).toContainEqual({ msg: 'menu_hover', hover: 1, mouse: false })
+  })
+
+  // A yesno popup stacked over a menu (e.g. the shopping list's "cannot
+  // afford; travel there anyway?" — shopping.cc, a non-null-prompt yesno
+  // while ui::has_layout()) seeds hoveredMenuIdx with no user action. When
+  // it closes, the restored parent must get a fresh-look reset, not inherit
+  // the prompt's hover as an index into the wrong menu's item space.
+  it('does not leak a stacked prompt\'s seeded hover into the restored parent menu', () => {
+    const h = setup()
+    h.dispatch(arrowsMenu())
+    h.dispatch({
+      msg: 'menu', tag: 'prompt', flags: 0x40000, last_hovered: 1,
+      title: { text: 'You cannot afford this item; travel there anyway? ' },
+      total_items: 2, chunk_start: 0,
+      items: [
+        { level: 2, text: 'Y - Yes', hotkeys: [89, 121] },
+        { level: 2, text: 'N - No', hotkeys: [78, 110] },
+      ],
+    })
+    expect(overlay(h).querySelector('.item-hovered')?.textContent).toContain('N - No')
+    h.dispatch({ msg: 'close_menu' })
+    // Restored parent: no phantom highlight from the prompt's No row…
+    expect(overlay(h).querySelector('.item-hovered')).toBeNull()
+    // …and the cursor arithmetic is unseeded too: first Down lands on the
+    // first selectable item, not one past the prompt's leaked index.
+    arrowDown()
+    expect(overlay(h).querySelector('.item-hovered')?.textContent).toContain('short sword')
+  })
+})
+
+describe('prompt footer error reveal (yesno set_more channel)', () => {
+  it('opens with the alert down, and a server echo of the opening more keeps it down', () => {
+    const h = setup()
+    h.dispatch(yesnoPrompt())
+    expect(overlay(h).classList.contains('prompt-menu-alert')).toBe(false)
+    h.dispatch({ msg: 'update_menu', more: yesnoPrompt().more })
+    expect(overlay(h).classList.contains('prompt-menu-alert')).toBe(false)
+  })
+
+  it('the real yesno error sequence — reopen with more == alt_more — shows the footer from the start', () => {
+    // What the engine actually does on a rejected key: close the popup and
+    // push a fresh menu whose more IS the error (never an update_menu).
+    const h = setup()
+    h.dispatch(yesnoPrompt())
+    h.dispatch({ msg: 'close_menu' })
+    h.dispatch({ ...yesnoPrompt(), more: UPPERCASE_ERR, alt_more: UPPERCASE_ERR })
+    expect(overlay(h).classList.contains('prompt-menu-alert')).toBe(true)
+    expect(overlay(h).querySelector('.overlay-footer')?.textContent)
+      .toContain('Uppercase [Y]es or [N]o only, please.')
+  })
+
+  it('a changed more on a still-open menu (alive-path update_menu) raises the alert too', () => {
+    const h = setup()
+    h.dispatch(yesnoPrompt())
+    h.dispatch(errUpdate())
+    expect(overlay(h).classList.contains('prompt-menu-alert')).toBe(true)
+    expect(overlay(h).querySelector('.overlay-footer')?.textContent)
+      .toContain('Uppercase [Y]es or [N]o only, please.')
+  })
+
+  it('the alert survives a ui-push/ui-pop re-render of the prompt', () => {
+    const h = setup()
+    h.dispatch(yesnoPrompt())
+    h.dispatch(errUpdate())
+    h.dispatch({ msg: 'ui-push', type: 'formatted-scroller', title: 'Help', body: 'x' })
+    h.dispatch({ msg: 'ui-pop' })
+    expect(overlay(h).classList.contains('prompt-menu-alert')).toBe(true)
+    expect(overlay(h).querySelector('.overlay-footer')?.textContent)
+      .toContain('Uppercase [Y]es or [N]o only, please.')
+  })
+
+  it('a fresh prompt opens with the alert cleared', () => {
+    const h = setup()
+    h.dispatch(yesnoPrompt())
+    h.dispatch(errUpdate())
+    h.dispatch({ msg: 'close_menu' })
+    h.dispatch(yesnoPrompt())
+    expect(overlay(h).classList.contains('prompt-menu-alert')).toBe(false)
+  })
+})
+
 describe('show_dialog / hide_dialog', () => {
   it('renders the server HTML and wires [data-key] buttons to send that key', () => {
     const h = setup()
