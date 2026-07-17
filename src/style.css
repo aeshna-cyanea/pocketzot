@@ -2719,9 +2719,10 @@ html, body {
 #touch-controls {
   /* D-pad cell size (consumed by .tc-dpad / .tc-dpad-btn) — also sets the
      whole strip's height via the max-height calc below. 3.3rem ≈ 53px,
-     still above the 44pt tap floor; was 3.6rem (see
-     dev-material/vertical-space-savings.md). */
-  --tc-dpad: 3.3rem;
+     3.5rem ≈ 56px,
+     above the 44pt tap floor; was 3.6rem, then 3.3rem — the audited
+     minimum (dev-material/vertical-space-savings.md) */
+  --tc-dpad: 3.5rem;
   /* Resting palette one step darker than the app-wide tokens: at night the
      map is sparse dim glyphs on near-black, so --text/--surface2 buttons
      outshine the play area. Presses brighten (--tc-press + accent label) —
