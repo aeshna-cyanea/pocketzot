@@ -116,3 +116,65 @@ describe('control-set-driven rendering', () => {
     expect(() => setActiveControlSet(id)).not.toThrow()
   })
 })
+
+// The bindTap guard: controls engage on touchstart (touch point verified
+// inside the button) or on click (mouse) — but never from a click that rides
+// on recent touch activity, which is how iOS's tap heuristics can hand a
+// log-scroll drag to a control it traced over (legit touch taps preventDefault
+// their touchstart, so no genuine touch ever reaches a button as a click).
+describe('phantom-engagement guard', () => {
+  const dpadUp = (root: HTMLElement) =>
+    [...root.querySelectorAll<HTMLElement>('.tc-dpad-btn')].find(b => b.textContent === '↑')!
+
+  const touchEvent = (type: string, touches?: Array<{ clientX: number; clientY: number }>) => {
+    const e = new Event(type, { bubbles: true, cancelable: true })
+    if (touches) Object.defineProperty(e, 'changedTouches', { value: touches })
+    return e
+  }
+
+  it('ignores a click arriving on the heels of touch activity elsewhere', () => {
+    const { tc, sent } = setup()
+    document.body.dispatchEvent(touchEvent('touchstart'))
+    document.body.dispatchEvent(touchEvent('touchend'))
+    dpadUp(tc.element).click()
+    expect(sent).toHaveLength(0)
+  })
+
+  it('still engages on a mouse click with no preceding touch', () => {
+    const { tc, sent } = setup()
+    dpadUp(tc.element).click()
+    expect(sent).toHaveLength(1)
+  })
+
+  it('ignores a touchstart whose touch point lies outside the button (adjusted target)', () => {
+    const { tc, sent } = setup()
+    // happy-dom rects are all 0×0, so any offset point is "outside".
+    const e = touchEvent('touchstart', [{ clientX: 40, clientY: 40 }])
+    dpadUp(tc.element).dispatchEvent(e)
+    expect(sent).toHaveLength(0)
+    // ...and the gesture stays untouched so the underlying scroll proceeds.
+    expect(e.defaultPrevented).toBe(false)
+  })
+
+  it('engages exactly once for a touch tap on the button, even if a click follows', () => {
+    const { tc, sent } = setup()
+    const btn = dpadUp(tc.element)
+    const e = touchEvent('touchstart', [{ clientX: 0, clientY: 0 }])  // inside the 0×0 test rect
+    btn.dispatchEvent(e)
+    expect(sent).toHaveLength(1)
+    expect(e.defaultPrevented).toBe(true)
+    btn.click()  // a synthesized click the browser failed to suppress
+    expect(sent).toHaveLength(1)
+  })
+
+  it('drops the guard state with destroy()', () => {
+    const { tc, sent } = setup()
+    tc.destroy()
+    // Touch activity after destroy no longer updates the (dead) panel's
+    // tracker; a fresh panel is unaffected either way — just assert the
+    // listeners came off without breaking normal clicks.
+    document.body.dispatchEvent(touchEvent('touchstart'))
+    dpadUp(tc.element).click()
+    expect(sent).toHaveLength(1)
+  })
+})

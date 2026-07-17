@@ -11,6 +11,8 @@ Notable changes to PocketZot, newest first.
 
 ## 2026-07-16
 
+- Made it harder to accidentally press touch controls while dragging down
+  to scroll the message log.
 - A dot on "What's new" now marks unread release notes.
 - Fixed the place name's tap target, which opens the minimap, being clipped
   to a fraction of its intended size.
