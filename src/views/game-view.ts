@@ -71,6 +71,11 @@ interface MenuMsg {
   // reconnect, spectator join, and pre-popup-stack servers that close and
   // reopen the inventory around an item describe.
   jump_to?: number
+  // Server-side cursor position at menu open (MF_INIT_HOVER default, or a
+  // real default like yesno()'s default answer). Seeds menuServerHover so
+  // the first user arrow moves from the server's actual cursor; not
+  // rendered until the user drives hover (see menuHoverFromUser).
+  last_hovered?: number
 }
 
 // Menu flag bits (subset; values from the reference client enums.js).
@@ -213,6 +218,11 @@ export function buildGameView(
   const uiOverlay = document.createElement('div')
   uiOverlay.id = 'ui-overlay'
   uiOverlay.style.display = 'none'
+  // Where overlay content (title/list/footer) is appended. Normally uiOverlay
+  // itself; in float mode (prompt modal) enterOverlayLayout points it at a
+  // bordered .overlay-card so uiOverlay can act as the dim backdrop. Only
+  // append sites need this — querySelector lookups on uiOverlay see through it.
+  let overlayContent: HTMLElement = uiOverlay
 
   // WebTiles chat. The view handles history/pill/chip; we supply transport.
   // Spectators always get the chip — chat is half the point of watching;
@@ -292,6 +302,12 @@ export function buildGameView(
   // wrapped row. This tracks the server's cursor so the next client move is
   // computed from the right place even when the server moves it.
   let menuServerHover = -1
+  // The `more` a prompt-family menu opened with — the generic nav help the
+  // prompt-menu CSS hides. yesno() reuses the same channel for its error
+  // text (pop.set_more "Uppercase [Y]es or [N]o only, please." on a
+  // rejected key, prompt.cc), so an update_menu whose `more` differs from
+  // this reveals the footer again (.prompt-menu-alert).
+  let promptInitialMore = ''
   // Hover is a keyboard-nav indicator that doesn't earn its visual weight in a
   // touch-first UI; the server, however, sends `last_hovered` defaults
   // (MF_INIT_HOVER → 0) on menu open and re-echoes them on most updates. We
@@ -1405,6 +1421,11 @@ export function buildGameView(
         if (!activeMenu) break
         if (m.more !== undefined) {
           activeMenu.more = m.more
+          // On a prompt popup a changed `more` is yesno()'s error channel
+          // (see promptInitialMore) — un-hide the footer so the rejection
+          // ("Uppercase [Y]es or [N]o only, please.") is actually visible.
+          if (uiOverlay.classList.contains('prompt-menu') && m.more !== promptInitialMore)
+            uiOverlay.classList.add('prompt-menu-alert')
           const footerEl = uiOverlay.querySelector<HTMLElement>('.overlay-footer')
           if (footerEl) {
             const listEl = uiOverlay.querySelector<HTMLElement>('.overlay-list')
@@ -2283,6 +2304,9 @@ export function buildGameView(
     if (idx < 0) return
     menuHoverFromUser = true
     if (idx === menuServerHover) {
+      // Sync the render index: a seeded-but-hidden hover (menu open) has
+      // hoveredMenuIdx still at -1, and this branch is how it gets revealed.
+      hoveredMenuIdx = idx
       highlightHoveredRow(scroll)
       return
     }
@@ -2298,6 +2322,10 @@ export function buildGameView(
   function cycleMenuHover(reverse: boolean): void {
     const next = nextHoverableMenuItem(reverse, menuServerHover)
     if (next !== -1) setMenuHover(next)
+    // No move possible (e.g. down from the last row without MF_WRAP): still
+    // reveal the current — possibly seeded-and-hidden — hover, so the first
+    // arrow press always shows where the cursor is instead of doing nothing.
+    else if (menuServerHover >= 0) setMenuHover(menuServerHover)
   }
 
   function menuListEl(): HTMLElement | null {
@@ -2583,22 +2611,58 @@ export function buildGameView(
   }
 
   function showMenu(msg: MenuMsg): void {
+    // The PromptMenu family — yesno() popups (prompt.cc, tag "prompt") and
+    // G's travel branch picker (travel.cc, tag "travel"; the only other
+    // PromptMenu in normal play) — floats as a modal over the still-visible
+    // game when arriving from normal play, like the reference .ui-popup:
+    // these questions are about the map you're standing on. A prompt fired
+    // while another menu/overlay owns the screen (shop purchase confirm,
+    // prompts over a CRT) keeps the full-screen treatment — the map isn't
+    // the context there, and un-hiding it would flash the wrong background.
+    // Checked before activeMenu is reassigned; a re-render of the same
+    // prompt (ui-pop restore) stays floating.
+    const promptFamily = msg.tag === 'prompt' || msg.tag === 'travel'
+    const floatPrompt = promptFamily && uiStack.length === 0
+      && !crtActive && !dialogActive && (activeMenu === null || activeMenu === msg)
     if (activeMenu !== msg) {
       captureMenuScroll()  // before reassignment: keyed to the covered menu
       hoveredMenuIdx = -1
-      menuServerHover = -1
+      // Seed the server cursor from the menu's initial hover (yesno()'s
+      // default answer, MF_INIT_HOVER) so the first user arrow computes
+      // from where the server's cursor actually is — e.g. the save prompt
+      // opens on No, and down (no MF_WRAP) must stay there, not jump to
+      // Yes from an unseeded -1. hoveredMenuIdx stays -1: the highlight is
+      // not rendered until the user drives it (see menuHoverFromUser).
+      menuServerHover = msg.last_hovered ?? -1
+      // The prompt family renders the seed immediately (fillMenuItems
+      // highlights hoveredMenuIdx): there the default hover is real
+      // information — yesno's default answer, travel's remembered target
+      // branch (travel.cc set_hovered(def_choice)) — i.e. what Enter/Tab
+      // will do, shown by the reference too. Other menus keep it hidden —
+      // their default is just MF_INIT_HOVER's row 0, noise on a touch UI
+      // (and the shop's can be stale, see menuHoverFromUser).
+      if (promptFamily) hoveredMenuIdx = menuServerHover
       menuHoverFromUser = false
       menuShift.reset()
+      promptInitialMore = msg.more ?? ''
     }
     activeMenu = msg
     const title = stripDcss(msg.title?.text ?? '')
+    // Prompt menus centre their question + 2-3 answer rows vertically
+    // instead of pinning them under the status bar. enterOverlayLayout
+    // (inside renderOverlay) clears the class, so re-add it every render.
     renderOverlay(title, () => {
       renderMenuItems(msg.items ?? [])
       const footerEl = document.createElement('div')
       footerEl.className = 'overlay-footer'
       setMenuFooter(footerEl, msg.more ?? '', 'top')
-      uiOverlay.appendChild(footerEl)
-    })
+      overlayContent.appendChild(footerEl)
+    }, { float: floatPrompt })
+    uiOverlay.classList.toggle('prompt-menu', promptFamily)
+    // Survives a re-render of the same menu (ui-pop restore): msg.more was
+    // mutated by the update_menu that raised the alert.
+    uiOverlay.classList.toggle('prompt-menu-alert',
+      promptFamily && (msg.more ?? '') !== promptInitialMore)
     if (msg.tag === 'shop' || msg.tag === 'stash' || msg.tag === 'acquirement') {
       buildMenuControls(msg.tag, msg.flags)
       menuControls.style.display = ''
@@ -2640,7 +2704,7 @@ export function buildGameView(
     fillMenuItems(listEl, items)
     listEl.addEventListener('scroll', () => scheduleMenuScrollSend(), { passive: true })
     const footer = uiOverlay.querySelector('.overlay-footer')
-    uiOverlay.insertBefore(listEl, footer)
+    overlayContent.insertBefore(listEl, footer)
     syncMenuShiftLabels()
   }
 
@@ -2885,7 +2949,7 @@ export function buildGameView(
   // the parent would take an open virtual keyboard down with it (and the
   // keyboard covers the d-pad anyway when open); screens with no use for
   // the d-pad (newgame-choice, CRT) pass touch:false.
-  function enterOverlayLayout(opts?: { touch?: boolean }): void {
+  function enterOverlayLayout(opts?: { touch?: boolean; float?: boolean }): void {
     // Every server-driven overlay passes through here; the map-area minimap
     // lens must not linger over (or under) it, and neither may a chat pill
     // already mid-display (new pills are vetoed via pillAllowed, but that
@@ -2895,11 +2959,34 @@ export function buildGameView(
     closeMinimap({ suspend: true })
     chatView.hidePill()
     uiOverlay.innerHTML = ''
+    uiOverlay.classList.remove('prompt-menu', 'prompt-menu-alert')
+    uiOverlay.classList.toggle('overlay-float', !!opts?.float)
     uiOverlay.style.display = ''
     chatView.syncChip()
-    mapView.element.style.display = 'none'
-    msgLog.style.display = 'none'
-    hud.style.display = 'none'
+    if (opts?.float) {
+      // Float mode (prompt modal): the game shows through the dim backdrop.
+      // Restore playfield visibility the same way hideOverlay does — a
+      // covering full-screen overlay may have hidden it (G → ? opens the
+      // travel help as a ui-push; its ui-pop re-floats this prompt), and
+      // leaving the displays alone would float the card over a black
+      // screen. The inXMode guard keeps X-mode's own hidden log/HUD
+      // hidden (its map is visible regardless), and showHud respects the
+      // hudRevealed latch. Content goes into a reference-style bordered
+      // card instead.
+      overlayContent = document.createElement('div')
+      overlayContent.className = 'overlay-card'
+      uiOverlay.appendChild(overlayContent)
+      mapView.element.style.display = ''
+      if (!inXMode) {
+        msgLog.style.display = ''
+        showHud()
+      }
+    } else {
+      overlayContent = uiOverlay
+      mapView.element.style.display = 'none'
+      msgLog.style.display = 'none'
+      hud.style.display = 'none'
+    }
     touchControls.element.style.display = opts?.touch === false ? 'none' : ''
     menuControls.style.display = 'none'
     menuControls.innerHTML = ''
@@ -2917,9 +3004,9 @@ export function buildGameView(
     focusView,
   }
 
-  function renderOverlay(title: string, buildBody: () => void): void {
+  function renderOverlay(title: string, buildBody: () => void, opts?: { float?: boolean }): void {
     autoCloseKbdIfOurs()
-    enterOverlayLayout()
+    enterOverlayLayout(opts)
 
     const headerEl = document.createElement('div')
     // fg15 (white) by default so unstyled titles read brighter than the
@@ -2928,7 +3015,7 @@ export function buildGameView(
     const titleSpan = document.createElement('span')
     titleSpan.textContent = title
     headerEl.appendChild(titleSpan)
-    uiOverlay.appendChild(headerEl)
+    overlayContent.appendChild(headerEl)
 
     buildBody()
     // No close button: dismissal goes through the touch-controls Esc, which
@@ -3078,6 +3165,8 @@ export function buildGameView(
     autoCloseKbdIfOurs()
     uiOverlay.style.display = 'none'
     uiOverlay.innerHTML = ''
+    uiOverlay.classList.remove('prompt-menu', 'prompt-menu-alert', 'overlay-float')
+    overlayContent = uiOverlay
     chatView.syncChip()  // chip retracts while an overlay is up; map's back
     mapView.element.style.display = ''
     menuControls.style.display = 'none'
