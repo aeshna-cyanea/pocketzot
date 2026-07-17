@@ -610,6 +610,67 @@ describe('floating prompt (yesno/travel popups)', () => {
   })
 })
 
+// Non-prompt menus arrive with a hover seed too — Menu::show gives every
+// MF_ARROWS_SELECT menu a hover on its first selectable item (set_hovered(0)
+// + cycle_hover past headers) and webtiles_write_menu emits it. Policy: that
+// seed is noise outside the prompt family, so it must stay hidden AND out of
+// the cursor arithmetic until the user opts in by arrowing — otherwise the
+// first Down computes from a position the user never saw and skips an item.
+describe('non-prompt menu hover seeding', () => {
+  const arrowsMenu = () => ({
+    msg: 'menu',
+    tag: 'inv',
+    flags: 0x40000,  // MF_ARROWS_SELECT
+    last_hovered: 1, // server's cursor: first item after the header
+    title: { text: 'Inventory' },
+    total_items: 3,
+    chunk_start: 0,
+    items: [
+      { level: 1, text: 'Hand Weapons' },
+      { level: 2, text: 'a - a +0 short sword', hotkeys: [97] },
+      { level: 2, text: 'b - a +0 buckler', hotkeys: [98] },
+    ],
+  })
+  const arrowDown = () => document.dispatchEvent(new KeyboardEvent('keydown',
+    { key: 'ArrowDown', code: 'ArrowDown', bubbles: true } as KeyboardEventInit))
+
+  it('ignores the seed: no highlight on open, and the first Down lands on the first item', () => {
+    const h = setup()
+    h.dispatch(arrowsMenu())
+    expect(overlay(h).querySelector('.item-hovered')).toBeNull()
+    arrowDown()
+    expect(overlay(h).querySelector('.item-hovered')?.textContent).toContain('short sword')
+    expect(sent(h)).toContainEqual({ msg: 'menu_hover', hover: 1, mouse: false })
+  })
+
+  // A yesno popup stacked over a menu (e.g. the shopping list's "cannot
+  // afford; travel there anyway?" — shopping.cc, a non-null-prompt yesno
+  // while ui::has_layout()) seeds hoveredMenuIdx with no user action. When
+  // it closes, the restored parent must get a fresh-look reset, not inherit
+  // the prompt's hover as an index into the wrong menu's item space.
+  it('does not leak a stacked prompt\'s seeded hover into the restored parent menu', () => {
+    const h = setup()
+    h.dispatch(arrowsMenu())
+    h.dispatch({
+      msg: 'menu', tag: 'prompt', flags: 0x40000, last_hovered: 1,
+      title: { text: 'You cannot afford this item; travel there anyway? ' },
+      total_items: 2, chunk_start: 0,
+      items: [
+        { level: 2, text: 'Y - Yes', hotkeys: [89, 121] },
+        { level: 2, text: 'N - No', hotkeys: [78, 110] },
+      ],
+    })
+    expect(overlay(h).querySelector('.item-hovered')?.textContent).toContain('N - No')
+    h.dispatch({ msg: 'close_menu' })
+    // Restored parent: no phantom highlight from the prompt's No row…
+    expect(overlay(h).querySelector('.item-hovered')).toBeNull()
+    // …and the cursor arithmetic is unseeded too: first Down lands on the
+    // first selectable item, not one past the prompt's leaked index.
+    arrowDown()
+    expect(overlay(h).querySelector('.item-hovered')?.textContent).toContain('short sword')
+  })
+})
+
 describe('prompt footer error reveal (yesno set_more channel)', () => {
   it('opens with the alert down, and a server echo of the opening more keeps it down', () => {
     const h = setup()

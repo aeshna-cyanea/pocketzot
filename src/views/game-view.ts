@@ -1629,13 +1629,22 @@ export function buildGameView(
         if (harvester.consumePendingClose()) break
         menuStack.pop()
         const prev = menuStack[menuStack.length - 1] ?? null
-        activeMenu = prev
         menuShift.reset()
         titlePromptInput = null
+        // Don't pre-assign activeMenu = prev: showMenu must see the closing
+        // menu as `activeMenu !== msg` so its fresh-look reset runs —
+        // otherwise the closing menu's hover state (a stacked prompt's
+        // seeded default, or user-driven hover) leaks into the restored
+        // menu as indices in the wrong item space. The restored menu's own
+        // pre-cover hover was already reset when the covering menu opened,
+        // so this loses nothing: fresh look, fresh opt-in.
         if (prev) showMenu(prev)
-        else if (uiStack.length > 0) showUiPush(uiStack[uiStack.length - 1])
-        else if (crtActive) restoreCrt()
-        else hideOverlay()
+        else {
+          activeMenu = null
+          if (uiStack.length > 0) showUiPush(uiStack[uiStack.length - 1])
+          else if (crtActive) restoreCrt()
+          else hideOverlay()
+        }
         break
       }
 
@@ -2634,20 +2643,21 @@ export function buildGameView(
     if (activeMenu !== msg) {
       captureMenuScroll()  // before reassignment: keyed to the covered menu
       hoveredMenuIdx = -1
-      // Seed the server cursor from the menu's initial hover (yesno()'s
-      // default answer, MF_INIT_HOVER) so the first user arrow computes
-      // from where the server's cursor actually is — e.g. the save prompt
-      // opens on No, and down (no MF_WRAP) must stay there, not jump to
-      // Yes from an unseeded -1. hoveredMenuIdx stays -1: the highlight is
-      // not rendered until the user drives it (see menuHoverFromUser).
-      menuServerHover = msg.last_hovered ?? -1
-      // The prompt family renders the seed immediately (fillMenuItems
-      // highlights hoveredMenuIdx): there the default hover is real
-      // information — yesno's default answer, travel's remembered target
-      // branch (travel.cc set_hovered(def_choice)) — i.e. what Enter/Tab
-      // will do, shown by the reference too. Other menus keep it hidden —
-      // their default is just MF_INIT_HOVER's row 0, noise on a touch UI
-      // (and the shop's can be stale, see menuHoverFromUser).
+      // Prompt family only: seed the cursor from the menu's initial hover
+      // and render it immediately (fillMenuItems highlights hoveredMenuIdx).
+      // There the default hover is real information — yesno's default
+      // answer, travel's remembered target branch (travel.cc
+      // set_hovered(def_choice)) — i.e. what Enter/Tab will do, shown by
+      // the reference too, and the first arrow must compute from it: the
+      // save prompt opens on No, and down (no MF_WRAP) must stay there,
+      // not jump to Yes from an unseeded -1. Other menus stay unseeded and
+      // unhighlighted — every MF_ARROWS_SELECT menu arrives with
+      // last_hovered on its first selectable item (Menu::show seeds hover
+      // 0 and cycles past headers), which is just noise on a touch UI (and
+      // the shop's can be stale, see menuHoverFromUser); seeding the
+      // arithmetic while hiding the highlight would make the first Down
+      // skip an item the user never saw hovered.
+      menuServerHover = promptFamily ? msg.last_hovered ?? -1 : -1
       if (promptFamily) hoveredMenuIdx = menuServerHover
       menuHoverFromUser = false
       menuShift.reset()
