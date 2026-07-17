@@ -390,24 +390,25 @@ export function buildTouchControls(send: SendFn, opts: TouchControlsOpts = {}): 
   // bound to their start element), and desktop engines don't misfire either
   // (verified: a Chromium native-touch drag fires nothing here; a WebKit
   // mouse drag clicks the common ancestor, not the button). iOS Safari's tap
-  // heuristics, however, have two paths onto a control the finger never
-  // deliberately tapped: touch-target adjustment can snap a touch-down near a
-  // control onto it (firing its touchstart with coordinates still outside the
-  // button), and a drag Safari doesn't classify as a scroll can end in an
-  // emulated mousedown/mouseup/click on a control. On-device testing pinned
-  // the reported engagement on the click path (a click-window-only variant of
-  // this guard fixed it alone); the touchstart coordinate check is
-  // unconfirmed-but-cheap insurance for the adjustment path, and it fails
-  // open — no preventDefault — so the scroll it interrupts proceeds. Hence
-  // bindTap, the single binding for every control here: touchstart engages
-  // only when the touch point really lies inside the button, and click
-  // engages only when no touch happened recently — a legit touch tap is
-  // handled (and preventDefault()ed, suppressing its synthesized click) by
-  // the touchstart path, so any touch-derived click reaching these buttons is
-  // a phantom. Real mouse clicks (iPad + trackpad, touchscreen laptops) have
-  // no preceding touch and pass. State is per-panel and the document
-  // listeners die with destroy(), so a stale guard can never outlive its game
-  // view.
+  // heuristics, however, can end a drag Safari doesn't classify as a scroll
+  // in an emulated mousedown/mouseup/click on a control it traced over —
+  // on-device testing confirmed this click path as the mechanism. Hence
+  // bindTap, the single binding for every control here: click engages only
+  // when no touch happened recently — a legit touch tap is handled (and
+  // preventDefault()ed, suppressing its synthesized click) by the touchstart
+  // path, so any touch-derived click reaching these buttons is a phantom.
+  // Real mouse clicks (iPad + trackpad, touchscreen laptops) have no
+  // preceding touch and pass. State is per-panel and the document listeners
+  // die with destroy(), so a stale guard can never outlive its game view.
+  //
+  // Deliberately NOT guarded: iOS touch-target adjustment (a touch-down
+  // snapped onto a control from outside it). A coordinate gate on touchstart
+  // (reject when the touch point lies outside the button) shipped briefly
+  // and was dropped: it broke the kbd's gap-claiming ::after hit tiling
+  // (whose taps legitimately land outside the key's border box) and risks
+  // fighting iOS's aim rescue of sloppy fast typing, while the click latch
+  // alone fixed the observed bug. Don't re-add one without an observed
+  // adjustment-path phantom.
   //
   // The menu-ctrl bar, numpad, and prompt-row buttons (game-view.ts) share
   // the raw touchstart+click pattern and the same scrollable-content-above-
@@ -423,16 +424,7 @@ export function buildTouchControls(send: SendFn, opts: TouchControlsOpts = {}): 
   }
 
   const bindTap: BindTap = (btn, fire) => {
-    btn.addEventListener('touchstart', (e) => {
-      const t = e.changedTouches?.[0]
-      if (t) {
-        const r = btn.getBoundingClientRect()
-        if (t.clientX < r.left - 1 || t.clientX > r.right + 1
-          || t.clientY < r.top - 1 || t.clientY > r.bottom + 1) return
-      }
-      e.preventDefault()
-      fire()
-    }, { passive: false })
+    btn.addEventListener('touchstart', (e) => { e.preventDefault(); fire() }, { passive: false })
     btn.addEventListener('click', (e) => {
       if (e.timeStamp - lastTouchTs < PHANTOM_CLICK_WINDOW_MS) return
       fire()
