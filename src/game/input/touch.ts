@@ -32,6 +32,9 @@ type DpadDef =
   | { label: string; plain: number; shifted: number; ctrled: number }
   | { label: string; text: string }
 
+// Binds one control's engagement (see bindTap in buildTouchControls).
+type BindTap = (btn: HTMLElement, fire: () => void) => void
+
 // game-view owns the spell data (and the tile loader / cast logic), so it
 // supplies the grid DOM for the z tab; touch.ts just hosts it in the panel's
 // content area and manages tab switching.
@@ -86,6 +89,7 @@ const DPAD_LAYOUT: DpadDef[][] = [
 // [123]/[ABC] toggle. Replaces the touch-controls strip while open.
 function buildKeyboardOverlay(
   send: SendFn,
+  bindTap: BindTap,
 ): { element: HTMLElement; open: () => void; close: () => void } {
   type Layer = 'letters' | 'symbols'
   let layer: Layer = 'letters'
@@ -238,8 +242,7 @@ function buildKeyboardOverlay(
     const b = document.createElement('button')
     b.className = 'kbd-key' + (classes ? ' ' + classes : '')
     b.textContent = label
-    b.addEventListener('touchstart', e => { e.preventDefault(); onTap() }, { passive: false })
-    b.addEventListener('click', onTap)
+    bindTap(b, onTap)
     return b
   }
 
@@ -262,9 +265,7 @@ function buildKeyboardOverlay(
     main.textContent = ch
     b.appendChild(sup)
     b.appendChild(main)
-    const onTap = () => dispatchChar(ch)
-    b.addEventListener('touchstart', e => { e.preventDefault(); onTap() }, { passive: false })
-    b.addEventListener('click', onTap)
+    bindTap(b, () => dispatchChar(ch))
     return b
   }
 
@@ -279,9 +280,7 @@ function buildKeyboardOverlay(
     main.textContent = ch
     b.appendChild(sup)
     b.appendChild(main)
-    const onTap = () => dispatchChar(ch, shifted)
-    b.addEventListener('touchstart', e => { e.preventDefault(); onTap() }, { passive: false })
-    b.addEventListener('click', onTap)
+    bindTap(b, () => dispatchChar(ch, shifted))
     return b
   }
 
@@ -384,6 +383,62 @@ export function buildTouchControls(send: SendFn, opts: TouchControlsOpts = {}): 
   // stays wired (and testable) behind it.
   const spellTabVisible = (): boolean => ENABLE_SPELL_TAB && !!opts.spellTab?.hasSpells()
 
+  // --- Phantom-engagement guard ---
+  // A tap→drag that starts on the floating message log (the everyday "scroll
+  // up to older messages" gesture) must not engage controls the finger traces
+  // over on its way down. Touch events themselves can't do that (they stay
+  // bound to their start element), and desktop engines don't misfire either
+  // (verified: a Chromium native-touch drag fires nothing here; a WebKit
+  // mouse drag clicks the common ancestor, not the button). iOS Safari's tap
+  // heuristics, however, have two paths onto a control the finger never
+  // deliberately tapped: touch-target adjustment can snap a touch-down near a
+  // control onto it (firing its touchstart with coordinates still outside the
+  // button), and a drag Safari doesn't classify as a scroll can end in an
+  // emulated mousedown/mouseup/click on a control. On-device testing pinned
+  // the reported engagement on the click path (a click-window-only variant of
+  // this guard fixed it alone); the touchstart coordinate check is
+  // unconfirmed-but-cheap insurance for the adjustment path, and it fails
+  // open — no preventDefault — so the scroll it interrupts proceeds. Hence
+  // bindTap, the single binding for every control here: touchstart engages
+  // only when the touch point really lies inside the button, and click
+  // engages only when no touch happened recently — a legit touch tap is
+  // handled (and preventDefault()ed, suppressing its synthesized click) by
+  // the touchstart path, so any touch-derived click reaching these buttons is
+  // a phantom. Real mouse clicks (iPad + trackpad, touchscreen laptops) have
+  // no preceding touch and pass. State is per-panel and the document
+  // listeners die with destroy(), so a stale guard can never outlive its game
+  // view.
+  //
+  // The menu-ctrl bar, numpad, and prompt-row buttons (game-view.ts) share
+  // the raw touchstart+click pattern and the same scrollable-content-above-
+  // buttons geometry, but are deliberately unguarded: no phantom has been
+  // observed there, and the guard is a behavior change we don't apply on
+  // speculation. If one shows up, lift this into a shared module — those call
+  // sites need an onMouseClick hook for their mouse-only focusView().
+  const PHANTOM_CLICK_WINDOW_MS = 700
+  let lastTouchTs = -Infinity
+  const onDocTouch = (e: TouchEvent): void => { lastTouchTs = e.timeStamp }
+  for (const type of ['touchstart', 'touchend', 'touchcancel'] as const) {
+    document.addEventListener(type, onDocTouch, { capture: true, passive: true })
+  }
+
+  const bindTap: BindTap = (btn, fire) => {
+    btn.addEventListener('touchstart', (e) => {
+      const t = e.changedTouches?.[0]
+      if (t) {
+        const r = btn.getBoundingClientRect()
+        if (t.clientX < r.left - 1 || t.clientX > r.right + 1
+          || t.clientY < r.top - 1 || t.clientY > r.bottom + 1) return
+      }
+      e.preventDefault()
+      fire()
+    }, { passive: false })
+    btn.addEventListener('click', (e) => {
+      if (e.timeStamp - lastTouchTs < PHANTOM_CLICK_WINDOW_MS) return
+      fire()
+    })
+  }
+
   // --- Key dispatch helpers ---
 
   function refreshMods(): void {
@@ -446,7 +501,7 @@ export function buildTouchControls(send: SendFn, opts: TouchControlsOpts = {}): 
   root.id = 'touch-controls'
 
   // Keyboard overlay (fixed position, renders above everything)
-  const { element: kbdEl, open: openKbd, close: closeKbd } = buildKeyboardOverlay(send)
+  const { element: kbdEl, open: openKbd, close: closeKbd } = buildKeyboardOverlay(send, bindTap)
   root.appendChild(kbdEl)
 
   // --- D-pad ---
@@ -470,8 +525,7 @@ export function buildTouchControls(send: SendFn, opts: TouchControlsOpts = {}): 
   escBtn.className = 'tc-esc'
   escBtn.textContent = '⎋'
   escBtn.title = 'Escape'
-  escBtn.addEventListener('touchstart', e => { e.preventDefault(); send({ msg: 'key', keycode: 27 }); clearOneshot() }, { passive: false })
-  escBtn.addEventListener('click', () => { send({ msg: 'key', keycode: 27 }); clearOneshot() })
+  bindTap(escBtn, () => { send({ msg: 'key', keycode: 27 }); clearOneshot() })
   headerEl.appendChild(escBtn)
 
   tabsEl = document.createElement('div')
@@ -503,8 +557,7 @@ export function buildTouchControls(send: SendFn, opts: TouchControlsOpts = {}): 
       // The z tab starts hidden; refreshSpellTab() reveals it once a harvest
       // finds spells (and hides it again if the player ends up with none).
       if (td.key === 'spells' && !spellTabVisible()) btn.style.display = 'none'
-      btn.addEventListener('touchstart', e => { e.preventDefault(); renderTab(td.key) }, { passive: false })
-      btn.addEventListener('click', () => renderTab(td.key))
+      bindTap(btn, () => renderTab(td.key))
       tabsEl.appendChild(btn)
     }
   }
@@ -513,8 +566,7 @@ export function buildTouchControls(send: SendFn, opts: TouchControlsOpts = {}): 
   enterBtn.className = 'tc-enter'
   enterBtn.textContent = '⏎'
   enterBtn.title = 'Enter'
-  enterBtn.addEventListener('touchstart', e => { e.preventDefault(); send({ msg: 'key', keycode: 13 }); clearOneshot() }, { passive: false })
-  enterBtn.addEventListener('click', () => { send({ msg: 'key', keycode: 13 }); clearOneshot() })
+  bindTap(enterBtn, () => { send({ msg: 'key', keycode: 13 }); clearOneshot() })
   headerEl.appendChild(enterBtn)
 
   // Content area — replaced on tab switch or mode change
@@ -539,8 +591,7 @@ export function buildTouchControls(send: SendFn, opts: TouchControlsOpts = {}): 
       refreshMods()
     }
   }
-  shiftBtn.addEventListener('touchstart', e => { e.preventDefault(); tapShift() }, { passive: false })
-  shiftBtn.addEventListener('click', tapShift)
+  bindTap(shiftBtn, tapShift)
   footerEl.appendChild(shiftBtn)
 
   ctrlBtn = document.createElement('button')
@@ -552,16 +603,14 @@ export function buildTouchControls(send: SendFn, opts: TouchControlsOpts = {}): 
     if (ctrlActive) shift.reset()
     refreshMods()
   }
-  ctrlBtn.addEventListener('touchstart', e => { e.preventDefault(); toggleCtrlMod() }, { passive: false })
-  ctrlBtn.addEventListener('click', toggleCtrlMod)
+  bindTap(ctrlBtn, toggleCtrlMod)
   footerEl.appendChild(ctrlBtn)
 
   const kbdBtn = document.createElement('button')
   kbdBtn.className = 'tc-kbd'
   kbdBtn.textContent = 'abc▴'
   kbdBtn.title = 'Open keyboard input'
-  kbdBtn.addEventListener('touchstart', e => { e.preventDefault(); openKbd() }, { passive: false })
-  kbdBtn.addEventListener('click', () => openKbd())
+  bindTap(kbdBtn, openKbd)
   footerEl.appendChild(kbdBtn)
 
   // --- Render helpers ---
@@ -574,8 +623,7 @@ export function buildTouchControls(send: SendFn, opts: TouchControlsOpts = {}): 
         const btn = document.createElement('button')
         btn.className = 'tc-dpad-btn' + (r === 1 && c === 1 ? ' wait' : '')
         btn.textContent = def.label
-        btn.addEventListener('touchstart', e => { e.preventDefault(); sendDpad(def) }, { passive: false })
-        btn.addEventListener('click', () => sendDpad(def))
+        bindTap(btn, () => sendDpad(def))
         dpadEl.appendChild(btn)
       }
     }
@@ -632,8 +680,7 @@ export function buildTouchControls(send: SendFn, opts: TouchControlsOpts = {}): 
         if (label.length >= 3) btn.classList.add('tri')  // 3-char macros get a smaller face
         btn.textContent = label
         if (title) { btn.title = title; btn.setAttribute('aria-label', title) }
-        btn.addEventListener('touchstart', e => { e.preventDefault(); sendTabKey(def) }, { passive: false })
-        btn.addEventListener('click', () => sendTabKey(def))
+        bindTap(btn, () => sendTabKey(def))
         rowEl.appendChild(btn)
       }
       contentEl.appendChild(rowEl)
@@ -663,6 +710,9 @@ export function buildTouchControls(send: SendFn, opts: TouchControlsOpts = {}): 
 
   function destroy(): void {
     window.removeEventListener(CONTROLS_CHANGED_EVENT, onControlsChanged)
+    for (const type of ['touchstart', 'touchend', 'touchcancel'] as const) {
+      document.removeEventListener(type, onDocTouch, { capture: true })
+    }
   }
 
   function enterXMode(): void {
