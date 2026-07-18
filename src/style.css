@@ -2835,6 +2835,9 @@ html, body {
   text-shadow: 0 0 2px #000, 0 0 3px #000;
   pointer-events: none;
 }
+/* d-pad Shift engaged → the next tap force-casts: show the actual keystroke
+   ("za" → "Za"; capitalize uppercases just the first letter). */
+#game-view.shift-on .spell-letter { text-transform: capitalize; }
 
 /* Terminal-mode: engaged when server sends scroll positions */
 .overlay-body--term .overlay-line { white-space: nowrap; }

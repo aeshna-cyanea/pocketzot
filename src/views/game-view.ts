@@ -734,6 +734,9 @@ export function buildGameView(
 
   const touchControls: TouchControls = buildTouchControls(dispatchTouchInput, spectating ? {} : {
     spellTab: { render: renderSpellGrid, hasSpells: () => harvester.spells.length > 0 },
+    // Mirror the d-pad Shift state on the view so CSS can flip the cast
+    // badges to their force-cast form ("za" → "Za") while it's engaged.
+    onShiftChange: on => view.classList.toggle('shift-on', on),
   })
 
   const menuControls = document.createElement('div')
@@ -2615,12 +2618,15 @@ export function buildGameView(
     // the sidebar beside the panel, and a tap here bypasses the touch-input
     // swallow (the rail sends via conn.send, not that callback).
     if (monsterPanelOpen || currentInputMode !== 1 || !commandChannelIdle()) return
+    // With the d-pad Shift toggle engaged, force-cast (`Z`, CMD_FORCE_CAST_SPELL:
+    // casts even with no target in view) instead of plain `z`.
+    const cmd = touchControls.consumeShift() ? 'Z' : 'z'
     // One message, not two: the Python server writes each input message's text
     // to the game pty in a single write (process_handler.handle_input), so
     // "z"+letter arrive in the engine's buffer together and it never blocks
     // (flushing the cast prompt and waiting on the socket) between them — the
     // way it can when two messages land as two pty writes.
-    conn.send({ msg: 'input', text: `z${letter}` })
+    conn.send({ msg: 'input', text: `${cmd}${letter}` })
   }
 
   // Render the persistent quick-cast rail from the harvested spells. Hidden

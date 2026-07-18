@@ -169,3 +169,43 @@ describe('phantom-engagement guard', () => {
     expect(sent).toHaveLength(1)
   })
 })
+
+describe('consumeShift — spell-rail force-cast hook', () => {
+  const shiftBtn = (root: HTMLElement) =>
+    root.querySelector<HTMLButtonElement>('.tc-shift')!
+
+  it('reports off by default without consuming anything', () => {
+    const { tc } = setup()
+    expect(tc.consumeShift()).toBe(false)
+    expect(tc.consumeShift()).toBe(false)
+  })
+
+  it('reports a one-shot shift once, then clears it', () => {
+    const { tc } = setup()
+    shiftBtn(tc.element).click()
+    expect(tc.consumeShift()).toBe(true)
+    expect(shiftBtn(tc.element).classList.contains('active')).toBe(false)
+    expect(tc.consumeShift()).toBe(false)
+  })
+
+  it('keeps shift lock engaged across consumes', () => {
+    const { tc } = setup()
+    shiftBtn(tc.element).click()
+    shiftBtn(tc.element).click()  // quick double-tap = lock
+    expect(tc.consumeShift()).toBe(true)
+    expect(tc.consumeShift()).toBe(true)
+    expect(shiftBtn(tc.element).classList.contains('locked')).toBe(true)
+  })
+
+  it('notifies onShiftChange on engage and on consume', () => {
+    const states: boolean[] = []
+    const tc = buildTouchControls(() => {}, { onShiftChange: on => states.push(on) })
+    document.body.appendChild(tc.element)
+    shiftBtn(tc.element).click()
+    expect(states).toEqual([true])
+    tc.consumeShift()
+    expect(states).toEqual([true, false])
+    tc.consumeShift()  // already off — no state change, no callback
+    expect(states).toEqual([true, false])
+  })
+})

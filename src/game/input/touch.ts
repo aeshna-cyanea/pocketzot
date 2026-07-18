@@ -56,6 +56,10 @@ export interface TouchControls {
   openKbd(): void
   closeKbd(): void
   refreshSpellTab(): void  // re-render the z tab if it is the active tab
+  // Whether the d-pad Shift toggle is engaged, consuming a one-shot (lock
+  // stays). For shift-modified taps on surfaces outside this panel, e.g. the
+  // spell rail's force-cast (`Z` instead of `z`).
+  consumeShift(): boolean
   destroy(): void          // release the live-apply listener (game exit)
 }
 
@@ -362,6 +366,10 @@ function buildKeyboardOverlay(
 
 export interface TouchControlsOpts {
   spellTab?: SpellTabConfig
+  // Fires whenever the d-pad Shift toggle engages/clears (including via
+  // consumeShift). Lets surfaces outside the panel that shift modifies —
+  // the spell rail's force-cast badge — mirror the state.
+  onShiftChange?: (on: boolean) => void
 }
 
 export function buildTouchControls(send: SendFn, opts: TouchControlsOpts = {}): TouchControls {
@@ -376,7 +384,10 @@ export function buildTouchControls(send: SendFn, opts: TouchControlsOpts = {}): 
   let tabsEl!: HTMLDivElement
   let dpadEl!: HTMLDivElement
 
-  const shift = createShiftToggle({ onChange: refreshMods })
+  const shift = createShiftToggle({ onChange: () => {
+    refreshMods()
+    opts.onShiftChange?.(shift.isOn)
+  } })
 
   // Single owner of the z-tab reveal rule, used by the tab strip and
   // refreshSpellTab alike. ENABLE_SPELL_TAB gates only visibility — the grid
@@ -725,5 +736,11 @@ export function buildTouchControls(send: SendFn, opts: TouchControlsOpts = {}): 
   buildDpad()
   applyControlSet()
 
-  return { element: root, enterXMode, exitXMode, setCursorMode, openKbd, closeKbd, refreshSpellTab, destroy }
+  function consumeShift(): boolean {
+    const on = shift.isOn
+    shift.consume()
+    return on
+  }
+
+  return { element: root, enterXMode, exitXMode, setCursorMode, openKbd, closeKbd, refreshSpellTab, consumeShift, destroy }
 }
