@@ -89,6 +89,10 @@ interface MenuMsg {
 const MF_MULTISELECT = 0x0004
 const MF_WRAP = 0x0080
 const MF_ARROWS_SELECT = 0x40000
+// Paged inventory (0.34+): left/right flip between item categories. The bit
+// is 0x200000 in every version that has the feature; older servers never set
+// it, so the flip-detection gate below is simply inert there.
+const MF_PAGED_INVENTORY = 0x200000
 
 // Cell/glyph multiplier applied while X-mode (eXamine level map) is active.
 // Honored by both renderers via setFontScale (ASCII shrinks glyphs, tiles
@@ -1427,29 +1431,31 @@ export function buildGameView(
       }
 
       case 'update_menu': {
-        const m = msg as unknown as { more?: string; last_hovered?: number; total_items?: number; title?: { text: string } }
+        const m = msg as unknown as { more?: string; alt_more?: string; last_hovered?: number; total_items?: number; title?: { text: string } }
         if (!activeMenu) break
         if (m.more !== undefined) {
           activeMenu.more = m.more
+          // Menu::update_more's webtiles send carries both template variants
+          // (webtiles_write_more writes more AND alt_more every time); keep
+          // ours current so updateMenuFooter derives from the right pair.
+          if (m.alt_more !== undefined) activeMenu.alt_more = m.alt_more
           // On a prompt popup a changed `more` is yesno()'s error channel
           // (see promptInitialMore) — un-hide the footer so the rejection
           // ("Uppercase [Y]es or [N]o only, please.") is actually visible.
           if (uiOverlay.classList.contains('prompt-menu') && m.more !== promptInitialMore)
             uiOverlay.classList.add('prompt-menu-alert')
-          const footerEl = uiOverlay.querySelector<HTMLElement>('.overlay-footer')
-          if (footerEl) {
-            const listEl = uiOverlay.querySelector<HTMLElement>('.overlay-list')
-            const pos = listEl ? computeScrollPos(listEl) : 'top'
-            setMenuFooter(footerEl, m.more, pos)
-            syncAcceptBtn(formatMore(m.more, pos))
-          }
         }
         if (m.total_items !== undefined) {
           activeMenu.total_items = m.total_items
           // Truncate stale entries when paging to a shorter category — the
           // following update_menu_items only splices in the new chunk and
           // would otherwise leave the tail intact. The official client does
-          // the same in update_menu (menu.js:822).
+          // the same in update_menu (menu.js:822). Deliberately no hover
+          // revalidation here: this list is transient scaffolding (the flip's
+          // real items land in the next update_menu_items, where revalidation
+          // runs — mirroring the reference, whose handle_size_change fires
+          // only from update_menu_items), and revalidating against it could
+          // send the server a menu_hover computed from half-updated rows.
           if (activeMenu.items && activeMenu.items.length > m.total_items) {
             activeMenu.items.length = m.total_items
             updateMenuItems(activeMenu)
@@ -1466,12 +1472,28 @@ export function buildGameView(
           }
         }
         if (m.last_hovered !== undefined) applyServerHover(m.last_hovered)
+        // Derived unconditionally (the reference runs update_more on every
+        // update_menu): a total_items truncation changes scrollability and
+        // scroll position even when `more` itself didn't change.
+        updateMenuFooter()
         break
       }
 
       case 'menu_scroll': {
-        const m = msg as unknown as { first?: number; last_hovered?: number }
+        const m = msg as unknown as { first?: number; last_hovered?: number; force?: boolean }
+        // Reference server_menu_scroll (menu.js:848): ignored entirely unless
+        // forced — cycle_headers, i.e. the paged inventory's ! / ? section
+        // jumps — or we're spectating and following the player's own pager.
+        // (The reference lets a spectator opt out by scrolling manually,
+        // following_player_scroll; we don't track that yet, so a spectator
+        // reading a long menu gets re-yanked when the player scrolls.)
+        if (!m.force && !spectating) break
+        if (m.first !== undefined) {
+          const el = menuListEl()
+          if (el) scrollMenuToItem(el, m.first)
+        }
         if (m.last_hovered !== undefined) applyServerHover(m.last_hovered)
+        updateMenuFooter()
         break
       }
 
@@ -1485,9 +1507,31 @@ export function buildGameView(
         if (activeMenu && m.items) {
           const start = m.chunk_start ?? 0
           const items = activeMenu.items ?? []
+          // A category flip of the paged inventory: set_page rewrites the
+          // whole list (update_menu(true) → webtiles_update_items(0, n-1)),
+          // so on a MF_PAGED_INVENTORY menu a chunk that replaces every item
+          // is a flip, not an in-place patch. Detected here — where the new
+          // items actually land — rather than latched from update_menu's
+          // total_items, which misses flips between equal-length categories
+          // and could leak across unrelated updates. The flag gate matters:
+          // non-paged menus rewrite wholesale for other reasons (Toggleable-
+          // Menu's ! action toggle, the runes menu's gems view) where
+          // keeping the scroll offset is correct.
+          const flip = ((activeMenu.flags ?? 0) & MF_PAGED_INVENTORY) !== 0
+            && start === 0
+            && m.items.length >= Math.max(items.length, activeMenu.total_items ?? 0)
           items.splice(start, m.items.length, ...m.items)
           activeMenu.items = items
-          updateMenuItems(activeMenu)
+          // A flip starts the new category at its top — the engine's own
+          // set_page → reset() state — instead of inheriting the old
+          // category's scroll offset; in-place patches keep it.
+          updateMenuItems(activeMenu, flip)
+          // Post-update hover sanity check (reference handle_size_change,
+          // which likewise fires only on update_menu_items); on a flip, then
+          // pull a carried-over visible hover into view (block:'nearest'),
+          // like the reference's set_hovered snap whenever its hover moves.
+          revalidateMenuHover()
+          if (flip && hoveredMenuIdx >= 0) highlightHoveredRow(true)
         }
         break
       }
@@ -2296,6 +2340,38 @@ export function buildGameView(
       && (activeMenu?.tag === 'use_item' || !!(it.hotkeys && it.hotkeys.length))
   }
 
+  // Port of the reference's post-update hover sanity check (menu.js
+  // handle_size_change): item updates reuse the index space, so after a
+  // paged-inventory category flip a rendered hover can point past the new
+  // list's end or at a header/non-selectable row. Out of range clears it
+  // locally (like the reference's set_hovered(-1) path — no server message;
+  // the server sanitized its own cursor in update_menu and told us via
+  // last_hovered). A non-selectable row cycles forward to the next
+  // selectable one via setMenuHover, which — like the reference's
+  // cycle_hover → set_hovered — also re-syncs the server cursor
+  // (menu_hover) and snaps the row into view. A hidden hover (-1,
+  // including the untouched-menu case) has nothing to revalidate; the
+  // menuHoverFromUser reveal policy is unchanged.
+  function revalidateMenuHover(): void {
+    if (hoveredMenuIdx < 0) return
+    const items = activeMenu?.items ?? []
+    if (hoveredMenuIdx < items.length && menuItemSelectable(items[hoveredMenuIdx])) return
+    const next = hoveredMenuIdx < items.length
+      ? nextHoverableMenuItem(false, hoveredMenuIdx)
+      : -1
+    if (next !== -1) setMenuHover(next)
+    else {
+      // Clearing menuServerHover while the engine's cursor sits at its own
+      // sanitized index is deliberate reference parity: handle_size_change
+      // also drops an out-of-range hover to -1 without telling the server
+      // (its set_hovered(-1) early-returns). Both clients re-converge on the
+      // next arrow press, which sends an absolute menu_hover either way.
+      hoveredMenuIdx = -1
+      menuServerHover = -1
+      highlightHoveredRow(false)
+    }
+  }
+
   // Based on next_hoverable_item, we scan the authoritative server
   // item array (the index space menu_hover expects) for the next
   // selectable entry, honouring MF_WRAP and the "up with no hover does
@@ -2632,6 +2708,40 @@ export function buildGameView(
     footerEl.style.display = formatMore(more, pos) ? '' : 'none'
   }
 
+  // Derive the footer from current state, mirroring the reference client's
+  // update_more (menu.js:781): measure whether the list actually overflows to
+  // pick the scrollable `more` vs unscrollable `alt_more` keyhelp variant,
+  // substitute the XXX scroll-position token, and sync the ⏎ button whose
+  // label is parsed from the same text. Idempotent, so it runs on every event
+  // that can move it: menu open, list scroll, update_menu, item updates. (The
+  // old push model wrote the footer from scattered call sites, and its one
+  // scroll listener died with the list element updateMenuItems replaces —
+  // freezing the position indicator after the first paged-inventory category
+  // flip or chunk update.)
+  function updateMenuFooter(): void {
+    if (!activeMenu) return
+    const footerEl = uiOverlay.querySelector<HTMLElement>('.overlay-footer')
+    if (!footerEl) return
+    const listEl = menuListEl()
+    const scrollable = !!listEl && listEl.scrollHeight > listEl.clientHeight
+    // Defensive ??-chain: a server that omits alt_more falls back to more.
+    const raw = (scrollable ? activeMenu.more : activeMenu.alt_more ?? activeMenu.more) ?? ''
+    const pos = listEl ? computeScrollPos(listEl) : 'top'
+    setMenuFooter(footerEl, raw, pos)
+    syncAcceptBtn(formatMore(raw, pos))
+  }
+
+  // The list's available height changes without any menu message or scroll —
+  // rotation, the virtual keyboard claiming layout rows, X-mode exit — and
+  // can flip the overflow measurement updateMenuFooter keys the more/alt_more
+  // choice on. The reference re-runs update_more from handle_size_change on
+  // popup resize; observing the live list is our equivalent. One persistent
+  // observer, re-targeted at each rebuilt list in renderMenuItems (guarded:
+  // test envs may lack ResizeObserver).
+  const menuListResize = typeof ResizeObserver === 'function'
+    ? new ResizeObserver(() => updateMenuFooter())
+    : null
+
   function showMenu(msg: MenuMsg): void {
     // The PromptMenu family — yesno() popups (prompt.cc, tag "prompt") and
     // G's travel branch picker (travel.cc, tag "travel"; the only other
@@ -2676,9 +2786,11 @@ export function buildGameView(
     // (inside renderOverlay) clears the class, so re-add it every render.
     renderOverlay(title, () => {
       renderMenuItems(msg.items ?? [])
+      // Created empty; updateMenuFooter fills it at the end of showMenu, once
+      // the list is in the DOM and its scroll position restored (both feed
+      // the derivation: overflow picks the more variant, scrollTop the XXX).
       const footerEl = document.createElement('div')
       footerEl.className = 'overlay-footer'
-      setMenuFooter(footerEl, msg.more ?? '', 'top')
       overlayContent.appendChild(footerEl)
     }, { float: floatPrompt })
     uiOverlay.classList.toggle('prompt-menu', promptFamily)
@@ -2700,41 +2812,44 @@ export function buildGameView(
       menuControls.style.display = ''
       touchControls.element.style.display = 'none'
     }
-    syncAcceptBtn(formatMore(msg.more ?? '', 'top'))
-    if (msg.more?.includes('XXX')) {
-      const listEl = uiOverlay.querySelector<HTMLElement>('.overlay-list')
-      const footerEl = uiOverlay.querySelector<HTMLElement>('.overlay-footer')
-      if (listEl && footerEl) {
-        listEl.addEventListener('scroll', () => {
-          if (activeMenu?.more) {
-            const pos = computeScrollPos(listEl)
-            setMenuFooter(footerEl, activeMenu.more, pos)
-          }
-        }, { passive: true })
-      }
-    }
     const listEl = menuListEl()
     if (listEl) {
       const saved = menuScrollTops.get(msg)
       if (saved !== undefined) listEl.scrollTop = saved
       else if (msg.jump_to) scrollMenuToItem(listEl, msg.jump_to)
     }
+    updateMenuFooter()
   }
 
-  function updateMenuItems(msg: MenuMsg): void {
+  // resetScroll: leave the rebuilt list at its natural top (category flip)
+  // instead of restoring the old element's offset (in-place patch). Hover
+  // revalidation is deliberately NOT here — it belongs to the
+  // update_menu_items handler (the only trigger of the reference's
+  // handle_size_change); the other caller, update_menu's truncation, rebuilds
+  // transient scaffolding it must not compute hover against.
+  function updateMenuItems(msg: MenuMsg, resetScroll = false): void {
     if (!msg.items) return
     const old = menuListEl()
     const saved = old?.scrollTop
     old?.remove()
     renderMenuItems(msg.items)
-    if (saved !== undefined) menuListEl()!.scrollTop = saved
+    if (!resetScroll && saved !== undefined) menuListEl()!.scrollTop = saved
+    updateMenuFooter()
   }
 
   function renderMenuItems(items: MenuItem[]): void {
     const listEl = document.createElement('div')
     listEl.className = 'overlay-list'
     fillMenuItems(listEl, items)
-    listEl.addEventListener('scroll', () => scheduleMenuScrollSend(), { passive: true })
+    // The footer updater lives here, not in showMenu: every rebuild gets a
+    // fresh listener on the fresh element, so item updates can't strand the
+    // position indicator on a dead node.
+    listEl.addEventListener('scroll', () => {
+      updateMenuFooter()
+      scheduleMenuScrollSend()
+    }, { passive: true })
+    menuListResize?.disconnect()
+    menuListResize?.observe(listEl)
     const footer = uiOverlay.querySelector('.overlay-footer')
     overlayContent.insertBefore(listEl, footer)
     syncMenuShiftLabels()

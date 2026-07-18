@@ -671,6 +671,170 @@ describe('non-prompt menu hover seeding', () => {
   })
 })
 
+// The paged inventory (0.34+/trunk MF_PAGED_INVENTORY) rebuilds the item list
+// in place when left/right flips category: update_menu (more/alt_more, then
+// total_items + last_hovered), update_menu_items chunk 0, update_menu title.
+// Footer and hover must survive that rebuild — reference shape: update_more()
+// derives the footer from current state on every event (menu.js:781), and
+// handle_size_change revalidates the hover against the new items.
+describe('menu footer derivation and hover revalidation (paged inventory)', () => {
+  const PAGED_MORE = '<lightgrey>[<w>PgDn</w>] page down  [<w>PgUp</w>] page up</lightgrey>  <lightgrey>[<w>XXX</w>]</lightgrey>'
+  // MF_ARROWS_SELECT | MF_PAGED_INVENTORY, like the real i-menu.
+  const gearMenu = () => ({
+    msg: 'menu', tag: 'inventory', flags: 0x240000, last_hovered: 1,
+    title: { text: 'Gear' }, more: PAGED_MORE, alt_more: '',
+    total_items: 3, chunk_start: 0,
+    items: [
+      { level: 1, text: 'Hand Weapons' },
+      { level: 2, text: 'a - a +0 short sword', hotkeys: [97] },
+      { level: 2, text: 'b - a buckler', hotkeys: [98] },
+    ],
+  })
+  const arrowDown = () => document.dispatchEvent(new KeyboardEvent('keydown',
+    { key: 'ArrowDown', code: 'ArrowDown', bubbles: true } as KeyboardEventInit))
+  const fakeOverflow = (el: HTMLElement) => {
+    Object.defineProperty(el, 'scrollHeight', { value: 400, configurable: true })
+    Object.defineProperty(el, 'clientHeight', { value: 100, configurable: true })
+  }
+
+  it('shows the unscrollable alt_more variant when the list does not overflow', () => {
+    const h = setup()
+    h.dispatch(gearMenu())
+    // happy-dom heights are 0 → not scrollable → the singleselect template's
+    // empty alt_more → footer hidden entirely, matching the reference.
+    expect(isHidden(overlay(h).querySelector<HTMLElement>('.overlay-footer')!)).toBe(true)
+  })
+
+  it('keeps the position indicator live across the list rebuild of a category flip', () => {
+    const h = setup()
+    h.dispatch(gearMenu())
+    h.dispatch({ msg: 'update_menu', more: PAGED_MORE, alt_more: '' })
+    h.dispatch({ msg: 'update_menu', total_items: 3, last_hovered: -1 })
+    h.dispatch({ msg: 'update_menu_items', chunk_start: 0, items: [
+      { level: 1, text: 'Potions' },
+      { level: 2, text: 'g - a potion of magic', hotkeys: [103] },
+      { level: 2, text: 'd - 2 black potions', hotkeys: [100] },
+    ] })
+    h.dispatch({ msg: 'update_menu', title: { text: 'Potions' } })
+    // The flip replaced the .overlay-list element; the scroll listener must
+    // be on the new one (it used to die with the old node, freezing the
+    // indicator for the rest of the menu's life).
+    const list = overlay(h).querySelector<HTMLElement>('.overlay-list')!
+    fakeOverflow(list)
+    list.scrollTop = 300
+    list.dispatchEvent(new Event('scroll'))
+    const footer = overlay(h).querySelector<HTMLElement>('.overlay-footer')!
+    expect(isHidden(footer)).toBe(false)
+    expect(footer.textContent).toContain('[bot]')
+    list.scrollTop = 0
+    list.dispatchEvent(new Event('scroll'))
+    expect(footer.textContent).toContain('[top]')
+  })
+
+  it('revalidates a hover that lands on a header after a flip: cycles to the next selectable row and re-syncs the server', () => {
+    const h = setup()
+    h.dispatch(gearMenu())
+    arrowDown()  // reveal hover on idx 1 (short sword)
+    arrowDown()  // idx 2 (buckler)
+    expect(overlay(h).querySelector('.item-hovered')?.textContent).toContain('buckler')
+    h.dispatch({ msg: 'update_menu', total_items: 4, last_hovered: 2 })
+    h.dispatch({ msg: 'update_menu_items', chunk_start: 0, items: [
+      { level: 1, text: 'Potions' },
+      { level: 2, text: 'g - a potion of magic', hotkeys: [103] },
+      { level: 1, text: 'Unknown Potions' },        // idx 2: now a header
+      { level: 2, text: 'd - 2 black potions', hotkeys: [100] },
+    ] })
+    expect(overlay(h).querySelector('.item-hovered')?.textContent).toContain('black potions')
+    expect(sent(h)).toContainEqual({ msg: 'menu_hover', hover: 3, mouse: false })
+  })
+
+  it('clears a hover past the end of a shorter category instead of ghosting it', () => {
+    const h = setup()
+    h.dispatch(gearMenu())
+    arrowDown()
+    arrowDown()  // hover idx 2
+    h.dispatch({ msg: 'update_menu', total_items: 2 })
+    h.dispatch({ msg: 'update_menu_items', chunk_start: 0, items: [
+      { level: 1, text: 'Scrolls' },
+      { level: 2, text: 'c - a scroll of fog', hotkeys: [99] },
+    ] })
+    expect(overlay(h).querySelector('.item-hovered')).toBeNull()
+  })
+
+  it('a category flip starts the new category at the top instead of inheriting the old scroll offset', () => {
+    const h = setup()
+    h.dispatch(gearMenu())
+    overlay(h).querySelector<HTMLElement>('.overlay-list')!.scrollTop = 120
+    h.dispatch({ msg: 'update_menu', more: PAGED_MORE, alt_more: '' })
+    h.dispatch({ msg: 'update_menu', total_items: 4, last_hovered: -1 })  // ≠ 3: structural
+    h.dispatch({ msg: 'update_menu_items', chunk_start: 0, items: [
+      { level: 1, text: 'Potions' },
+      { level: 2, text: 'g - a potion of magic', hotkeys: [103] },
+      { level: 1, text: 'Unknown Potions' },
+      { level: 2, text: 'd - 2 black potions', hotkeys: [100] },
+    ] })
+    expect(overlay(h).querySelector<HTMLElement>('.overlay-list')!.scrollTop).toBe(0)
+  })
+
+  it('a flip between equal-length categories still resets to the top (full-list replacement, same total)', () => {
+    const h = setup()
+    h.dispatch(gearMenu())
+    overlay(h).querySelector<HTMLElement>('.overlay-list')!.scrollTop = 120
+    h.dispatch({ msg: 'update_menu', total_items: 3, last_hovered: -1 })  // unchanged count
+    h.dispatch({ msg: 'update_menu_items', chunk_start: 0, items: [
+      { level: 1, text: 'Potions' },
+      { level: 2, text: 'g - a potion of magic', hotkeys: [103] },
+      { level: 2, text: 'd - 2 black potions', hotkeys: [100] },
+    ] })
+    expect(overlay(h).querySelector<HTMLElement>('.overlay-list')!.scrollTop).toBe(0)
+  })
+
+  it('an in-place patch keeps the scroll offset — including a chunk_start 0 selection echo', () => {
+    const h = setup()
+    h.dispatch(gearMenu())
+    overlay(h).querySelector<HTMLElement>('.overlay-list')!.scrollTop = 120
+    h.dispatch({ msg: 'update_menu_items', chunk_start: 2, items: [
+      { level: 2, text: 'b - a buckler (worn)', hotkeys: [98] },
+    ] })
+    expect(overlay(h).querySelector<HTMLElement>('.overlay-list')!.scrollTop).toBe(120)
+    // A single-row echo happening to start at index 0 must not read as a flip.
+    h.dispatch({ msg: 'update_menu_items', chunk_start: 0, items: [
+      { level: 1, text: 'Hand Weapons (2)' },
+    ] })
+    expect(overlay(h).querySelector<HTMLElement>('.overlay-list')!.scrollTop).toBe(120)
+  })
+
+  it('a full-list rewrite on a NON-paged menu keeps the scroll offset (ToggleableMenu ! toggles)', () => {
+    const h = setup()
+    h.dispatch({ ...gearMenu(), flags: 0x40000 })  // ARROWS_SELECT only
+    overlay(h).querySelector<HTMLElement>('.overlay-list')!.scrollTop = 120
+    h.dispatch({ msg: 'update_menu_items', chunk_start: 0, items: [
+      { level: 1, text: 'Hand Weapons' },
+      { level: 2, text: 'a - a +0 short sword (weapon)', hotkeys: [97] },
+      { level: 2, text: 'b - a buckler (worn)', hotkeys: [98] },
+    ] })
+    expect(overlay(h).querySelector<HTMLElement>('.overlay-list')!.scrollTop).toBe(120)
+  })
+
+  it('ignores a non-forced menu_scroll when not spectating (reference server_menu_scroll gate)', () => {
+    const h = setup()
+    h.dispatch(gearMenu())
+    arrowDown()  // hover idx 1
+    h.dispatch({ msg: 'menu_scroll', first: 2, last_hovered: 2 })  // no force
+    expect(overlay(h).querySelector('.item-hovered')?.textContent).toContain('short sword')
+  })
+
+  it('scrolls to a forced server scroll (cycle_headers section jump)', () => {
+    const h = setup()
+    h.dispatch(gearMenu())
+    // menu_scroll with force (the ! / ? section-jump keys) must not throw and
+    // must apply the hover it carries once the user has driven hover.
+    arrowDown()
+    h.dispatch({ msg: 'menu_scroll', first: 2, last_hovered: 2, force: true })
+    expect(overlay(h).querySelector('.item-hovered')?.textContent).toContain('buckler')
+  })
+})
+
 describe('prompt footer error reveal (yesno set_more channel)', () => {
   it('opens with the alert down, and a server echo of the opening more keeps it down', () => {
     const h = setup()
