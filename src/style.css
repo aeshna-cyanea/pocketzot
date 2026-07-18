@@ -3330,9 +3330,11 @@ html, body {
   /* Standard region-seam hairline (see the chat-sheet comment) — the old
      2px accent seam out-shouted every other edge on screen. */
   border-top: 1px solid var(--border);
-  /* Full-bleed to the screen edge; the capped inset rides inside as padding
-     so the bottom key row clears the home-indicator gesture zone. */
-  padding: 0.4rem 0.3rem calc(0.4rem + var(--safe-bottom));
+  /* Full-bleed to the screen edge; the capped insets ride inside as padding
+     so the bottom key row clears the home-indicator gesture zone and, in
+     landscape, the side keys clear the notch/curved edges (safe-left/right). */
+  padding: 0.4rem calc(0.3rem + var(--safe-right))
+           calc(0.4rem + var(--safe-bottom)) calc(0.3rem + var(--safe-left));
   flex-direction: column;
   align-items: center;
   gap: 0.3rem;
