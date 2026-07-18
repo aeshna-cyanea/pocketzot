@@ -4,7 +4,7 @@
 // GPL-2.0-or-later. Reused under the "or later" option as part of this
 // AGPL-3.0-or-later work. See ATTRIBUTION.md and LICENSE.
 
-import { TEX, type TileinfoModule, type TileLoader } from './tile-loader'
+import { TEX, type TileinfoModule, type TileLoader, type TileSprite } from './tile-loader'
 import { buildStatusOverlays, mayHaveStatusOverlays, resolveOverlayId, type StatusOverlayOpts } from '../hud/monster-style'
 import { buildStatusIconSizeMap } from '../map/icon-sizes'
 
@@ -17,7 +17,7 @@ import { buildStatusIconSizeMap } from '../map/icon-sizes'
 // get the reference map's draw_tile placement instead: the authored box
 // bottom-aligned and horizontally centred on the cell, which is what makes
 // 32×48 sprites (pan lords, bosses) poke above the cell.
-const CELL = 32
+export const CELL = 32
 
 // Rendering options threaded from appendTiles down to paintSprite.
 export interface TileDrawOpts {
@@ -223,41 +223,59 @@ export function prependDngnIndex(loader: TileLoader | null, wrap: HTMLElement, d
   }).catch((err) => console.warn('dngn tile load failed:', err))
 }
 
+// Atlas-space placement of one sprite layer within its cell (scale 1): the
+// source rect (with the ymax bottom-crop applied) and destination rect (with
+// the reference draw_tile centring and the oversized-box fit-shrink applied),
+// plus the fit factor for background-size math. The single source of truth
+// for sprite-placement geometry, shared by the DOM path below (paintSprite)
+// and the canvas bake (avatar-bake.ts bakeDoll) so the two renderers cannot
+// drift apart. Returns null when the ymax clip removes the layer entirely.
+export interface SpritePlacement {
+  sx: number; sy: number; sw: number; sh: number  // atlas source rect
+  dx: number; dy: number; dw: number; dh: number  // cell destination rect
+  fit: number
+}
+export function spritePlacement(s: TileSprite, xofs: number, yofs: number, ymax = 0, opts?: TileDrawOpts): SpritePlacement | null {
+  // Reference draw_tile centring, when requested (see TileDrawOpts).
+  const sizeOx = opts?.centre ? CELL / 2 - s.aw / 2 : 0
+  const sizeOy = opts?.centre ? CELL - s.ah : 0
+  // ymax (atlas px from the cell top) crops the bottom of CUT_BOTTOM doll
+  // parts: take only the top `ymax - dyTop` rows of the sprite by shrinking
+  // the tile's height, matching tile-map-view's drawSprite. dyTop is where
+  // this sprite starts; a clip at or above it hides the part entirely.
+  const dyTop = s.oy + sizeOy + yofs
+  let srcH = s.h
+  if (ymax > 0 && ymax < dyTop + s.h) {
+    if (ymax <= dyTop) return null  // fully clipped
+    srcH = ymax - dyTop
+  }
+  // Fit-shrink oversized authored boxes about the cell's bottom-centre
+  // (atlas space); the caller's display scale applies on top.
+  const fit = opts?.fit ? Math.min(1, CELL / s.aw, CELL / s.ah) : 1
+  let cx = s.ox + sizeOx + xofs
+  let cy = dyTop
+  if (fit !== 1) {
+    cx = CELL / 2 + (cx - CELL / 2) * fit
+    cy = CELL + (cy - CELL) * fit
+  }
+  return { sx: s.sx, sy: s.sy, sw: s.w, sh: srcH, dx: cx, dy: cy, dw: s.w * fit, dh: srcH * fit, fit }
+}
+
 function paintSprite(loader: TileLoader, child: HTMLElement, tex: number, id: number, scale: number, xofs: number, yofs: number, ymax = 0, opts?: TileDrawOpts): void {
   loader.getAsync(tex, id).then((s) => {
-    // Reference draw_tile centring, when requested (see TileDrawOpts).
-    const sizeOx = opts?.centre ? CELL / 2 - s.aw / 2 : 0
-    const sizeOy = opts?.centre ? CELL - s.ah : 0
-    // ymax (atlas px from the cell top) crops the bottom of CUT_BOTTOM doll
-    // parts: take only the top `ymax - dyTop` rows of the sprite by shrinking
-    // the tile's height, matching tile-map-view's drawSprite. dyTop is where
-    // this sprite starts; a clip at or above it hides the part entirely.
-    const dyTop = s.oy + sizeOy + yofs
-    let srcH = s.h
-    if (ymax > 0 && ymax < dyTop + s.h) {
-      if (ymax <= dyTop) return  // fully clipped — leave the empty placeholder
-      srcH = ymax - dyTop
-    }
-    // Fit-shrink oversized authored boxes about the cell's bottom-centre
-    // (atlas space), then apply the caller's display scale on top.
-    const fit = opts?.fit ? Math.min(1, CELL / s.aw, CELL / s.ah) : 1
-    let cx = s.ox + sizeOx + xofs
-    let cy = dyTop
-    if (fit !== 1) {
-      cx = CELL / 2 + (cx - CELL / 2) * fit
-      cy = CELL + (cy - CELL) * fit
-    }
-    const k = fit * scale
-    const w = s.w * k
-    const h = srcH * k
-    const left = cx * scale
-    const top = cy * scale
+    const p = spritePlacement(s, xofs, yofs, ymax, opts)
+    if (!p) return  // fully clipped — leave the empty placeholder
+    const k = p.fit * scale
+    const w = p.dw * scale
+    const h = p.dh * scale
+    const left = p.dx * scale
+    const top = p.dy * scale
     child.style.width = `${w}px`
     child.style.height = `${h}px`
     child.style.left = `${left}px`
     child.style.top = `${top}px`
     child.style.backgroundImage = `url(${s.img.src})`
-    child.style.backgroundPosition = `${-s.sx * k}px ${-s.sy * k}px`
+    child.style.backgroundPosition = `${-p.sx * k}px ${-p.sy * k}px`
     if (k !== 1) {
       child.style.backgroundSize = `${s.img.naturalWidth * k}px ${s.img.naturalHeight * k}px`
     }

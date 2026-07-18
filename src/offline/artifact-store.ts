@@ -222,6 +222,25 @@ async function hasMarker(name: string): Promise<boolean> {
   }
 }
 
+// The tiles pack for consumers outside the engine path (the doll shelf's
+// atlas-dedup seeding): the build id of a verified-complete
+// /gamedata/local/ set, or null when absent/incomplete. Read-only cache
+// probes — offline-safe, never mutates, never touches the network. The
+// build id matters because the pack's URLs are stable across engine
+// updates while the content changes, so anything derived from pack
+// content (e.g. its tileinfo fingerprint) must be keyed by build.
+export async function cachedGamedataBuild(): Promise<string | null> {
+  if (typeof caches === 'undefined') return null
+  try {
+    const cache = await caches.open(GAMEDATA_CACHE)
+    if (!await cache.match(COMPLETE_KEYS[GAMEDATA_CACHE])) return null
+    const build = await (await cache.match(BUILD_KEYS[GAMEDATA_CACHE]))?.text()
+    return build || null
+  } catch {
+    return null
+  }
+}
+
 // --- readiness probe -------------------------------------------------------------
 
 export type Readiness =

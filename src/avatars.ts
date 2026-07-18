@@ -3,9 +3,12 @@
 //
 // We store the doll's tile-id recipe (the doll/mcache layer ids from the player's
 // map cell), not a baked image: the DCSS atlases are cross-origin with no CORS, so
-// compositing them taints the canvas and toDataURL() throws (memory
-// project_doll_png_bake_blocked). The login strip re-renders the recipe as CSS
-// sprite tiles, loading the ~1 MB atlas (HTTP-cached) only at display time.
+// compositing them taints the canvas and toDataURL() throws. The login strip
+// re-renders the recipe as CSS sprite tiles, loading the ~1 MB atlas
+// (HTTP-cached) only at display time. Exception: the same-origin offline tiles
+// pack is taint-free, so a recipe that renders off it gets a baked PNG
+// thumbnail cached alongside (src/game/tiles/avatar-bake.ts) — but that's a
+// render cache keyed by recipe content, not part of this store.
 //
 // The store is a HISTORY, not one slot per version line: a new character appends
 // (a reroll coexists with the character it replaced), the same character upserts in
@@ -63,6 +66,11 @@ export interface Avatar extends AvatarMeta {
   charName: string              // character name (player.name) — metadata only (usually = account name), never shown
   httpBase: string              // gamedata host (conn.httpBase), e.g. https://crawl.dcss.io
   version: string               // gamedata version dir (git hash) — with httpBase rebuilds the tile loader
+  fp?: string                   // player-atlas layout fingerprint at capture (atlas-dedup) — pins the
+                                // baked-thumbnail identity even where (httpBase, version) isn't an
+                                // immutable atlas (the offline pack's content shifts across engine
+                                // updates under constant coords). Absent on older entries and when
+                                // the fingerprint wasn't cached at capture time.
   doll: DollPart[] | null       // player-doll body-part layers
   mcache: McachePart[] | null   // worn-equipment / monster-tile layers
   turn: number | null           // DCSS turn count at capture — a reset below the slot's current entry = new character

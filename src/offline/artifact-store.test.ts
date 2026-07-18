@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fakeCaches, type FakeCache } from '../test/fake-caches'
 import {
-  ARTIFACT_CACHE, GAMEDATA_CACHE, downloadOfflineData, fetchArtifact,
-  fetchVersion, markEngineSetComplete, newStats, openVersionedCache,
-  probeReadiness,
+  ARTIFACT_CACHE, GAMEDATA_CACHE, cachedGamedataBuild, downloadOfflineData,
+  fetchArtifact, fetchVersion, markEngineSetComplete, newStats,
+  openVersionedCache, probeReadiness,
 } from './artifact-store'
 
 // Route-map fetch stub: exact-path lookup, 404 otherwise. A `null` value
@@ -197,6 +197,21 @@ describe('probeReadiness', () => {
     stubFetch({ '/offline/version.json': { body: '{"build":"NEWER","version":"0.35-a0"}', type: 'application/json' } })
     expect(await probeReadiness()).toEqual(
       { state: 'ready', tiles: false, update: true, version: '0.34.1', updateVersion: '0.35-a0' })
+  })
+})
+
+describe('cachedGamedataBuild', () => {
+  it('returns the build only for a verified-complete pack, offline-safely', async () => {
+    stubFetch({ '/offline/version.json': null }) // must never be consulted anyway
+    expect(await cachedGamedataBuild()).toBeNull()
+
+    const c = (await (store.storage as { open(n: string): Promise<FakeCache> }).open(GAMEDATA_CACHE))
+    await c.put('/gamedata/local/__build', new Response('abc123'))
+    expect(await cachedGamedataBuild()).toBeNull() // build stamped but set incomplete
+
+    await c.put('/gamedata/local/__complete', new Response('1'))
+    expect(await cachedGamedataBuild()).toBe('abc123')
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled() // read-only cache probe
   })
 })
 

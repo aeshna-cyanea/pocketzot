@@ -2544,6 +2544,17 @@ html, body {
   background-repeat: no-repeat;
 }
 
+/* Baked doll thumbnail (src/game/tiles/avatar-bake.ts): a native-32px PNG
+   standing in for a .tile-stack in the login strip / crypt grid. Same
+   pixelated upscale as the live tiles; block display so it sizes like the
+   stack's inline-block box. */
+.doll-bake {
+  display: inline-block;
+  vertical-align: middle;
+  flex-shrink: 0;
+  image-rendering: pixelated;
+}
+
 .overlay-item .tile-stack {
   margin-right: -0.2rem;
   /* Centre the 32px tile on the FIRST text line (not the whole row): the row

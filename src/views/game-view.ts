@@ -24,7 +24,9 @@ import { reflowSkillCrt, plainText } from './skill-reflow'
 import { TEX, getTileLoader, type TileLoader } from '../game/tiles/tile-loader'
 import { activeEnumsModule, setEnumsModule } from '../game/map/flag-decode'
 import { formatDcssVersion, isBelowSupportCutoff, parseDcssVersion } from '../util/dcss-version'
-import { renderTiles, appendIconOverlays, monsterTileSpec, prependDngnLayer, type TileRef } from '../game/tiles/tile-view'
+import { renderTiles, appendIconOverlays, dollTileSpec, monsterTileSpec, prependDngnLayer, type TileRef } from '../game/tiles/tile-view'
+import { cachedFingerprint, primeFingerprint } from '../game/tiles/atlas-dedup'
+import { ensureDollBaked, isBakeableLoader } from '../game/tiles/avatar-bake'
 import { recordAvatarOutcome, saveAvatar, type AvatarMeta } from '../avatars'
 import { getPref, setPref, MONSTER_LIST_MODE_CHANGED_EVENT, RENDER_MODE_CHANGED_EVENT } from '../prefs'
 import {
@@ -947,21 +949,38 @@ export function buildGameView(
     const doll = cell.doll ?? null
     const mcache = cell.mcache ?? null
     if (!doll?.length && !mcache?.length) return
+    // The layout fingerprint, when already cached (offline games prime it on
+    // game_client; servers fill it lazily on shelf paints): stamped on the
+    // entry so the baked-thumbnail identity survives the offline pack
+    // changing content under its constant coords, and used to eager-bake
+    // right here where the loader is warm and same-origin. ensureDollBaked
+    // no-ops for cross-origin (server) loaders and already-baked specs, so
+    // this is a couple of cache reads per appearance change in the common
+    // case.
+    const fp = cachedFingerprint(conn.httpBase, loader.version) ?? undefined
     // The sig includes charMeta so progress changes (level-up, floor change,
     // conversion) refresh the stored entry too, not just appearance changes —
     // still a handful of writes per game, vs one per move without the gate.
     // (charMeta is one object mutated in place, so its key order — and thus
-    // the sig — is stable within this game's closure.)
-    const sig = JSON.stringify([doll, mcache, charMeta])
+    // the sig — is stable within this game's closure.) It also includes fp:
+    // the game_client prime is fire-and-forget, so an offline resume's first
+    // map can beat it and capture fp-less — folding fp into the sig makes
+    // the first map after the prime lands re-save once with the stamp,
+    // instead of the gate pinning the entry fp-less until the next
+    // appearance change.
+    const sig = JSON.stringify([doll, mcache, charMeta, fp])
     if (sig === lastAvatarSig) return
     lastAvatarSig = sig
     // The turn count is the new-character signal: ../avatars appends when it drops
     // below the slot's current entry (a fresh char reset it to 0), else upserts.
     saveAvatar({
       wsUrl: conn.wsUrl, username, gameId, charName,
-      httpBase: conn.httpBase, version: loader.version, doll, mcache,
+      httpBase: conn.httpBase, version: loader.version, fp, doll, mcache,
       ...charMeta,
     }, { turn: lastTurn })
+    if (fp !== undefined && isBakeableLoader(loader)) {
+      void ensureDollBaked(loader, fp, dollTileSpec({ doll, mcache }))
+    }
   }
 
   // Dev-only console hook so the tile mode (otherwise only a hidden
@@ -1181,6 +1200,15 @@ export function buildGameView(
           // tile-mode view (built before game_client) or a pre-game_client
           // gesture toggle gets its loader and starts painting.
           loader = getTileLoader(conn.httpBase, msg.version)
+          // Offline games only (httpBase '' → the same-origin pack): refresh
+          // the pack's layout fingerprint so maybeSaveAvatar can stamp it on
+          // captures synchronously and eager-bake against it. Forced because
+          // the pack's content shifts under constant coords across engine
+          // updates — and right now the mounted pack is what we'd bake from,
+          // so recompute-from-source is exactly the fresh value. Server
+          // version dirs are immutable and never need this (their fingerprint
+          // fills lazily on the first login-shelf resolve).
+          if (conn.httpBase === '') void primeFingerprint('', msg.version, true)
           // Dev hook — see the initialLoader assignment near the top.
           if (import.meta.env.DEV) (window as unknown as { __dcssLoader: TileLoader }).__dcssLoader = loader
           monsterListView.setLoader(loader)

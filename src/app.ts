@@ -83,14 +83,23 @@ function showOfflineLobby(exit?: GameExit): void {
 
 // Offline (WASM engine) game for one save slot — `name` is the character
 // name, which the engine also uses as the save file identity (-name argv).
-// Deliberate parameter choices: gameId '' keeps avatar/crypt writes disabled
-// (both gate on a truthy id); guest=false keeps canResumeAfterClose() false,
-// so the visibilitychange handler never proactively closes the "socket"
-// (LocalConnection never reconnects — see its header). Exit returns to the
-// offline lobby, which shows the same end-of-game dialog as the online one.
+// Deliberate parameter choices: gameId 'offline' enables avatar/crypt writes
+// (both gate on a truthy id), so offline characters join the login doll shelf
+// and crypt — wsUrl 'local://offline' + username=name keep their slot keys
+// disjoint from every server's, and captures eager-bake PNG thumbnails off
+// the same-origin pack (game-view maybeSaveAvatar). guest=false keeps
+// canResumeAfterClose() false, so the visibilitychange handler never
+// proactively closes the "socket" (LocalConnection never reconnects — see its
+// header). Exit returns to the offline lobby, which shows the same
+// end-of-game dialog as the online one.
 async function showOfflineGame(name: string): Promise<void> {
   const { bootOffline } = await import('./offline/boot')
-  const boot = bootOffline(new URLSearchParams(location.search), name)
+  const params = new URLSearchParams(location.search)
+  const boot = bootOffline(params, name)
+  // Fixture replays get no gameId, keeping avatar/crypt writes disabled —
+  // same reason boot.ts excludes them from the slot-record tracker: a golden
+  // capture's character isn't yours and must not mint a phantom shelf entry.
+  const gameId = params.get('engine') === 'fake' ? '' : 'offline'
   state = 'game'
   conn = boot.conn
   currentUsername = name
@@ -105,16 +114,16 @@ async function showOfflineGame(name: string): Promise<void> {
       // Only that flag — the dev params (?engine=fake, ?fixture, ?perf) must
       // survive, or the next game this session boots a different engine
       // than the one under test.
-      const params = new URLSearchParams(location.search)
-      params.delete('offline')
-      const qs = params.toString()
+      const p = new URLSearchParams(location.search)
+      p.delete('offline')
+      const qs = p.toString()
       history.replaceState(null, '', location.pathname + (qs ? `?${qs}` : ''))
       showOfflineLobby(exit)
     },
     undefined,
     undefined,
     currentUsername,
-    '',
+    gameId,
     currentIsGuest,
   ))
   boot.start()
