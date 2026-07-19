@@ -1482,8 +1482,15 @@ export function buildGameView(
       case 'menu_scroll': {
         const m = msg as unknown as { first?: number; last_hovered?: number; force?: boolean }
         // Reference server_menu_scroll (menu.js:848): ignored entirely unless
-        // forced — cycle_headers, i.e. the paged inventory's ! / ? section
-        // jumps — or we're spectating and following the player's own pager.
+        // forced, or we're spectating and following the player's own pager.
+        // The engine force-sends its scroll position where it moved the cursor
+        // itself and the client can't infer it: a secondary-hotkey snap (an
+        // item-class glyph like ! or ? in an MF_SECONDARY_SCROLL menu, jumping
+        // to that class's block), examine-by-key onto an off-screen item,
+        // select-by-key, and cycle_headers (`,`). Note the paged inventory
+        // (MF_PAGED_INVENTORY) is not one of these — it flips categories on
+        // Left/Right/Tab, and its per-page item lists mean class glyphs find
+        // nothing to snap to.
         // (The reference lets a spectator opt out by scrolling manually,
         // following_player_scroll; we don't track that yet, so a spectator
         // reading a long menu gets re-yanked when the player scrolls.)

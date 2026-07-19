@@ -9,6 +9,17 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-07-18
+
+- While spectating, the menu view now follows the watched player's
+  scrolling.
+- Flipping to another inventory category now starts you at the top of it
+  instead of carrying over the previous category's scroll position.
+- Menus that fit on one screen no longer show scrolling hints and position.
+- In long menus, pressing an item-class key now jumps to that section.
+- Fixed the position indicator at the bottom of the inventory sometimes not
+  updating after switching categories.
+
 ## 2026-07-17
 
 - Made prompt menus easier to reach and polished their appearance. Prompts
