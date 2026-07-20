@@ -11,6 +11,11 @@ Notable changes to PocketZot, newest first.
 
 ## 2026-07-20
 
+- Shift-tapping a spell in the quick-cast row now force-casts it (sends
+  `Za`), bypassing the safety prompt.
+
+## 2026-07-18
+
 - Flipping to another inventory category now starts you at the top of it
   instead of carrying over the previous category's scroll position.
 - Menus that fit on one screen no longer show scrolling hints and position.
