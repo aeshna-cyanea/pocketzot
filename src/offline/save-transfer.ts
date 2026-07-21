@@ -47,6 +47,13 @@ function isRegenerable(path: string): boolean {
     || path === `${MOUNT}/.pocketzot-prewarm`
 }
 
+// Every externally-influenced path must live under the mount with no
+// traversal segments — the one guard shared by import validation and the
+// delete surface, so a hardening tweak lands everywhere at once.
+function isMountPath(path: string): boolean {
+  return path.startsWith(`${MOUNT}/`) && !path.split('/').includes('..')
+}
+
 // --- Pack format (pure) ------------------------------------------------------
 
 export function packSave(files: SavedFile[], meta: SavePackMeta): Uint8Array {
@@ -94,9 +101,8 @@ export function unpackSave(bytes: ArrayBuffer | Uint8Array): { meta: SavePackMet
     const { path, mode, mtimeMs, offset, size } = f
     if (typeof path !== 'string' || typeof offset !== 'number' || typeof size !== 'number')
       throw new Error('save pack manifest entry malformed')
-    // Every path must live under the mount, with no traversal segments — a
-    // crafted pack must not be able to plant keys the engine wouldn't own.
-    if (!path.startsWith(`${MOUNT}/`) || path.split('/').includes('..'))
+    // A crafted pack must not be able to plant keys the engine wouldn't own.
+    if (!isMountPath(path))
       throw new Error(`save pack path outside ${MOUNT}: ${path}`)
     const start = dataStart + offset
     if (offset < 0 || size < 0 || start + size > view.byteLength)
@@ -242,6 +248,22 @@ export async function deleteOfflineSave(stem: string): Promise<void> {
   try {
     const txn = db.transaction(STORE, 'readwrite')
     txn.objectStore(STORE).delete(`${MOUNT}/saves/${stem}.cs`)
+    await txnDone(txn)
+  } finally {
+    db.close()
+  }
+}
+
+// Delete files from the mount (missing paths are no-ops). Same safety
+// contract as deleteOfflineSave: only run while no engine is up.
+export async function deleteOfflineFiles(paths: string[]): Promise<void> {
+  for (const p of paths) {
+    if (!isMountPath(p)) throw new Error(`bad path: ${p}`)
+  }
+  const db = await openDb()
+  try {
+    const txn = db.transaction(STORE, 'readwrite')
+    for (const p of paths) txn.objectStore(STORE).delete(p)
     await txnDone(txn)
   } finally {
     db.close()

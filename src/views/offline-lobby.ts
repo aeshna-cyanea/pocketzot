@@ -21,8 +21,12 @@ import {
 import { downloadOfflineData, probeReadiness, type Readiness } from '../offline/artifact-store'
 import { compactPlace, nameTitle } from '../game/char-label'
 import { escHtml } from '../game/dcss-colors'
+import { deleteCountdownButtons } from './delete-countdown'
 import { maybeShowExitDialog } from './lobby'
 import { openRcEditor } from './rc-editor'
+import { openGameRecords } from './records-view'
+import { readGameRecords } from '../offline/game-records'
+import type { XlogRecord } from '../offline/xlog'
 import { attachScrollCue } from '../util/scroll-cue'
 
 export function buildOfflineLobbyView(
@@ -58,6 +62,17 @@ export function buildOfflineLobbyView(
       <h2 class="lobby-section-title">Saved Games</h2>
       <div id="offline-saves" class="lobby-list">
         <div class="lobby-loading">Loading…</div>
+      </div>
+      <h2 class="lobby-section-title" id="offline-records-title" hidden>Past Games</h2>
+      <div id="offline-records-row" class="lobby-game-row offline-records-row" role="button" tabindex="0" hidden>
+        <div class="lobby-game-main">
+          <div class="lobby-game-toprow">
+            <span class="lobby-game-user">Scores and morgues</span>
+          </div>
+          <div class="offline-slot-meta">
+            <span class="offline-slot-meta-left" id="offline-records-sub"></span>
+          </div>
+        </div>
       </div>
       <h2 class="lobby-section-title">Storage</h2>
       <div class="offline-device">
@@ -227,28 +242,15 @@ export function buildOfflineLobbyView(
 
   // Deleting a character is the one irreversible act in this lobby, so the
   // confirm is deliberately heavy: the row swaps to a single-line confirm
-  // whose Delete button counts down three taps ("Delete in 3" → 2 → 1) before
-  // it fires. Heavier than a yes/no, lighter than typing a word — a stray or
-  // fidget tap can't get through it.
+  // armed with the shared three-tap countdown (delete-countdown.ts).
   function showDeleteConfirm(row: HTMLElement, stem: string, name: string): void {
     const clone = document.createElement('div')
     clone.className = 'lobby-game-row offline-slot-row is-confirming'
-    clone.innerHTML = `
-      <span class="offline-slot-confirm-label">Delete ${escHtml(name)}?</span>
-      <button type="button" class="offline-slot-confirm-cancel">Cancel</button>
-      <button type="button" class="offline-slot-confirm-del">Delete in 3</button>
-    `
+    clone.innerHTML = `<span class="offline-slot-confirm-label">Delete ${escHtml(name)}?</span>`
     // The confirm row is one line where the slot row is two — pin the height
     // of the row it replaces so the swap doesn't shift the list.
     clone.style.minHeight = `${row.getBoundingClientRect().height}px`
-    const del = clone.querySelector<HTMLButtonElement>('.offline-slot-confirm-del')!
-    let taps = 3
-    del.addEventListener('click', () => {
-      if (--taps > 0) {
-        del.textContent = `Delete in ${taps}`
-        return
-      }
-      del.disabled = true
+    const { cancelBtn, delBtn } = deleteCountdownButtons(() => {
       void deleteOfflineSave(stem)
         .then(() => forgetOfflineChar(stem))
         .catch((e: unknown) => showNotice(`Could not delete the save: ${String(e)}`))
@@ -256,11 +258,44 @@ export function buildOfflineLobbyView(
     })
     // Cancel is a pure-UI undo: the original row (listeners intact) was never
     // removed from memory — put it back rather than re-probing IndexedDB.
-    clone.querySelector('.offline-slot-confirm-cancel')!.addEventListener('click', () => {
+    cancelBtn.addEventListener('click', () => {
       clone.replaceWith(row)
     })
+    clone.append(cancelBtn, delBtn)
     row.replaceWith(clone)
   }
+
+  // --- Past games ------------------------------------------------------------
+  // The section (title + entry row) appears once the logfile has at least one
+  // entry (game-records.ts). Records only change when a game ends, which
+  // unmounts this lobby — so the mount-time read stays fresh for the row's
+  // lifetime and is handed to the browser as-is.
+
+  const recordsRow = view.querySelector<HTMLElement>('#offline-records-row')!
+  void readGameRecords().then((recs) => {
+    if (!view.isConnected || recs.length === 0) return
+    let live: readonly XlogRecord[] = recs
+    const subEl = view.querySelector<HTMLElement>('#offline-records-sub')!
+    const titleEl = view.querySelector<HTMLElement>('#offline-records-title')!
+    const sync = (): void => {
+      subEl.textContent = `${live.length} finished game${live.length === 1 ? '' : 's'}`
+      titleEl.hidden = live.length === 0
+      recordsRow.hidden = live.length === 0
+    }
+    sync()
+    // The browser reports deletes back so the row's count stays true.
+    const open = (): void => openGameRecords(live, (remaining) => {
+      live = remaining
+      sync()
+    })
+    recordsRow.addEventListener('click', open)
+    recordsRow.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault()
+        open()
+      }
+    })
+  }).catch(() => {}) // no records row on a probe failure — nothing to browse
 
   // --- Readiness: "am I ready for the flight?" -------------------------------
   // A probe, never a stored flag (artifact-store.ts): the status re-checks the

@@ -28,9 +28,14 @@ import { CELL, renderTiles, dollTileSpec } from '../game/tiles/tile-view'
 // Callers that repaint the same container (the login strip toggling its pref)
 // pass a fresh signal each time and abort the previous paint, so a slow atlas
 // from a superseded call can't land in — or duplicate — the current render.
+// The subset of an Avatar that painting actually reads — the doll recipe and
+// its atlas identity. Full Avatars satisfy it structurally; the char-card
+// model carries exactly this shape for entries joined from other sources.
+export type DollRecipe = Pick<Avatar, 'doll' | 'mcache' | 'httpBase' | 'version' | 'fp'>
+
 export async function paintAvatars(
   container: HTMLElement,
-  avatars: Avatar[],
+  avatars: readonly DollRecipe[],
   scale: number,
   cls: string,
   signal?: AbortSignal,

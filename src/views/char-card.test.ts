@@ -1,0 +1,273 @@
+// @vitest-environment happy-dom
+import { describe, expect, it, vi } from 'vitest'
+import type { Avatar } from '../avatars'
+import { parseXlogLine } from '../offline/xlog'
+import { PROBE_LINE } from '../test/xlog-probe'
+import {
+  agoLabel,
+  avatarToCard,
+  cardHeadline,
+  formatDuration,
+  godRankLine,
+  renderCharCard,
+  xlogToCard,
+} from './char-card'
+
+// The renderer's one async edge is the doll paint; card layout is what's
+// under test, so stub it out (its own orchestration has avatar-tiles.test.ts).
+vi.mock('./avatar-tiles', () => ({
+  paintAvatars: vi.fn(async () => {}),
+}))
+
+describe('godRankLine', () => {
+  it('matches the character_description piety ladder', () => {
+    expect(godRankLine('Trog', 0)).toBe('Was an Initiate of Trog.')
+    expect(godRankLine('Trog', 29)).toBe('Was an Initiate of Trog.')
+    expect(godRankLine('Trog', 30)).toBe('Was a Follower of Trog.')
+    expect(godRankLine('Trog', 74)).toBe('Was a Believer of Trog.')
+    expect(godRankLine('Trog', 99)).toBe('Was a Priest of Trog.')
+    expect(godRankLine('Trog', 119)).toBe('Was an Elder of Trog.')
+    expect(godRankLine('Trog', 159)).toBe('Was a High Priest of Trog.')
+    expect(godRankLine('Trog', 160)).toBe('Was the Champion of Trog.')
+  })
+  it('appends the penitent marker', () => {
+    expect(godRankLine('Zin', 50, 3)).toBe('Was a Believer of Zin (penitent).')
+  })
+  it('special-cases Xom by XL, ignoring piety', () => {
+    expect(godRankLine('Xom', undefined, 0, 5)).toBe('Was a Plaything of Xom.')
+    expect(godRankLine('Xom', undefined, 0, 20)).toBe('Was a Favourite Plaything of Xom.')
+  })
+  it('yields nothing when godless or piety is unknown', () => {
+    expect(godRankLine('', 50)).toBeUndefined()
+    expect(godRankLine('Trog', undefined)).toBeUndefined()
+  })
+})
+
+describe('formatDuration', () => {
+  it('formats hh:mm:ss', () => {
+    expect(formatDuration(25)).toBe('00:00:25')
+    expect(formatDuration(8367)).toBe('02:19:27')
+    expect(formatDuration(90000)).toBe('25:00:00')
+  })
+})
+
+describe('cardHeadline', () => {
+  const base = xlogToCard(parseXlogLine(PROBE_LINE))
+  it('joins name and title with the title-supplied joiner', () => {
+    expect(cardHeadline(base)).toBe('TmsgProbe the Trooper')
+    expect(cardHeadline({ ...base, charTitle: ', Duchess of Vaults' })).toBe('TmsgProbe, Duchess of Vaults')
+    expect(cardHeadline({ ...base, charTitle: undefined })).toBe('TmsgProbe')
+  })
+})
+
+describe('agoLabel', () => {
+  const NOW = new Date(2026, 6, 21, 12, 0, 0).getTime()
+  const ago = (ms: number): string => agoLabel(NOW - ms, NOW)
+  it('scales through the units and yields to the date past a year', () => {
+    expect(ago(30_000)).toBe('just now')
+    expect(ago(20 * 60_000)).toBe('20 min ago')
+    expect(ago(5 * 3600_000)).toBe('5 h ago')
+    expect(ago(3 * 86400_000)).toBe('3 days ago')
+    expect(ago(90 * 86400_000)).toBe('3 months ago')
+    expect(ago(400 * 86400_000)).toBe('')
+    expect(agoLabel(NOW + 60_000, NOW)).toBe('') // clock skew — say nothing
+  })
+})
+
+describe('xlogToCard', () => {
+  const rec = parseXlogLine(PROBE_LINE)
+
+  it('maps the real probe entry', () => {
+    const m = xlogToCard(rec)
+    expect(m.charName).toBe('TmsgProbe')
+    expect(m.charTitle).toBe('the Trooper')
+    expect(m.species).toBe('Minotaur')
+    expect(m.background).toBe('Berserker')
+    expect(m.god).toBe('Trog')
+    expect(m.godRank).toBe('Was a Follower of Trog.')
+    expect(m.result).toEqual({
+      kind: 'quit',
+      verb: 'Quit the game',
+      verbose: undefined,
+    })
+    expect(m.xl).toBe(1)
+    expect(m.place).toBe('D:1')
+    expect(m.stats).toEqual({ str: 21, int: 4, dex: 9, ac: 2, ev: 11, sh: 0 })
+    expect(m.score).toBe(0)
+    expect(m.turns).toBe(0)
+    expect(m.duration).toBe('00:00:25')
+    expect(m.endedAt).toBe(new Date(2026, 6, 20, 22, 11, 49).getTime())
+    expect(m.version).toBe('0.34.1')
+    expect(m.origin).toBe('On this device')
+    expect(m.dump).toEqual({ kind: 'idbfs', path: '/crawl/morgue/morgue-TmsgProbe-20260720-221149.txt' })
+  })
+
+  it('classifies wins (tmsg carries the rune count natively)', () => {
+    const m = xlogToCard({ ...rec, ktyp: 'winning', urune: '3', tmsg: 'escaped with the Orb and 3 runes!' })
+    expect(m.result.kind).toBe('won')
+    expect(m.result.verb).toBe('Escaped with the Orb and 3 runes!')
+  })
+
+  it('buckets unknown terminal types as deaths, keeping tmsg prose', () => {
+    const m = xlogToCard({ ...rec, ktyp: 'mon', tmsg: 'slain by a kobold' })
+    expect(m.result.kind).toBe('dead')
+    expect(m.result.verb).toBe('Slain by a kobold')
+  })
+
+  it('badges wizmode and explore games (presence-written fields)', () => {
+    expect(xlogToCard(rec).badge).toBeUndefined()
+    expect(xlogToCard({ ...rec, wiz: '1' }).badge).toBe('wizmode')
+    expect(xlogToCard({ ...rec, explore: '1' }).badge).toBe('explore')
+  })
+
+  it('shows no result line without tmsg (our engine always writes it)', () => {
+    const { tmsg: _tmsg, ...rest } = rec
+    expect(xlogToCard(rest).result.verb).toBe('')
+  })
+})
+
+function makeAvatar(over: Partial<Avatar> = {}): Avatar {
+  return {
+    wsUrl: 'wss://crawl.dcss.io/socket',
+    username: 'tester',
+    gameId: 'dcss-0.34',
+    charName: 'tester',
+    httpBase: 'https://crawl.dcss.io',
+    version: 'abc123',
+    doll: null,
+    mcache: null,
+    turn: 100,
+    species: 'Minotaur',
+    title: 'Slayer',
+    xl: 12,
+    place: 'Dungeon',
+    depth: 9,
+    ...over,
+  }
+}
+
+describe('avatarToCard', () => {
+  it('maps a closed online entry, blurb verbatim', () => {
+    const m = avatarToCard(
+      makeAvatar({
+        outcome: { reason: 'dead', message: 'Slain by an orc\nOn D:9', dump: 'https://x/morgue/t', endedAt: 123 },
+      }),
+    )
+    expect(m.charName).toBe('tester')
+    expect(m.charTitle).toBe('Slayer')
+    expect(m.result.kind).toBe('dead')
+    expect(m.result.verb).toBe('Died')
+    expect(m.result.verbose).toBe('Slain by an orc\nOn D:9')
+    expect(m.place).toBe('D:9')
+    expect(m.endedAt).toBe(123)
+    expect(m.origin).toBe('crawl.dcss.io')
+    expect(m.dump).toEqual({ kind: 'url', href: 'https://x/morgue/t.txt' })
+    expect(m.doll).toBeTruthy()
+  })
+
+  it('treats a live save as saved with no result line', () => {
+    const m = avatarToCard(makeAvatar())
+    expect(m.result.kind).toBe('saved')
+    expect(m.result.verb).toBe('')
+    expect(m.dump).toBeUndefined()
+  })
+
+  it('labels offline-store entries as on-device', () => {
+    const m = avatarToCard(makeAvatar({ wsUrl: 'local://offline' }))
+    expect(m.origin).toBe('On this device')
+  })
+})
+
+describe('renderCharCard', () => {
+  const model = xlogToCard(parseXlogLine(PROBE_LINE))
+
+  it('lays out the full card', () => {
+    const card = renderCharCard(model)
+    expect(card.className).toContain('char-card-k-quit')
+    expect(card.classList.contains('char-card-k-won')).toBe(false)
+    expect(card.querySelector('.char-card-head')?.textContent).toBe('TmsgProbe the Trooper')
+    expect(card.querySelector('.char-card-head-title')?.textContent).toBe(' the Trooper')
+    // Place rides the result line for terminal kinds, not the identity line.
+    expect(card.querySelector('.char-card-sub')?.textContent).toBe('Minotaur Berserker · XL 1')
+    const result = card.querySelector('.char-card-result')
+    expect(result?.textContent).toBe('Quit the game in D:1')
+    expect(result?.classList.contains('char-card-kind-quit')).toBe(true)
+    expect(card.querySelector('.char-card-god')?.textContent).toBe('Was a Follower of Trog.')
+    expect(card.querySelector('.char-card-stats')?.textContent).toBe('str:21 int:4 dex:9 · ac:2 ev:11 sh:0')
+    expect(card.querySelector('.char-card-stats .char-card-st-str')?.textContent).toBe('str:21')
+    expect(card.querySelector('.char-card-meta')?.textContent).toContain('0 pts')
+    expect(card.querySelector('.char-card-meta')?.textContent).toContain('00:00:25')
+  })
+
+  it('flags wins and keeps the place off the result line', () => {
+    const win = renderCharCard({
+      ...model,
+      result: { kind: 'won', verb: 'Escaped with the Orb and 3 runes!' },
+    })
+    expect(win.classList.contains('char-card-k-won')).toBe(true)
+    expect(win.querySelector('.char-card-result')?.textContent).toBe('Escaped with the Orb and 3 runes!')
+    // A winner's place is the dungeon exit — suppressed everywhere.
+    expect(win.querySelector('.char-card-sub')?.textContent).not.toContain('D:')
+  })
+
+  it('keeps the place on the identity line for live saves', () => {
+    const live = renderCharCard({ ...model, result: { kind: 'saved', verb: '' } })
+    expect(live.querySelector('.char-card-sub')?.textContent).toContain('D:1')
+  })
+
+  it('compact drops stats, meta, and god-rank; god moves to the sub line', () => {
+    const card = renderCharCard(model, { compact: true })
+    expect(card.querySelector('.char-card-stats')).toBeNull()
+    expect(card.querySelector('.char-card-meta')).toBeNull()
+    expect(card.querySelector('.char-card-god')).toBeNull()
+    expect(card.querySelector('.char-card-sub')?.textContent).toContain('Trog')
+  })
+
+  it('prefers verbose prose on the full card, terse on compact', () => {
+    const m = { ...model, result: { ...model.result, kind: 'dead' as const, verb: 'Slain by an orc', verbose: 'Slain by an orc wielding a +2 mace (17 damage)' } }
+    // Verbose prose never carries the appended place (an online blurb already
+    // narrates it, and the line-clamp could swallow the tail) — the place
+    // falls back to the identity line instead.
+    const full = renderCharCard(m)
+    expect(full.querySelector('.char-card-result')?.textContent).toBe('Slain by an orc wielding a +2 mace (17 damage)')
+    expect(full.querySelector('.char-card-sub')?.textContent).toContain('D:1')
+    expect(renderCharCard(m, { compact: true }).querySelector('.char-card-result')?.textContent).toBe('Slain by an orc in D:1')
+  })
+
+  it('never duplicates a place an online blurb already narrates', () => {
+    const m = avatarToCard(
+      makeAvatar({
+        outcome: { reason: 'dead', message: 'Slain by an ogre... on level 7 of the Dungeon.', dump: 'https://x/morgue/t', endedAt: 123 },
+        place: 'Dungeon',
+        depth: 7,
+      }),
+    )
+    const full = renderCharCard(m)
+    expect(full.querySelector('.char-card-result')?.textContent).toBe('Slain by an ogre... on level 7 of the Dungeon.')
+    // Compact renders the short verb, which safely carries the place.
+    const compact = renderCharCard(m, { compact: true })
+    expect(compact.querySelector('.char-card-result')?.textContent).toBe('Died in D:7')
+  })
+
+  it('renders the badge chip inside the headline', () => {
+    const card = renderCharCard({ ...model, badge: 'wizmode' })
+    expect(card.querySelector('.char-card-head .char-card-badge')?.textContent).toBe('wizmode')
+    expect(renderCharCard(model).querySelector('.char-card-badge')).toBeNull()
+  })
+
+  it('hides an empty result line (live save)', () => {
+    const m = { ...model, result: { kind: 'saved' as const, verb: '' } }
+    expect(renderCharCard(m).querySelector('.char-card-result')).toBeNull()
+  })
+
+  it('wires onOpen through tap and keyboard with the dump ref', () => {
+    const onOpen = vi.fn()
+    const card = renderCharCard(model, { onOpen })
+    expect(card.getAttribute('role')).toBe('button')
+    expect(card.querySelector('.char-card-open')).toBeTruthy()
+    card.click()
+    expect(onOpen).toHaveBeenCalledWith({ kind: 'idbfs', path: '/crawl/morgue/morgue-TmsgProbe-20260720-221149.txt' })
+    card.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+    expect(onOpen).toHaveBeenCalledTimes(2)
+  })
+})
