@@ -278,6 +278,42 @@ describe('ui-push / ui-pop overlay stack', () => {
     expect(isHidden(overlay(h))).toBe(true)
   })
 
+  it("renders a formatted-scroller's more footer (scroller.cc m_more, e.g. the fatal-error popup)", () => {
+    const h = setup()
+    h.dispatch({
+      msg: 'ui-push', type: 'formatted-scroller', tag: 'error',
+      text: 'Something went badly wrong.',
+      more: '<cyan>Hit any key to exit...</cyan>',
+    })
+    const footer = overlay(h).querySelector<HTMLElement>('.scroller-more')
+    expect(footer).not.toBeNull()
+    expect(footer!.textContent).toBe('Hit any key to exit...')
+    // The body text is still there above it.
+    expect(overlay(h).textContent).toContain('Something went badly wrong.')
+  })
+
+  it('omits the scroller more footer when the wire field is empty or markup-only', () => {
+    const h = setup()
+    h.dispatch({ msg: 'ui-push', type: 'formatted-scroller', tag: 'help', text: 'body', more: '' })
+    expect(overlay(h).querySelector('.scroller-more')).toBeNull()
+    h.dispatch({ msg: 'ui-pop' })
+    h.dispatch({ msg: 'ui-push', type: 'formatted-scroller', tag: 'help', text: 'body', more: '<lightgrey></lightgrey>' })
+    expect(overlay(h).querySelector('.scroller-more')).toBeNull()
+  })
+
+  it('a ui-state text update keeps the scroller more footer intact', () => {
+    const h = setup()
+    h.dispatch({
+      msg: 'ui-push', type: 'formatted-scroller', tag: 'error',
+      text: 'first page', more: 'Hit any key to exit...',
+    })
+    // Scroller ui-states carry only text/highlight (scroller.cc:122-124);
+    // `more` must survive from the original push through the in-place update.
+    h.dispatch({ msg: 'ui-state', type: 'formatted-scroller', text: 'second page' })
+    expect(overlay(h).textContent).toContain('second page')
+    expect(overlay(h).querySelector('.scroller-more')?.textContent).toBe('Hit any key to exit...')
+  })
+
   it('unwraps server hanging-indent prop blocks into one hang-classed prose line', () => {
     const h = setup()
     // Wire layout from _format_prop_desc (describe.cc): 80-col hard wrap with
@@ -851,6 +887,32 @@ describe('menu footer derivation and hover revalidation (paged inventory)', () =
     arrowDown()
     h.dispatch({ msg: 'menu_scroll', first: 2, last_hovered: 2, force: true })
     expect(overlay(h).querySelector('.item-hovered')?.textContent).toContain('buckler')
+  })
+
+  it('footer derivation never touches a stacked describe-item actions bar (shared .overlay-footer class)', () => {
+    const h = setup()
+    h.dispatch(gearMenu())
+    // Examining an item pushes a describe overlay whose [w]ield/[d]rop action
+    // bar is styled via the same .overlay-footer class the menu footer uses,
+    // while activeMenu stays set underneath. Any footer derivation firing now
+    // (the list-detach ResizeObserver notification, an update_menu) must
+    // leave the actions bar alone — it used to overwrite it with the menu
+    // keyhelp, or hide it outright when alt_more was empty.
+    h.dispatch({
+      msg: 'ui-push', type: 'describe-item', title: 'a - a +0 short sword',
+      body: 'A fine blade.', actions: '(w)ield, (d)rop, or (i)nscribe.',
+    })
+    const buttons = () => [...overlay(h).querySelectorAll<HTMLElement>('.overlay-actions .action-btn')]
+      .map(b => b.textContent)
+    expect(buttons()).toEqual(['(w)ield', '(d)rop', '(i)nscribe'])
+    h.dispatch({ msg: 'update_menu', more: PAGED_MORE, alt_more: '' })
+    const bar = overlay(h).querySelector<HTMLElement>('.overlay-actions')!
+    expect(buttons()).toEqual(['(w)ield', '(d)rop', '(i)nscribe'])
+    expect(isHidden(bar)).toBe(false)
+    // Closing the describe restores the menu with its own footer element.
+    h.dispatch({ msg: 'ui-pop' })
+    expect(overlay(h).querySelector('.overlay-actions')).toBeNull()
+    expect(overlay(h).querySelector('.menu-footer')).not.toBeNull()
   })
 })
 

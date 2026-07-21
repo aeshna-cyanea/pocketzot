@@ -1535,8 +1535,15 @@ export function buildGameView(
       case 'menu_scroll': {
         const m = msg as unknown as { first?: number; last_hovered?: number; force?: boolean }
         // Reference server_menu_scroll (menu.js:848): ignored entirely unless
-        // forced — cycle_headers, i.e. the paged inventory's ! / ? section
-        // jumps — or we're spectating and following the player's own pager.
+        // forced, or we're spectating and following the player's own pager.
+        // The engine force-sends its scroll position where it moved the cursor
+        // itself and the client can't infer it: a secondary-hotkey snap (an
+        // item-class glyph like ! or ? in an MF_SECONDARY_SCROLL menu, jumping
+        // to that class's block), examine-by-key onto an off-screen item,
+        // select-by-key, and cycle_headers (`,`). Note the paged inventory
+        // (MF_PAGED_INVENTORY) is not one of these — it flips categories on
+        // Left/Right/Tab, and its per-page item lists mean class glyphs find
+        // nothing to snap to.
         // (The reference lets a spectator opt out by scrolling manually,
         // following_player_scroll; we don't track that yet, so a spectator
         // reading a long menu gets re-yanked when the player scrolls.)
@@ -2037,6 +2044,16 @@ export function buildGameView(
           }
           attachScrollerListener(bodyEl)
         }
+      }
+      // The scroller's `more` footer (scroller.cc m_more; reference renders
+      // it at ui-layouts.js:764). Usually empty — but when set it's real
+      // guidance (fatal-error popup's "Hit any key to exit…", arena results)
+      // that must not be silently dropped.
+      if (msg.more && stripDcss(msg.more).trim()) {
+        const moreEl = document.createElement('div')
+        moreEl.className = 'overlay-footer scroller-more'
+        moreEl.innerHTML = dcssToHtml(msg.more)
+        uiOverlay.appendChild(moreEl)
       }
       if (msg.actions) {
         uiOverlay.appendChild(buildActionsBar(msg.actions))
@@ -2773,7 +2790,14 @@ export function buildGameView(
   // flip or chunk update.)
   function updateMenuFooter(): void {
     if (!activeMenu) return
-    const footerEl = uiOverlay.querySelector<HTMLElement>('.overlay-footer')
+    // .menu-footer, not .overlay-footer: a ui-push stacked over the menu
+    // (describe-item from the inventory) keeps activeMenu set while its
+    // actions bar — [d - drop] etc., styled via the same .overlay-footer
+    // class — is the only footer in the DOM, and the list-detach
+    // ResizeObserver notification lands right after that overlay renders.
+    // Matching the bare class here overwrote the actions bar with the
+    // menu's keyhelp (or display:none'd it).
+    const footerEl = uiOverlay.querySelector<HTMLElement>('.menu-footer')
     if (!footerEl) return
     const listEl = menuListEl()
     const scrollable = !!listEl && listEl.scrollHeight > listEl.clientHeight
@@ -2842,8 +2866,11 @@ export function buildGameView(
       // Created empty; updateMenuFooter fills it at the end of showMenu, once
       // the list is in the DOM and its scroll position restored (both feed
       // the derivation: overflow picks the more variant, scrollTop the XXX).
+      // menu-footer distinguishes this element from ui-push actions bars,
+      // which share .overlay-footer for styling — the menu-footer queries
+      // (updateMenuFooter, renderMenuItems) must never match those.
       const footerEl = document.createElement('div')
-      footerEl.className = 'overlay-footer'
+      footerEl.className = 'overlay-footer menu-footer'
       overlayContent.appendChild(footerEl)
     }, { float: floatPrompt })
     uiOverlay.classList.toggle('prompt-menu', promptFamily)
@@ -2903,7 +2930,7 @@ export function buildGameView(
     }, { passive: true })
     menuListResize?.disconnect()
     menuListResize?.observe(listEl)
-    const footer = uiOverlay.querySelector('.overlay-footer')
+    const footer = uiOverlay.querySelector('.menu-footer')
     overlayContent.insertBefore(listEl, footer)
     syncMenuShiftLabels()
   }
