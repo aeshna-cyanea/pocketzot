@@ -43,6 +43,9 @@ export interface AvatarMeta {
   species?: string  // full species name ("Minotaur")
   title?: string    // XL-scaled job title ("Slayer") — the closest thing to a
                     // background the player message carries (no job field)
+  background?: string // full job name ("Berserker"), parsed from the game-start
+                      // welcome line (char-label.ts welcomeBackground) — the
+                      // wire's only statement of it
   god?: string      // empty string while godless
   xl?: number
   place?: string    // branch name as sent ("Dungeon"); depth is separate
@@ -167,7 +170,7 @@ export function recordAvatarOutcome(
     const v = meta[k]
     if (v !== undefined) target[k] = v
   }
-  ;(['species', 'title', 'god', 'xl', 'place', 'depth'] as const).forEach(merge)
+  ;(['species', 'title', 'background', 'god', 'xl', 'place', 'depth'] as const).forEach(merge)
   cur.outcome = { ...outcome, endedAt: Date.now() }
   persist(list)
 }

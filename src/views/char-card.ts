@@ -10,6 +10,7 @@
 
 import type { Avatar } from '../avatars'
 import { compactPlace, nameTitle } from '../game/char-label'
+import { tagFor } from '../servers'
 import type { XlogRecord } from '../offline/xlog'
 import { morgueFileName, xlogTimeMs } from '../offline/xlog'
 import { paintAvatars, type DollRecipe } from './avatar-tiles'
@@ -30,7 +31,8 @@ export interface CharCardModel {
   charTitle?: string         // headline tail, regular weight, own joiner: "the Chopper" / ", Duchess of …"
   badge?: string             // headline qualifier chip ("wizmode"/"explore")
   species?: string           // "Mountain Dwarf"
-  background?: string        // "Berserker" — offline only (online captures no job)
+  background?: string        // "Berserker" — xlog cls, or online/offline-live the
+                             // welcome-line parse (absent on pre-capture entries)
   god?: string               // absent/'' = godless
   godRank?: string           // "Was a Follower of Trog." — offline only (needs piety)
 
@@ -44,6 +46,9 @@ export interface CharCardModel {
   duration?: string          // pre-formatted "00:00:25"
 
   endedAt?: number           // ms epoch
+  dateQualifier?: string     // prefixed to the age/date ("Last seen") — for
+                             // live saves, whose whole card is a snapshot of
+                             // the last capture, not a recorded ending
   version?: string           // "0.34.1" / "dcss-0.34"
   origin?: string            // "On this device" | server hostname
 
@@ -100,11 +105,11 @@ export function renderCharCard(
 
   const combo = [model.species, model.background].filter(Boolean).join(' ')
   const sub = [combo]
-  if (model.xl != null) sub.push(`XL ${model.xl}`)
+  if (model.xl != null) sub.push(`XL:${model.xl}`)
   if (model.place && placeInSub) sub.push(model.place)
   // God on the sub line only when there's no rank line to carry it.
   if (model.god && !(model.godRank && !opts.compact)) sub.push(model.god)
-  line(body, 'char-card-sub', sub.filter(Boolean).join(' · '))
+  joinedLine(body, 'char-card-sub', sub.filter(Boolean))
 
   if (resultText) {
     const el = line(body, 'char-card-result', resultText + (placeInResult ? ` in ${model.place}` : ''))
@@ -121,11 +126,13 @@ export function renderCharCard(
     if (model.endedAt != null) {
       const ago = agoLabel(model.endedAt)
       const date = DATE_FMT.format(model.endedAt)
-      meta.push(ago ? `${ago} · ${date}` : date)
+      const head = ago || date
+      meta.push(model.dateQualifier ? `${model.dateQualifier} ${head}` : head)
+      if (ago) meta.push(date)
     }
     if (model.origin) meta.push(model.origin)
     if (model.version) meta.push(model.version)
-    if (meta.length > 0) line(body, 'char-card-meta', meta.join(' · '))
+    if (meta.length > 0) joinedLine(body, 'char-card-meta', meta)
   }
 
   if (opts.onOpen) {
@@ -170,6 +177,30 @@ function line(parent: HTMLElement, cls: string, text: string): HTMLElement {
   return el
 }
 
+// Sub/meta lines join short facts with a middot separator SPAN, not ' · '
+// text: in the mono stack every space is a full glyph cell (thin/hair spaces
+// fall back to the same advance — measured in WebKit), so text joins cost ~3
+// cells per separator at phone width. The span's side margins set the real
+// gap; the zero-width space after it keeps the line wrappable at separator
+// boundaries, which plain-text joins got from their spaces.
+function sepSpan(): HTMLElement {
+  const s = document.createElement('span')
+  s.className = 'char-card-sep'
+  s.textContent = '·'
+  return s
+}
+
+function joinedLine(parent: HTMLElement, cls: string, parts: readonly string[]): HTMLElement {
+  const el = document.createElement('div')
+  el.className = cls
+  parts.forEach((p, i) => {
+    if (i > 0) el.append(sepSpan(), '\u200b')
+    el.append(p)
+  })
+  parent.append(el)
+  return el
+}
+
 // Color-coded per stat (à la dcss-stats) — each label+value pair is one
 // tinted span, separators plain.
 function statsRow(s: NonNullable<CharCardModel['stats']>): HTMLElement {
@@ -179,7 +210,7 @@ function statsRow(s: NonNullable<CharCardModel['stats']>): HTMLElement {
     ['str', s.str], ['int', s.int], ['dex', s.dex], ['ac', s.ac], ['ev', s.ev], ['sh', s.sh],
   ]
   pairs.forEach(([k, v], i) => {
-    if (i > 0) row.append(i === 3 ? ' · ' : ' ')
+    if (i > 0) row.append(i === 3 ? sepSpan() : ' ')
     const span = document.createElement('span')
     span.className = `char-card-st-${k}`
     span.textContent = `${k}:${v}`
@@ -319,10 +350,13 @@ const REASON_VERB: Record<string, string> = {
   saved: 'Saved',
 }
 
+// Server origin as the official acronym ("CAO") — the full hostname is too
+// wide for the meta line. tagFor falls back to the hostname for servers not
+// in KNOWN_SERVERS (custom entries have no official tag).
 function originLabel(wsUrl: string): string {
   if (wsUrl.startsWith('local://')) return 'On this device'
   try {
-    return new URL(wsUrl).hostname
+    return tagFor(wsUrl)
   } catch {
     return wsUrl
   }
@@ -334,6 +368,7 @@ export function avatarToCard(a: Avatar): CharCardModel {
     charName: a.charName || a.username,
     charTitle: a.title,
     species: a.species,
+    background: a.background,
     god: a.god || undefined,
     result: {
       kind: o ? (REASON_KIND[o.reason] ?? 'other') : 'saved',
@@ -343,6 +378,9 @@ export function avatarToCard(a: Avatar): CharCardModel {
     xl: a.xl,
     place: a.place ? compactPlace(a.place, a.depth) : undefined,
     endedAt: o?.endedAt ?? a.seenAt,
+    // A live save's card is a snapshot of the last capture, not an ending —
+    // qualify its age so "16 days ago" doesn't read as when the run ended.
+    dateQualifier: o ? undefined : 'Last seen',
     // The offline sentinel gameId is pure noise next to origin "On this
     // device"; real ids ("dcss-0.34") are the closest thing to a version
     // the store carries.

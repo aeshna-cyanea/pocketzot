@@ -28,6 +28,7 @@ import { renderTiles, appendIconOverlays, dollTileSpec, monsterTileSpec, prepend
 import { cachedFingerprint, primeFingerprint } from '../game/tiles/atlas-dedup'
 import { ensureDollBaked, isBakeableLoader } from '../game/tiles/avatar-bake'
 import { recordAvatarOutcome, saveAvatar, type AvatarMeta } from '../avatars'
+import { welcomeBackground } from '../game/char-label'
 import { getPref, setPref, MONSTER_LIST_MODE_CHANGED_EVENT, RENDER_MODE_CHANGED_EVENT } from '../prefs'
 import {
   renderBodyLines, propagateDarkgreyColor, unwrapHangingIndents, joinIndentedRuns,
@@ -204,6 +205,20 @@ export function buildGameView(
   // from the same character continuing (the turn count resets for a new char — see
   // ../avatars). Delta-encoded after the game-start snapshot, so hold the last seen.
   let lastTurn: number | undefined
+  // The game-start "Welcome[ back], <name> the <Species> <Job>." line — the
+  // wire's only statement of the background (no player-message job field).
+  // Held raw until name AND species are known (msgs-vs-player order varies),
+  // then parsed once into charMeta.background and dropped.
+  let welcomeLine: string | null = null
+  function tryResolveBackground(): void {
+    if (charMeta.background !== undefined || welcomeLine == null) return
+    if (!charName || !charMeta.species) return
+    const bg = welcomeBackground(welcomeLine, charName, charMeta.species)
+    if (bg !== undefined) {
+      charMeta.background = bg
+      welcomeLine = null
+    }
+  }
   const inventoryStore = new InventoryStore()
   const statsView = new StatsView(inventoryStore)
   const statusView = new StatusView()
@@ -1263,6 +1278,7 @@ export function buildGameView(
         if (msg.xl !== undefined) charMeta.xl = msg.xl
         if (msg.place !== undefined) charMeta.place = msg.place
         if (msg.depth !== undefined) charMeta.depth = msg.depth
+        tryResolveBackground() // name/species may have just arrived; see welcomeLine
         if (msg.pos) {
           store.playerPos = { x: msg.pos.x, y: msg.pos.y }
           // setViewCenter reports whether the center actually moved; reuse that
@@ -1678,6 +1694,15 @@ export function buildGameView(
           // assigned to…" / "Your memory of … unravels") and flags the rail
           // stale; reharvestIfDirty after this loop resolves it.
           if (harvester.onMsgLine(m.text)) continue
+          // Hold the game-start welcome line for the background parse (see
+          // welcomeLine decl); resolves now if name+species already arrived.
+          // The comma excludes "Welcome back to level N!" (XP regain) and
+          // "Welcome back to <branch>!" (stairs).
+          if (charMeta.background === undefined
+            && (m.text.includes('Welcome, ') || m.text.includes('Welcome back, '))) {
+            welcomeLine = m.text
+            tryResolveBackground()
+          }
           // Mirror into the X-mode describe strip; the line ALSO takes the
           // normal path below into the (hidden) real log, which is what
           // keeps the server's rollback counts consistent on X-mode exit.

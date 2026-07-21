@@ -160,7 +160,7 @@ describe('avatarToCard', () => {
     expect(m.result.verbose).toBe('Slain by an orc\nOn D:9')
     expect(m.place).toBe('D:9')
     expect(m.endedAt).toBe(123)
-    expect(m.origin).toBe('crawl.dcss.io')
+    expect(m.origin).toBe('CDI')
     expect(m.dump).toEqual({ kind: 'url', href: 'https://x/morgue/t.txt' })
     expect(m.doll).toBeTruthy()
   })
@@ -172,6 +172,17 @@ describe('avatarToCard', () => {
     expect(m.dump).toBeUndefined()
   })
 
+  it('carries the welcome-parsed background', () => {
+    expect(avatarToCard(makeAvatar({ background: 'Berserker' })).background).toBe('Berserker')
+    expect(avatarToCard(makeAvatar()).background).toBeUndefined()
+  })
+
+  it("qualifies a live save's age as last-seen; closed entries stay bare", () => {
+    expect(avatarToCard(makeAvatar()).dateQualifier).toBe('Last seen')
+    const closed = makeAvatar({ outcome: { reason: 'dead', endedAt: 123 } })
+    expect(avatarToCard(closed).dateQualifier).toBeUndefined()
+  })
+
   it('labels offline-store entries as on-device, dropping the sentinel gameId', () => {
     const m = avatarToCard(makeAvatar({ wsUrl: 'local://offline', gameId: 'offline' }))
     expect(m.origin).toBe('On this device')
@@ -180,6 +191,11 @@ describe('avatarToCard', () => {
 
   it('keeps real gameIds as the version tag', () => {
     expect(avatarToCard(makeAvatar()).version).toBe('dcss-0.34')
+  })
+
+  it('falls back to the hostname for servers without a known tag', () => {
+    const m = avatarToCard(makeAvatar({ wsUrl: 'wss://my.custom.server:8443/socket' }))
+    expect(m.origin).toBe('my.custom.server')
   })
 })
 
@@ -193,12 +209,15 @@ describe('renderCharCard', () => {
     expect(card.querySelector('.char-card-head')?.textContent).toBe('TmsgProbe the Trooper')
     expect(card.querySelector('.char-card-head-title')?.textContent).toBe(' the Trooper')
     // Place rides the result line for terminal kinds, not the identity line.
-    expect(card.querySelector('.char-card-sub')?.textContent).toBe('Minotaur Berserker · XL 1')
+    // Separators are styled spans + a zero-width break, not ' · ' text —
+    // strip the ZWSP so the assert reads as the visible line.
+    expect(card.querySelector('.char-card-sub')?.textContent?.replace(/\u200b/g, ''))
+      .toBe('Minotaur Berserker·XL:1')
     const result = card.querySelector('.char-card-result')
     expect(result?.textContent).toBe('Quit the game in D:1')
     expect(result?.classList.contains('char-card-kind-quit')).toBe(true)
     expect(card.querySelector('.char-card-god')?.textContent).toBe('Was a Follower of Trog.')
-    expect(card.querySelector('.char-card-stats')?.textContent).toBe('str:21 int:4 dex:9 · ac:2 ev:11 sh:0')
+    expect(card.querySelector('.char-card-stats')?.textContent).toBe('str:21 int:4 dex:9·ac:2 ev:11 sh:0')
     expect(card.querySelector('.char-card-stats .char-card-st-str')?.textContent).toBe('str:21')
     expect(card.querySelector('.char-card-meta')?.textContent).toContain('0 pts')
     expect(card.querySelector('.char-card-meta')?.textContent).toContain('00:00:25')
@@ -263,6 +282,13 @@ describe('renderCharCard', () => {
   it('hides an empty result line (live save)', () => {
     const m = { ...model, result: { kind: 'saved' as const, verb: '' } }
     expect(renderCharCard(m).querySelector('.char-card-result')).toBeNull()
+  })
+
+  it('prefixes the date qualifier to the age, date as its own part', () => {
+    const m = avatarToCard(makeAvatar({ seenAt: Date.now() - 3 * 86400_000 }))
+    const meta = renderCharCard(m).querySelector('.char-card-meta')!
+      .textContent!.replace(/\u200b/g, '')
+    expect(meta).toContain('Last seen 3 days ago·')
   })
 
   it('wires onOpen through tap and keyboard with the dump ref', () => {

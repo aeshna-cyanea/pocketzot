@@ -19,3 +19,22 @@ export function nameTitle(name: string, title?: string): string {
 export function compactPlace(place: string, depth?: number): string {
   return depth ? `${abbrevPlace(place)}:${depth}` : abbrevPlace(place)
 }
+
+const reEscape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+// Extract the background ("Berserker") from the game-start welcome line —
+// the ONE place the wire states it: the player message carries no job field
+// (trunk tileweb.cc _send_player), while main.cc:441 prints
+// "Welcome[ back], <name> the <Species> <Job>." on every start/resume.
+// Anchoring on the known name AND species (both from the player message)
+// makes the parse unambiguous even though names may contain spaces (offline
+// allows them) and species names are multi-word ("Vine Stalker"): only the
+// job is left to capture. Substring match — msgs lines carry color markup
+// and same-turn messages arrive joined.
+export function welcomeBackground(line: string, name: string, species: string): string | undefined {
+  if (!name || !species) return undefined
+  const re = new RegExp(
+    `Welcome(?: back)?, ${reEscape(name)} the ${reEscape(species)} ([A-Za-z' -]+)\\.`,
+  )
+  return re.exec(line)?.[1]
+}

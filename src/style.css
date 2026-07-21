@@ -4439,6 +4439,11 @@ html, body {
 }
 .char-card-head-title { font-weight: 400; color: var(--text-dim); }
 .char-card-sub { color: var(--text-dim); font-size: 0.78rem; }
+/* Fact-separator middot (char-card.ts joinedLine/sepSpan): margins set the
+   gap — a text ' · ' join costs three full mono cells, too wide at phone
+   width (thin/hair spaces fall back to the full space advance in this
+   stack, so spacing must come from CSS, not characters). */
+.char-card-sep { margin: 0 0.18em; opacity: 0.8; }
 .char-card-result {
   color: var(--text);
   font-size: 0.8rem;
