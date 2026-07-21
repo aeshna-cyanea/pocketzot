@@ -12,7 +12,7 @@ Notable changes to PocketZot, newest first.
 ## 2026-07-20
 
 - Shift-tapping a spell in the quick-cast row now force-casts it (sends
-  `Za`), bypassing the safety prompt.
+  `Za`).
 
 ## 2026-07-18
 
