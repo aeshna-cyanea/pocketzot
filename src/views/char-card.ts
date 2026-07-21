@@ -343,7 +343,10 @@ export function avatarToCard(a: Avatar): CharCardModel {
     xl: a.xl,
     place: a.place ? compactPlace(a.place, a.depth) : undefined,
     endedAt: o?.endedAt ?? a.seenAt,
-    version: a.gameId,
+    // The offline sentinel gameId is pure noise next to origin "On this
+    // device"; real ids ("dcss-0.34") are the closest thing to a version
+    // the store carries.
+    version: a.gameId === 'offline' ? undefined : a.gameId,
     origin: originLabel(a.wsUrl),
     dump: o?.dump ? { kind: 'url', href: `${o.dump}.txt` } : undefined,
     doll: a,

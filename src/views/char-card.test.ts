@@ -172,9 +172,14 @@ describe('avatarToCard', () => {
     expect(m.dump).toBeUndefined()
   })
 
-  it('labels offline-store entries as on-device', () => {
-    const m = avatarToCard(makeAvatar({ wsUrl: 'local://offline' }))
+  it('labels offline-store entries as on-device, dropping the sentinel gameId', () => {
+    const m = avatarToCard(makeAvatar({ wsUrl: 'local://offline', gameId: 'offline' }))
     expect(m.origin).toBe('On this device')
+    expect(m.version).toBeUndefined()
+  })
+
+  it('keeps real gameIds as the version tag', () => {
+    expect(avatarToCard(makeAvatar()).version).toBe('dcss-0.34')
   })
 })
 

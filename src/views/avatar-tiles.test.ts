@@ -168,6 +168,19 @@ describe('paintAvatars', () => {
     expect(container.children[0].tagName).toBe('IMG')
   })
 
+  it('decorates placed dolls with their original list index', async () => {
+    // Entry 1 has no doll recipe → filtered before painting. The decorate
+    // callback must still see the ORIGINAL list indexes (0 and 2), so callers
+    // can map a placed element back to its avatar.
+    resolveMock.mockResolvedValue(LOADER)
+    const container = document.createElement('div')
+    const noDoll = { ...avatar('b', 'v2'), doll: null } as Avatar
+    const seen: Array<[string, number]> = []
+    await paintAvatars(container, [avatar('a', 'v1'), noDoll, avatar('c', 'v3')], 1, 'x',
+      undefined, (el, i) => seen.push([el.dataset.doll!, i]))
+    expect(seen.sort((p, q) => p[1] - q[1])).toEqual([['a', 0], ['c', 2]])
+  })
+
   it('self-heals a broken baked image by dropping it and re-rendering live', async () => {
     cachedFpMock.mockReturnValue('fp1')
     bakedUrlMock.mockReturnValueOnce('data:corrupt')

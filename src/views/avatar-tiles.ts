@@ -33,15 +33,21 @@ import { CELL, renderTiles, dollTileSpec } from '../game/tiles/tile-view'
 // model carries exactly this shape for entries joined from other sources.
 export type DollRecipe = Pick<Avatar, 'doll' | 'mcache' | 'httpBase' | 'version' | 'fp'>
 
+// `decorate`: called once per placed doll element with the avatar's index in
+// the ORIGINAL `avatars` list (empty-spec entries are filtered before painting,
+// so the placement index alone would drift past them). The crypt uses it to
+// wire per-doll tap targets. A baked thumbnail that self-heals re-places a
+// fresh element, which is decorated again — attach listeners, don't toggle.
 export async function paintAvatars(
   container: HTMLElement,
   avatars: readonly DollRecipe[],
   scale: number,
   cls: string,
   signal?: AbortSignal,
+  decorate?: (el: HTMLElement, index: number) => void,
 ): Promise<void> {
   const entries = avatars
-    .map((a) => ({ spec: dollTileSpec({ doll: a.doll, mcache: a.mcache }), httpBase: a.httpBase, version: a.version, fp: a.fp }))
+    .map((a, idx) => ({ spec: dollTileSpec({ doll: a.doll, mcache: a.mcache }), httpBase: a.httpBase, version: a.version, fp: a.fp, idx }))
     .filter((e) => e.spec.length > 0)
   // Start the local-pack group claim now, but only make the LIVE path wait on
   // it: baked entries place immediately, and on the first paint after a pack
@@ -59,6 +65,7 @@ export async function paintAvatars(
   const place = (i: number, el: HTMLElement): void => {
     if (signal?.aborted) return
     el.classList.add(cls)
+    decorate?.(el, entries[i].idx)
     // Insert before the nearest already-placed later doll to preserve list order.
     let before: HTMLElement | null = null
     for (let j = i + 1; j < entries.length; j++) {

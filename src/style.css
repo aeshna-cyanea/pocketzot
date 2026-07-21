@@ -303,6 +303,31 @@ html, body {
   gap: 1rem 0.5rem;
   padding-top: 1rem;
 }
+/* Each doll is a tap target (→ its character card, crypt-view.ts). */
+.crypt-doll {
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.crypt-doll:active { transform: scale(0.92); }
+/* Tap-a-doll card modal: the char-card itself is the dialog, centered over
+   the crypt (same dim tier as .doc-backdrop, above .crypt-view's z 60). */
+.crypt-card-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 220;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--safe-frame-pad);
+  background: rgba(0, 0, 0, 0.6);
+}
+.crypt-card-backdrop .char-card {
+  width: 100%;
+  max-width: 26rem;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+  outline: none; /* programmatic focus (dismissal focus-parking), no ring */
+}
 
 /* Two top-level mode groups (Play online / On this device — login.ts). The
    group label's trailing hairline makes the mode split structural without

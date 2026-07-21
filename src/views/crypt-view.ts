@@ -1,5 +1,6 @@
-import { listAllAvatars } from '../avatars'
+import { listAllAvatars, type Avatar } from '../avatars'
 import { paintAvatars } from './avatar-tiles'
+import { avatarToCard, cardHeadline, renderCharCard } from './char-card'
 import { pickCryptLine } from './crypt-flavor'
 import { mountOverlay } from './overlay'
 import { attachScrollCue } from '../util/scroll-cue'
@@ -24,7 +25,51 @@ export function openCrypt(): void {
   view.querySelector<HTMLElement>('.crypt-flavor')!.textContent = pickCryptLine()
   // Scale 2.5 (80px): bigger than the login strip's 64px teaser, but small enough
   // that four fit per row on a phone (the .crypt-grid wraps at 4-ish, centered).
-  void paintAvatars(view.querySelector<HTMLElement>('.crypt-grid')!, listAllAvatars(), 2.5, 'crypt-doll')
+  // Each doll is a tap target: dolls are otherwise unlabeled, so the card modal
+  // (openAvatarCard) is what answers "who was this?".
+  const avatars = listAllAvatars()
+  void paintAvatars(view.querySelector<HTMLElement>('.crypt-grid')!, avatars, 2.5, 'crypt-doll',
+    undefined, (el, i) => {
+      const a = avatars[i]
+      el.setAttribute('role', 'button')
+      el.tabIndex = 0
+      el.setAttribute('aria-label', cardHeadline(avatarToCard(a)))
+      el.addEventListener('click', () => openAvatarCard(a))
+      el.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          openAvatarCard(a)
+        }
+      })
+    })
+}
+
+// Tap-a-doll drill-down: the character's full card (shared renderer, online
+// adapter) floated as a centered modal over the crypt — a full-screen layer
+// would look empty around the online store's ~5 short lines, so the card
+// itself is the dialog. Backdrop tap and Escape (mountOverlay) dismiss.
+// Entries whose outcome carries a morgue URL keep the card's tap-to-open
+// affordance (↗), opening the server dump in a new tab — in-app rendering
+// would need a cross-origin fetch the morgue hosts don't CORS-allow.
+export function openAvatarCard(a: Avatar): void {
+  const model = avatarToCard(a)
+  const backdrop = document.createElement('div')
+  backdrop.className = 'crypt-card-backdrop'
+  backdrop.setAttribute('role', 'dialog')
+  backdrop.setAttribute('aria-modal', 'true')
+  backdrop.setAttribute('aria-label', cardHeadline(model))
+  const dump = model.dump
+  const card = renderCharCard(model, dump?.kind === 'url'
+    ? { onOpen: () => window.open(dump.href, '_blank', 'noopener') }
+    : {})
+  backdrop.append(card)
+  const close = mountOverlay(backdrop)
+  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close() })
+  // Move focus off the tapped doll into the dialog (same reasoning as the
+  // shell's back-button focus): an Esc dismiss must not leave a focus ring
+  // on the grid. Non-tappable cards aren't focusable by default.
+  if (card.tabIndex < 0) card.tabIndex = -1
+  card.focus({ preventScroll: true })
 }
 
 // The full-screen shell shared by the crypt, the records browser, and its
