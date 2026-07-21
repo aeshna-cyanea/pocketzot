@@ -49,6 +49,10 @@ export interface UiPushMsg {
   features?: string
   changes?: string
   actions?: string
+  // formatted-scroller: footer text (scroller.cc m_more). Usually empty —
+  // scroller set_more() clears it — but carries real content on e.g. the
+  // fatal-error popup ("Hit any key to exit…") and arena results.
+  more?: string
   feats?: Array<{ title?: string; body?: string; quote?: string; tile?: { t: number; tex: number } }>
   fg_idx?: number  // describe-monster: monster's primary tile id (texture inferred)
   doll?: Array<[number, number]>  // describe-monster: player-doll part [tile_id, ymax] entries

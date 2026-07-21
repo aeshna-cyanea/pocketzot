@@ -1992,6 +1992,16 @@ export function buildGameView(
           attachScrollerListener(bodyEl)
         }
       }
+      // The scroller's `more` footer (scroller.cc m_more; reference renders
+      // it at ui-layouts.js:764). Usually empty — but when set it's real
+      // guidance (fatal-error popup's "Hit any key to exit…", arena results)
+      // that must not be silently dropped.
+      if (msg.more && stripDcss(msg.more).trim()) {
+        const moreEl = document.createElement('div')
+        moreEl.className = 'overlay-footer scroller-more'
+        moreEl.innerHTML = dcssToHtml(msg.more)
+        uiOverlay.appendChild(moreEl)
+      }
       if (msg.actions) {
         uiOverlay.appendChild(buildActionsBar(msg.actions))
       }
@@ -2727,7 +2737,14 @@ export function buildGameView(
   // flip or chunk update.)
   function updateMenuFooter(): void {
     if (!activeMenu) return
-    const footerEl = uiOverlay.querySelector<HTMLElement>('.overlay-footer')
+    // .menu-footer, not .overlay-footer: a ui-push stacked over the menu
+    // (describe-item from the inventory) keeps activeMenu set while its
+    // actions bar — [d - drop] etc., styled via the same .overlay-footer
+    // class — is the only footer in the DOM, and the list-detach
+    // ResizeObserver notification lands right after that overlay renders.
+    // Matching the bare class here overwrote the actions bar with the
+    // menu's keyhelp (or display:none'd it).
+    const footerEl = uiOverlay.querySelector<HTMLElement>('.menu-footer')
     if (!footerEl) return
     const listEl = menuListEl()
     const scrollable = !!listEl && listEl.scrollHeight > listEl.clientHeight
@@ -2796,8 +2813,11 @@ export function buildGameView(
       // Created empty; updateMenuFooter fills it at the end of showMenu, once
       // the list is in the DOM and its scroll position restored (both feed
       // the derivation: overflow picks the more variant, scrollTop the XXX).
+      // menu-footer distinguishes this element from ui-push actions bars,
+      // which share .overlay-footer for styling — the menu-footer queries
+      // (updateMenuFooter, renderMenuItems) must never match those.
       const footerEl = document.createElement('div')
-      footerEl.className = 'overlay-footer'
+      footerEl.className = 'overlay-footer menu-footer'
       overlayContent.appendChild(footerEl)
     }, { float: floatPrompt })
     uiOverlay.classList.toggle('prompt-menu', promptFamily)
@@ -2857,7 +2877,7 @@ export function buildGameView(
     }, { passive: true })
     menuListResize?.disconnect()
     menuListResize?.observe(listEl)
-    const footer = uiOverlay.querySelector('.overlay-footer')
+    const footer = uiOverlay.querySelector('.menu-footer')
     overlayContent.insertBefore(listEl, footer)
     syncMenuShiftLabels()
   }
