@@ -311,17 +311,8 @@ html, body {
 }
 .crypt-doll:active { transform: scale(0.92); }
 /* Tap-a-doll card modal: the char-card itself is the dialog, centered over
-   the crypt (same dim tier as .doc-backdrop, above .crypt-view's z 60). */
-.crypt-card-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 220;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--safe-frame-pad);
-  background: rgba(0, 0, 0, 0.6);
-}
+   the crypt. The backdrop IS a .doc-backdrop (mountBackdrop, overlay.ts) —
+   only the card sizing is crypt-specific. */
 .crypt-card-backdrop .char-card {
   width: 100%;
   max-width: 26rem;

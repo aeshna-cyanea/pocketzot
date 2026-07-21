@@ -28,7 +28,7 @@ import { renderTiles, appendIconOverlays, dollTileSpec, monsterTileSpec, prepend
 import { cachedFingerprint, primeFingerprint } from '../game/tiles/atlas-dedup'
 import { ensureDollBaked, isBakeableLoader } from '../game/tiles/avatar-bake'
 import { recordAvatarOutcome, saveAvatar, type AvatarMeta } from '../avatars'
-import { welcomeBackground } from '../game/char-label'
+import { looksLikeWelcome, welcomeBackground } from '../game/char-label'
 import { getPref, setPref, MONSTER_LIST_MODE_CHANGED_EVENT, RENDER_MODE_CHANGED_EVENT } from '../prefs'
 import {
   renderBodyLines, propagateDarkgreyColor, unwrapHangingIndents, joinIndentedRuns,
@@ -208,16 +208,19 @@ export function buildGameView(
   // The game-start "Welcome[ back], <name> the <Species> <Job>." line — the
   // wire's only statement of the background (no player-message job field).
   // Held raw until name AND species are known (msgs-vs-player order varies),
-  // then parsed once into charMeta.background and dropped.
+  // then parsed ONCE: name and species never change after that point, so a
+  // failed parse can never succeed later. The settled latch ends both the
+  // per-line welcome scan and the per-player-message resolve work — without
+  // it a failed parse would recompile the regex every frame forever.
   let welcomeLine: string | null = null
+  let welcomeSettled = false
   function tryResolveBackground(): void {
-    if (charMeta.background !== undefined || welcomeLine == null) return
+    if (welcomeSettled || welcomeLine == null) return
     if (!charName || !charMeta.species) return
     const bg = welcomeBackground(welcomeLine, charName, charMeta.species)
-    if (bg !== undefined) {
-      charMeta.background = bg
-      welcomeLine = null
-    }
+    if (bg !== undefined) charMeta.background = bg
+    welcomeSettled = true
+    welcomeLine = null
   }
   const inventoryStore = new InventoryStore()
   const statsView = new StatsView(inventoryStore)
@@ -1696,10 +1699,7 @@ export function buildGameView(
           if (harvester.onMsgLine(m.text)) continue
           // Hold the game-start welcome line for the background parse (see
           // welcomeLine decl); resolves now if name+species already arrived.
-          // The comma excludes "Welcome back to level N!" (XP regain) and
-          // "Welcome back to <branch>!" (stairs).
-          if (charMeta.background === undefined
-            && (m.text.includes('Welcome, ') || m.text.includes('Welcome back, '))) {
+          if (!welcomeSettled && looksLikeWelcome(m.text)) {
             welcomeLine = m.text
             tryResolveBackground()
           }

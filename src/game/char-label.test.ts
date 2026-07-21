@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { welcomeBackground } from './char-label'
+import { looksLikeWelcome, welcomeBackground } from './char-label'
+
+describe('looksLikeWelcome', () => {
+  it('gates the same forms the parser accepts, not other Welcome lines', () => {
+    expect(looksLikeWelcome('Welcome, x the Troll Berserker.')).toBe(true)
+    expect(looksLikeWelcome('<yellow>Welcome back, x the Troll Berserker.</yellow>')).toBe(true)
+    expect(looksLikeWelcome('Welcome back to level 3!')).toBe(false)
+    expect(looksLikeWelcome('Welcome back to the Dungeon!')).toBe(false)
+  })
+})
 
 // The game-start welcome line (trunk main.cc:441):
 // "<yellow>Welcome[ back], <name> the <Species> <Job>.</yellow>" — the wire's

@@ -22,6 +22,14 @@ export function compactPlace(place: string, depth?: number): string {
 
 const reEscape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
+// Cheap per-line gate for holding welcome-line candidates, kept next to the
+// parser so the wire format lives in one module. Matches both forms
+// welcomeBackground accepts; the comma excludes "Welcome back to level N!"
+// (XP regain) and "Welcome back to <branch>!" (stairs).
+export function looksLikeWelcome(line: string): boolean {
+  return line.includes('Welcome, ') || line.includes('Welcome back, ')
+}
+
 // Extract the background ("Berserker") from the game-start welcome line —
 // the ONE place the wire states it: the player message carries no job field
 // (trunk tileweb.cc _send_player), while main.cc:441 prints

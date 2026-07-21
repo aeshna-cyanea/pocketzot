@@ -1,8 +1,9 @@
 import { listAllAvatars, type Avatar } from '../avatars'
+import { nameTitle } from '../game/char-label'
 import { paintAvatars } from './avatar-tiles'
 import { avatarToCard, cardHeadline, renderCharCard } from './char-card'
 import { pickCryptLine } from './crypt-flavor'
-import { mountOverlay } from './overlay'
+import { mountBackdrop, mountOverlay } from './overlay'
 import { attachScrollCue } from '../util/scroll-cue'
 
 // Full-screen "crypt": the complete retained character history (../avatars),
@@ -33,7 +34,9 @@ export function openCrypt(): void {
       const a = avatars[i]
       el.setAttribute('role', 'button')
       el.tabIndex = 0
-      el.setAttribute('aria-label', cardHeadline(avatarToCard(a)))
+      // The headline cardHeadline(avatarToCard(a)) reduces to, without
+      // building a throwaway card model per doll.
+      el.setAttribute('aria-label', nameTitle(a.charName || a.username, a.title))
       el.addEventListener('click', () => openAvatarCard(a))
       el.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' || e.key === ' ') {
@@ -53,8 +56,7 @@ export function openCrypt(): void {
 // would need a cross-origin fetch the morgue hosts don't CORS-allow.
 export function openAvatarCard(a: Avatar): void {
   const model = avatarToCard(a)
-  const backdrop = document.createElement('div')
-  backdrop.className = 'crypt-card-backdrop'
+  const { backdrop } = mountBackdrop('crypt-card-backdrop')
   backdrop.setAttribute('role', 'dialog')
   backdrop.setAttribute('aria-modal', 'true')
   backdrop.setAttribute('aria-label', cardHeadline(model))
@@ -63,8 +65,6 @@ export function openAvatarCard(a: Avatar): void {
     ? { onOpen: () => window.open(dump.href, '_blank', 'noopener') }
     : {})
   backdrop.append(card)
-  const close = mountOverlay(backdrop)
-  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close() })
   // Move focus off the tapped doll into the dialog (same reasoning as the
   // shell's back-button focus): an Esc dismiss must not leave a focus ring
   // on the grid. Non-tappable cards aren't focusable by default.

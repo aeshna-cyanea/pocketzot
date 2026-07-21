@@ -126,8 +126,8 @@ export function renderCharCard(
     if (model.endedAt != null) {
       const ago = agoLabel(model.endedAt)
       const date = DATE_FMT.format(model.endedAt)
-      const head = ago || date
-      meta.push(model.dateQualifier ? `${model.dateQualifier} ${head}` : head)
+      const when = ago || date
+      meta.push(model.dateQualifier ? `${model.dateQualifier} ${when}` : when)
       if (ago) meta.push(date)
     }
     if (model.origin) meta.push(model.origin)
@@ -191,13 +191,11 @@ function sepSpan(): HTMLElement {
 }
 
 function joinedLine(parent: HTMLElement, cls: string, parts: readonly string[]): HTMLElement {
-  const el = document.createElement('div')
-  el.className = cls
+  const el = line(parent, cls, '')
   parts.forEach((p, i) => {
     if (i > 0) el.append(sepSpan(), '\u200b')
     el.append(p)
   })
-  parent.append(el)
   return el
 }
 
@@ -353,8 +351,7 @@ const REASON_VERB: Record<string, string> = {
 // Server origin as the official acronym ("CAO") — the full hostname is too
 // wide for the meta line. tagFor falls back to the hostname for servers not
 // in KNOWN_SERVERS (custom entries have no official tag).
-function originLabel(wsUrl: string): string {
-  if (wsUrl.startsWith('local://')) return 'On this device'
+function serverTag(wsUrl: string): string {
   try {
     return tagFor(wsUrl)
   } catch {
@@ -364,6 +361,10 @@ function originLabel(wsUrl: string): string {
 
 export function avatarToCard(a: Avatar): CharCardModel {
   const o = a.outcome
+  // One offline signal: the local:// scheme also implies the 'offline'
+  // sentinel gameId (both minted together in app.ts), so origin and the
+  // version suppression key off the same test rather than two magic strings.
+  const local = a.wsUrl.startsWith('local://')
   return {
     charName: a.charName || a.username,
     charTitle: a.title,
@@ -384,8 +385,8 @@ export function avatarToCard(a: Avatar): CharCardModel {
     // The offline sentinel gameId is pure noise next to origin "On this
     // device"; real ids ("dcss-0.34") are the closest thing to a version
     // the store carries.
-    version: a.gameId === 'offline' ? undefined : a.gameId,
-    origin: originLabel(a.wsUrl),
+    version: local ? undefined : a.gameId,
+    origin: local ? 'On this device' : serverTag(a.wsUrl),
     dump: o?.dump ? { kind: 'url', href: `${o.dump}.txt` } : undefined,
     doll: a,
   }
