@@ -16,30 +16,48 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="theme-color" content="#1c1917" />
-    <title>PocketZot · DCSS WebTiles in your pocket · Mobile Dungeon Crawl Stone Soup client</title>
+    <title>PocketZot — Play Dungeon Crawl Stone Soup (DCSS) on iOS &amp; Android</title>
     <meta
       name="description"
-      content="PocketZot is an unofficial, mobile-first WebTiles client for Dungeon Crawl Stone Soup (DCSS). Play DCSS on your phone in portrait mode with an ASCII-first interface, carefully designed touch controls, and PWA install."
+      content="Play DCSS (Dungeon Crawl Stone Soup) on your phone. PocketZot is an unofficial mobile WebTiles client for iOS and Android — no App Store app needed, it installs from the browser as a PWA on your iPhone or Android device, with touch controls and an ASCII-first interface built for portrait mode."
     />
     <!-- Canonical / social URLs point at the project's official deployment.
          Forks deployed elsewhere should update the domain below. -->
     <link rel="canonical" href="https://pocketzot.app/" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="PocketZot" />
-    <meta property="og:title" content="PocketZot — DCSS WebTiles in your pocket" />
+    <meta property="og:title" content="PocketZot — play Dungeon Crawl Stone Soup on your phone" />
     <meta
       property="og:description"
-      content="An unofficial, mobile-first DCSS WebTiles client. ASCII-first, touch controls, installs as a PWA."
+      content="Unofficial mobile DCSS WebTiles client for iOS &amp; Android. ASCII-first, touch controls, installs as a PWA."
     />
     <meta property="og:url" content="https://pocketzot.app/" />
-    <meta property="og:image" content="https://pocketzot.app/icon-512.png" />
-    <meta name="twitter:card" content="summary" />
-    <meta name="twitter:title" content="PocketZot — DCSS WebTiles in your pocket" />
+    <meta property="og:image" content="https://pocketzot.app/social-card.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="The PocketZot icon: an ASCII dungeon scene with an @ beside a pool" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="PocketZot — play Dungeon Crawl Stone Soup on your phone" />
     <meta
       name="twitter:description"
-      content="An unofficial, mobile-first DCSS WebTiles client. ASCII-first, touch controls, installs as a PWA."
+      content="Unofficial mobile DCSS WebTiles client for iOS &amp; Android. ASCII-first, touch controls, installs as a PWA."
     />
-    <meta name="twitter:image" content="https://pocketzot.app/icon-512.png" />
+    <meta name="twitter:image" content="https://pocketzot.app/social-card.png" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "PocketZot",
+        "url": "https://pocketzot.app/",
+        "description": "Unofficial mobile WebTiles client for Dungeon Crawl Stone Soup (DCSS). Play DCSS on iPhone or Android in the browser; installs as a PWA.",
+        "applicationCategory": "GameApplication",
+        "operatingSystem": "iOS, Android, any modern browser",
+        "browserRequirements": "Requires JavaScript and WebSocket support",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "screenshot": "https://pocketzot.app/shot-spriggan.png",
+        "sameAs": ["https://github.com/pocketzot/pocketzot"]
+      }
+    </script>
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" type="image/png" href="/icon-192.png" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
@@ -48,15 +66,18 @@
     <div id="app"></div>
     <noscript>
       <main style="max-width:680px;margin:0 auto;padding:3rem 1.5rem;font-family:system-ui,-apple-system,sans-serif;color:#e7e2da;background:#0a0908;line-height:1.6">
-        <h1>PocketZot — Dungeon Crawl Stone Soup on your phone</h1>
+        <h1>PocketZot — Dungeon Crawl Stone Soup in your pocket, on iOS and Android</h1>
         <p>
           PocketZot is an unofficial, mobile-first WebTiles client for
           <a href="https://crawl.develz.org" style="color:#d08a3e">Dungeon Crawl Stone Soup (DCSS)</a>.
           It connects to standard DCSS WebTiles servers with an ASCII-first,
-          touch-friendly interface and installs as a Progressive Web App.
+          touch-friendly interface. There is no DCSS app on the iOS App
+          Store. PocketZot lets you play DCSS on an iPhone or Android
+          phone: it runs in the browser (Safari on iOS, Chrome on Android)
+          and installs to your home screen as a Progressive Web App.
           JavaScript is required to play.
         </p>
-        <p><a href="/about.html" style="color:#d08a3e">Read more about PocketZot →</a></p>
+        <p><a href="/about" style="color:#d08a3e">Read more about PocketZot →</a></p>
       </main>
     </noscript>
     <script type="module" src="/src/main.ts"></script>
