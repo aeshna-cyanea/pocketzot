@@ -4099,6 +4099,13 @@ html, body {
   margin-bottom: 0.15rem;
 }
 .set-slider-dot.active .set-slider-num { color: var(--accent); }
+/* Specimen end labels (font-size set inline by sliderPref from the stop
+   tables): the log's mono font so the font slider's "Aa" is the real
+   article; line-height pinned so the large end doesn't stretch the row. */
+.set-slider-spec {
+  font-family: var(--font-mono);
+  line-height: 1;
+}
 
 /* D-pad size preview: the whole 3×3 pad at true size, centered above the
    slider — one button alone can't convey the pad's overall footprint. The
@@ -4180,19 +4187,34 @@ html, body {
   z-index: 200;
   width: min(92%, 24rem);
   padding: 0.3rem 0.75rem 0.7rem;
-  border: 1px solid var(--border);
+  border: 1px solid rgba(245, 158, 11, 0.3);
   border-radius: 0.6rem;
-  background: color-mix(in srgb, var(--bg) 89%, transparent);
+  background: color-mix(in srgb, var(--bg) 96%, transparent);
   text-shadow: var(--msglog-text-shadow);
 }
 .size-palette .set-slider { margin-top: 0; }
-.size-palette .set-slider-cap { margin: 0.35rem 0 0; }
+/* Contrast raises, palette-scoped: the settings card's dim captions and
+   12%-alpha track read fine on its calm dark page, but over a live glyph
+   field they sink into the noise — brighten text, track, and dot rings
+   here without touching the card. The mark also drops its stock bottom
+   margin (a tall tap column on the card) to pull each label row up under
+   its track — the floating palette trades tap height for compactness. */
+.size-palette .set-slider-cap { margin: 0.35rem 0 0; color: var(--text); }
+.size-palette .set-slider::before { background: rgba(245, 158, 11, 0.35); }
+.size-palette .set-slider-mark {
+  border-color: rgba(245, 158, 11, 0.4);
+  margin-bottom: 2px;
+}
+.size-palette .set-slider-num { color: var(--text); }
 /* ✕ lives in a header row beside the first caption (not corner-floated,
-   which would overlap the top slider's rightmost dot). */
+   which would overlap the top slider's rightmost dot). Bottom-aligned, not
+   centered: the ✕ button is taller than the caption, and centering would
+   float the caption up off its slider — flex-end keeps its text-to-track
+   gap identical to the other captions', with the row's slack above it. */
 .size-palette-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-end;
 }
 .size-palette-header .set-slider-cap { margin: 0; }
 /* Look (transparent, dim, press feedback) comes from .doc-close — this rule

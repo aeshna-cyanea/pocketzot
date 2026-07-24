@@ -476,6 +476,14 @@ describe('size sliders', () => {
     expect(nums.map(n => n.textContent)).toEqual(['Tiny', 'Chunky'])
   })
 
+  it('renders the font slider ends as "Aa" specimens at the true stop sizes', () => {
+    openSettings()
+    const ends = [...segGroup('Message log text size').querySelectorAll('.set-slider-num')]
+    expect(ends.map(n => n.textContent)).toEqual(['Aa', 'Aa'])
+    expect(ends.map(n => (n as HTMLElement).style.fontSize)).toEqual(['0.65rem', '0.85rem'])
+    for (const n of ends) expect(n.classList.contains('set-slider-spec')).toBe(true)
+  })
+
   it('tapping a dot stores the pref and moves the marks', () => {
     openSettings()
     const dpad = segGroup('D-pad size')
