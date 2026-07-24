@@ -2,7 +2,8 @@
 // screen's offline card and the offline lobby can label save slots ("Bram the
 // Chopper — D:3") without booting the engine or opening its IndexedDB. One
 // record per save slot, keyed by the slot's save-file stem (see slotStem);
-// boot.ts folds inbound messages in as they flow (player deltas, game_ended).
+// boot.ts folds inbound messages in (player deltas, milestones, game_ended)
+// and offlineTracker commits the fold when the engine reports a checkpoint.
 // A record existing means "we believe this slot has a resumable save" — the
 // IDBFS probe (save-transfer.ts listOfflineSaves) is ground truth where the
 // browser allows it, and reconcileOfflineChars trues the records up against
@@ -26,8 +27,8 @@ export interface OfflineChar {
   god?: string
   turn?: number
   // From the engine's starred milestone messages (xlog snapshots — see
-  // offlineMilestoneTracker): the 4-letter species/background combo (fixed
-  // for the character's life) and the latest milestone text.
+  // OfflineSlotTracker.milestone): the 4-letter species/background combo
+  // (fixed for the character's life) and the latest milestone text.
   char?: string
   milestone?: string
   when: number
@@ -58,11 +59,11 @@ export function validateOfflineName(name: string): string | null {
 
 // --- Records -------------------------------------------------------------------
 
-// Parsed-map cache, keyed on the raw stored string: getOfflineChars runs on
-// every player delta (offlineTracker), so re-parsing the whole map per turn
-// would put the very allocation TURN_WRITE_EVERY batches away right back on
-// the hot path. Comparing the raw string keeps the cache coherent against
-// writes from anywhere (other tabs, tests) without an event hook.
+// Parsed-map cache, keyed on the raw stored string: the display surfaces
+// re-read this map far more often than anything writes it, so parsing it once
+// per distinct stored value covers every repeat read for free. Comparing the
+// raw string keeps the cache coherent against writes from anywhere (other
+// tabs, tests) without an event hook.
 let cachedRaw: string | null = null
 let cached: Record<string, OfflineChar> = {}
 
@@ -154,97 +155,99 @@ export async function loadOfflineSlots(): Promise<{ stems: string[]; chars: Reco
 // a missing slot just starts a new game under that name.
 const SAVE_GONE = new Set(['dead', 'quit', 'won', 'bailed out', 'cancel'])
 
-// How far the recorded turn count may lag the live one. `turn` advances on
-// every player delta; writing localStorage per turn would put a sync write on
-// the hot per-turn path for a display-only field, so turn-only changes are
-// batched — flushed when any other field changes, every TURN_WRITE_EVERY
-// turns, and exactly on game_ended.
-const TURN_WRITE_EVERY = 64
-
-// Fold one game's inbound messages into its slot record. Bound to the boot
-// name because game_ended carries no identity — and pre-game messages don't
-// either. Player messages are per-turn deltas: merge only the fields present,
-// and skip the write unless something actually changed (place/xl/title change
-// rarely; name never; turn always — see TURN_WRITE_EVERY).
-export function offlineTracker(name: string): (msg: ServerMsg) => void {
-  const stem = slotStem(name)
-  // Latest turn seen but not yet worth its own write.
-  let pendingTurn: number | undefined
-  return (msg: ServerMsg): void => {
-    if (msg.msg === 'player') {
-      const map = getOfflineChars()
-      const cur = map[stem]
-      const next: OfflineChar = { ...(cur ?? { name, when: 0 }) }
-      if (msg.name) next.name = msg.name
-      if (msg.title) next.title = msg.title
-      if (msg.place) next.place = msg.place
-      if (msg.depth !== undefined) next.depth = msg.depth
-      if (msg.xl !== undefined) next.xl = msg.xl
-      // god: "" is meaningful (godless — e.g. after abandoning), not absent.
-      if (msg.god !== undefined) {
-        if (msg.god) next.god = msg.god
-        else delete next.god
-      }
-      if (msg.turn !== undefined) next.turn = msg.turn
-      // A batched turn can be newer than both cur.turn and an absent
-      // msg.turn (deltas omit unchanged fields) — fold it in so a
-      // meta-triggered write can't regress the recorded turn to the last
-      // written one.
-      else if (pendingTurn !== undefined) next.turn = pendingTurn
-      const metaChanged = !cur
-        || cur.name !== next.name || cur.title !== next.title
-        || cur.place !== next.place || cur.depth !== next.depth
-        || cur.xl !== next.xl || cur.god !== next.god
-      if (!metaChanged) {
-        if (next.turn === cur.turn) return
-        // Turn moved but nothing else: batch, unless it drifted far enough
-        // (or backwards — a new game reusing the slot name).
-        if (next.turn !== undefined && cur.turn !== undefined
-          && next.turn > cur.turn && next.turn - cur.turn < TURN_WRITE_EVERY) {
-          pendingTurn = next.turn
-          return
-        }
-      }
-      pendingTurn = undefined
-      next.when = Date.now()
-      map[stem] = next
-      write(map)
-    } else if (msg.msg === 'game_ended') {
-      const map = getOfflineChars()
-      if (SAVE_GONE.has(msg.reason)) {
-        if (stem in map) { delete map[stem]; write(map) }
-      } else if (map[stem]) {
-        map[stem] = {
-          ...map[stem],
-          ...(pendingTurn !== undefined && { turn: pendingTurn }),
-          when: Date.now(),
-        }
-        write(map)
-      }
-      pendingTurn = undefined
-    }
-  }
+// One slot's live fold. Everything lands in memory first and reaches
+// localStorage only at checkpoint(), i.e. when the engine reports its save
+// file has caught up — see the tracker below for why.
+export interface OfflineSlotTracker {
+  // Fold one inbound message: player deltas and game_ended.
+  note(msg: ServerMsg): void
+  // Fold one starred milestone message (mini-server hands over the parsed
+  // xlog snapshot; every field is a string, empty ones omitted). Only two
+  // fields are taken: the milestone text and the species/background combo
+  // ("DjCj") — the snapshot's xl/place/god/turn go stale between milestones,
+  // so those keep coming from the per-turn player deltas instead.
+  milestone(fields: Record<string, unknown>): void
+  // The engine persisted (starred `checkpoint`): commit the fold.
+  checkpoint(): void
 }
 
-// Fold one starred milestone message (mini-server hands over the parsed xlog
-// snapshot; every field is a string, empty ones omitted). Only two fields are
-// taken: the milestone text and the species/background combo ("DjCj") — the
-// snapshot's xl/place/god/turn go stale between milestones, so those keep
-// coming from the per-turn player deltas instead.
-export function offlineMilestoneTracker(name: string): (fields: Record<string, unknown>) => void {
+// Fold one game's state into its slot record. Bound to the boot name because
+// game_ended carries no identity — and pre-game messages don't either.
+//
+// Writes wait for a checkpoint because this record *labels a save*, and the
+// two live in different places: localStorage survives a tab the OS discards,
+// while everything the engine has not committed dies with it. Folding
+// straight through would let a slot advertise "killed Sigmund." while the
+// save file it points at still has him alive and waiting on D:3. Holding the
+// fold in memory until the engine says the file caught up makes the label
+// describe what a resume actually produces — and as a side effect keeps
+// per-turn deltas off localStorage entirely, which is what the old write
+// batching was for.
+export function offlineTracker(name: string): OfflineSlotTracker {
   const stem = slotStem(name)
-  return (fields: Record<string, unknown>): void => {
-    const milestone = typeof fields['milestone'] === 'string' ? fields['milestone'] : undefined
-    const combo = typeof fields['char'] === 'string' ? fields['char'] : undefined
-    if (milestone === undefined && combo === undefined) return
+  // Folded since the last checkpoint; null when there's nothing to write.
+  let pending: OfflineChar | null = null
+  // A slot with no record yet needs one before its first checkpoint: the
+  // lobby falls back to record keys where the IDBFS probe is unavailable
+  // (loadOfflineSlots), so an unrecorded slot can go missing from the list
+  // entirely. The engine checkpoints at game start (main.cc's "Initialise
+  // save game so we can recover from crashes on D:1"), so by the time any
+  // player delta arrives the save exists and a bare record is already true
+  // of it.
+  let recorded = stem in getOfflineChars()
+
+  const flush = (): void => {
+    if (!pending) return
     const map = getOfflineChars()
-    const cur = map[stem]
-    const next: OfflineChar = { ...(cur ?? { name, when: 0 }) }
-    if (milestone !== undefined) next.milestone = milestone
-    if (combo !== undefined) next.char = combo
-    if (cur && cur.milestone === next.milestone && cur.char === next.char) return
-    next.when = Date.now()
-    map[stem] = next
+    map[stem] = { ...pending, when: Date.now() }
     write(map)
+    pending = null
+    recorded = true
+  }
+
+  return {
+    note(msg: ServerMsg): void {
+      if (msg.msg === 'player') {
+        const next: OfflineChar = { ...(pending ?? getOfflineChars()[stem] ?? { name, when: 0 }) }
+        if (msg.name) next.name = msg.name
+        if (msg.title) next.title = msg.title
+        if (msg.place) next.place = msg.place
+        if (msg.depth !== undefined) next.depth = msg.depth
+        if (msg.xl !== undefined) next.xl = msg.xl
+        // god: "" is meaningful (godless — e.g. after abandoning), not absent.
+        if (msg.god !== undefined) {
+          if (msg.god) next.god = msg.god
+          else delete next.god
+        }
+        if (msg.turn !== undefined) next.turn = msg.turn
+        pending = next
+        if (!recorded) flush()
+      } else if (msg.msg === 'game_ended') {
+        if (SAVE_GONE.has(msg.reason)) {
+          const map = getOfflineChars()
+          if (stem in map) { delete map[stem]; write(map) }
+        }
+        // Nothing else to do for an ending that leaves a save. A clean exit
+        // commits on the way out, so its checkpoint has already flushed the
+        // fold; a crash never commits, so anything still folded here describes
+        // turns the save file does not have. Either way the record belongs at
+        // the last checkpoint — only one of those writes a label.
+        pending = null
+      }
+    },
+
+    milestone(fields: Record<string, unknown>): void {
+      const milestone = typeof fields['milestone'] === 'string' ? fields['milestone'] : undefined
+      const combo = typeof fields['char'] === 'string' ? fields['char'] : undefined
+      if (milestone === undefined && combo === undefined) return
+      const next: OfflineChar = { ...(pending ?? getOfflineChars()[stem] ?? { name, when: 0 }) }
+      if (milestone !== undefined) next.milestone = milestone
+      if (combo !== undefined) next.char = combo
+      pending = next
+    },
+
+    checkpoint(): void {
+      flush()
+    },
   }
 }

@@ -6,8 +6,8 @@
 // Routing ports webtiles/process_handler.py's handle_input exactly:
 // `input` text goes to the pty in ONE write; every other in-game message is
 // forwarded verbatim to the binary's control socket. Engine output lines
-// prefixed `*` (client_path, flush_messages, dump, exit_reason, milestone)
-// are for the server and never reach clients; the rest relay raw.
+// prefixed `*` (client_path, flush_messages, dump, exit_reason, milestone,
+// checkpoint) are for the server and never reach clients; the rest relay raw.
 
 import type { ClientMsg, ServerMsg } from '../ws/types'
 import type { EnginePort } from './engine-port'
@@ -25,7 +25,26 @@ export interface MiniServer {
   // Call only after the game view owns deliver (it replaces onMessage on mount).
   start(): void
   handleClientMsg(msg: ClientMsg): void
+  // Ask the engine to write a checkpoint save. The engine performs it at the
+  // next moment the player has control, so this is fire-and-forget: the
+  // starred `checkpoint` it eventually emits is the acknowledgement.
+  requestCheckpoint(): void
   dispose(): void
+}
+
+// Server-side hooks for starred engine lines, which are metadata rather than
+// client protocol and so never reach deliver.
+export interface MiniServerHooks {
+  // A milestone's parsed xlog snapshot (all strings, empty fields omitted —
+  // xlog_json, hiscores.cc). Upstream folds these into lobby entries.
+  milestone?(fields: Record<string, unknown>): void
+  // The engine's save package committed AND that commit reached IndexedDB
+  // (package::commit → pocketzot_checkpoint). Everything sent before this
+  // line is now on disk and will survive a resume. The engine emits it from
+  // that one place and only on a successful flush, so it needs no filtering
+  // here — notably end()'s exit-path flush is deliberately silent, since the
+  // package still holds its last commit.
+  checkpoint?(): void
 }
 
 // Boot watchdog: the engine can go quiet mid-startup on a resumed save —
@@ -45,11 +64,7 @@ const GAME_CONTENT_TYPES = new Set(['map', 'msgs', 'ui-push', 'menu', 'player'])
 export function createMiniServer(
   port: EnginePort,
   deliver: (msg: ServerMsg) => void,
-  // Starred milestone messages are server metadata (upstream folds them into
-  // lobby entries), not client protocol — handed to this hook instead of
-  // deliver. Fields are the engine's xlog snapshot: all strings, empty ones
-  // omitted (xlog_json, hiscores.cc).
-  onMilestone?: (fields: Record<string, unknown>) => void,
+  hooks: MiniServerHooks = {},
 ): MiniServer {
   let exitReason: string | null = null
   let exitMessage: string | undefined
@@ -114,7 +129,10 @@ export function createMiniServer(
         break
       }
       case 'milestone':
-        onMilestone?.(msg)
+        hooks.milestone?.(msg)
+        break
+      case 'checkpoint':
+        hooks.checkpoint?.()
         break
       case 'client_path':   // engine version handshake — nothing to route offline
       case 'flush_messages': // we don't queue, so every message is already flushed
@@ -210,6 +228,11 @@ export function createMiniServer(
       } else {
         console.warn('offline: unroutable client message absorbed:', msg.msg)
       }
+    },
+
+    requestCheckpoint(): void {
+      if (ended) return
+      port.sendControl(JSON.stringify({ msg: 'checkpoint' }))
     },
 
     dispose(): void {

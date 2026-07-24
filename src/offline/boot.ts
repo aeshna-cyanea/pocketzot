@@ -11,7 +11,7 @@ import { FakeEnginePort } from './fake-engine'
 import { WorkerEnginePort } from './engine-port'
 import { LocalConnection } from './local-connection'
 import { createMiniServer } from './mini-server'
-import { offlineMilestoneTracker, offlineTracker } from './offline-state'
+import { offlineTracker } from './offline-state'
 import {
   buildExportPackFile, downloadPackFile, fetchEngineBuild,
   readOfflineFiles, unpackSave, writeOfflineFiles,
@@ -49,13 +49,17 @@ export function bootOffline(params: URLSearchParams, name: string): OfflineBoot 
   // slot identity — game_ended carries none of its own). Fake-fixture replays
   // are excluded — they'd write a phantom "Resume …" label for a character
   // that exists only in a golden test capture.
+  // The tracker's milestone/checkpoint methods ARE the starred-line hooks;
+  // note() is fed from deliver because ordinary messages reach the client.
   const track = real ? offlineTracker(name) : undefined
   const mini = createMiniServer(port, (msg) => {
-    track?.(msg)
+    track?.note(msg)
     conn.deliver(msg)
-  }, real ? offlineMilestoneTracker(name) : undefined)
+  }, track)
   conn.onSend = (msg) => mini.handleClientMsg(msg)
   conn.onShutdown = () => mini.dispose()
+
+  const detachLifecycle = real ? watchForBackgrounding(() => mini.requestCheckpoint()) : undefined
 
   // Console diagnostics for the real engine: __pzEngine.debug() logs the
   // worker-side queue/wake snapshot.
@@ -79,7 +83,54 @@ export function bootOffline(params: URLSearchParams, name: string): OfflineBoot 
   return {
     conn,
     start: () => { engineRunning = true; mini.start() },
-    dispose: () => { engineRunning = false; mini.dispose() },
+    dispose: () => { engineRunning = false; detachLifecycle?.(); mini.dispose() },
+  }
+}
+
+// Ask for a checkpoint whenever the browser hands us the last moment we're
+// sure to get. An offline game is its own server: when the OS discards this
+// tab, the engine dies with it, and everything since its last commit is gone
+// — where a WebTiles server, seeing the socket close, SIGHUPs its crawl
+// process into a full save (ws_handler.py on_close -> process.stop()). These
+// events are the closest thing a browser gives us to that close, and unlike
+// the discard itself they still run code.
+//
+// Upstream has the same arrangement for the same reason on Android, where
+// SDLActivity.onPause calls into save_game (syscalls.cc). Deliberately NOT a
+// save-and-exit like the server's: relaunching the wasm engine costs seconds,
+// so glancing at another app must not end the game.
+//
+// Returns a detach function. Note this covers only what the OS does to us —
+// a player force-quitting to roll back time is savescumming they're entitled
+// to, and upstream declines to prevent it too (12ac2028).
+function watchForBackgrounding(request: () => void): () => void {
+  // pagehide fires in teardown paths visibilitychange misses, but on iOS
+  // backgrounding BOTH fire — and the engine does not coalesce them: each
+  // dequeued request runs _maybe_checkpoint immediately (tileweb.cc), and the
+  // first save clears the latch before the second arrives, so two requests
+  // mean two full save_game(false) calls and two whole-mount syncfs, right as
+  // the OS is suspending us. One per backgrounding episode is enough; the
+  // latch clears once we're genuinely visible again (pageshow too, so a
+  // bfcache restore that skips visibilitychange can't leave us stuck latched
+  // and silently skipping the next real checkpoint).
+  let requested = false
+  const once = (): void => {
+    if (requested) return
+    requested = true
+    request()
+  }
+  const onVisibility = (): void => {
+    if (document.hidden) once()
+    else requested = false
+  }
+  const onShow = (): void => { requested = false }
+  document.addEventListener('visibilitychange', onVisibility)
+  window.addEventListener('pagehide', once)
+  window.addEventListener('pageshow', onShow)
+  return () => {
+    document.removeEventListener('visibilitychange', onVisibility)
+    window.removeEventListener('pagehide', once)
+    window.removeEventListener('pageshow', onShow)
   }
 }
 

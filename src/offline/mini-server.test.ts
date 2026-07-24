@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { createMiniServer } from './mini-server'
+import { createMiniServer, type MiniServerHooks } from './mini-server'
 import type { EnginePort } from './engine-port'
 import type { ClientMsg, ServerMsg } from '../ws/types'
 
@@ -18,10 +18,10 @@ class StubPort implements EnginePort {
   terminate(): void { this.terminated = true }
 }
 
-function harness(onMilestone?: (fields: Record<string, unknown>) => void) {
+function harness(hooks: MiniServerHooks = {}) {
   const port = new StubPort()
   const delivered: ServerMsg[] = []
-  const mini = createMiniServer(port, (m) => delivered.push(m), onMilestone)
+  const mini = createMiniServer(port, (m) => delivered.push(m), hooks)
   // start() then discard the boot handshake (attach) so routing assertions
   // see only what the test itself sends.
   const startClean = () => { mini.start(); port.controls.length = 0 }
@@ -54,9 +54,9 @@ describe('mini-server boot', () => {
 })
 
 describe('mini-server milestone routing', () => {
-  it('hands starred milestones to onMilestone and never to the client', () => {
+  it('hands starred milestones to the hook and never to the client', () => {
     const milestones: Record<string, unknown>[] = []
-    const { port, delivered, mini } = harness((f) => milestones.push(f))
+    const { port, delivered, mini } = harness({ milestone: (f) => milestones.push(f) })
     mini.start()
     delivered.length = 0
     port.onOutput('*{"msg":"milestone","char":"DjCj","milestone":"killed Sigmund.","xl":"5"}\n')
@@ -75,6 +75,47 @@ describe('mini-server milestone routing', () => {
     expect(delivered).toEqual([])
     expect(warn).not.toHaveBeenCalled()
     warn.mockRestore()
+  })
+})
+
+describe('mini-server checkpoints', () => {
+  it('routes the starred acknowledgement to the hook, not the client', () => {
+    let acks = 0
+    const { port, delivered, mini } = harness({ checkpoint: () => { acks++ } })
+    mini.start()
+    delivered.length = 0
+    port.onOutput('*{"msg":"checkpoint"}\n')
+    expect(acks).toBe(1)
+    expect(delivered).toEqual([])
+  })
+
+  // The engine emits this only from package::commit(), and only when the
+  // flush landed — so it needs no filtering here, including after an exit
+  // reason has been declared (a clean save commits on its way out).
+  it('routes the acknowledgement whatever the exit state', () => {
+    for (const reason of ['error', 'crash', 'saved']) {
+      let acks = 0
+      const { port, mini } = harness({ checkpoint: () => { acks++ } })
+      mini.start()
+      port.onOutput(`*{"msg":"exit_reason","type":"${reason}"}\n`)
+      port.onOutput('*{"msg":"checkpoint"}\n')
+      expect(acks, reason).toBe(1)
+    }
+  })
+
+  it('asks the engine to save over the control channel', () => {
+    const { port, mini, startClean } = harness()
+    startClean()
+    mini.requestCheckpoint()
+    expect(port.controls).toEqual([JSON.stringify({ msg: 'checkpoint' })])
+  })
+
+  it('stops asking once the game has ended', () => {
+    const { port, mini, startClean } = harness()
+    startClean()
+    port.onExit(0)
+    mini.requestCheckpoint()
+    expect(port.controls).toEqual([])
   })
 })
 
