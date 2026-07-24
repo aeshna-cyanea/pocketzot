@@ -264,16 +264,18 @@ type SliderPrefKey = 'dpadSize' | 'msglogLines' | 'msglogFont'
 
 // Discrete slider bound to a stop-table pref: a radiogroup of tap-dots on a
 // track — the page's ordered-magnitude counterpart to segPref's state
-// adjectives. Labels render under dots (endpoint words via `ends`, or every
-// value via `numbered`), the stock stop keeps a hollow ring, and the stored
-// value snaps to the nearest stop for display, mirroring ui-scale's clamp.
-// setPref fires the live-apply event; ui-scale rewrites the CSS variables,
-// which is also what updates the specimen/preview elements.
+// adjectives. Labels render under dots (endpoint words via `ends`, every
+// value via `numbered`, or `specimen` text at both ends sized to the end
+// stops themselves — which assumes the stop table is in rem), the stock stop
+// keeps a hollow ring, and the stored value snaps to the nearest stop for
+// display, mirroring ui-scale's clamp. setPref fires the live-apply event;
+// ui-scale rewrites the CSS variables, which is also what updates the
+// specimen/preview elements.
 function sliderPref(
   ariaLabel: string,
   prefKey: SliderPrefKey,
   stops: readonly number[],
-  opts: { ends?: [string, string]; numbered?: boolean } = {},
+  opts: { ends?: [string, string]; specimen?: string; numbered?: boolean } = {},
 ): HTMLElement {
   const slider = el('div', 'set-slider')
   slider.setAttribute('role', 'radiogroup')
@@ -293,11 +295,20 @@ function sliderPref(
     dot.setAttribute('aria-checked', String(value === active))
     dot.setAttribute('aria-label', String(value))
     dot.appendChild(el('span', 'set-slider-mark'))
+    const isEnd = value === stops[0] || value === stops[stops.length - 1]
     const sub = opts.numbered ? String(value)
-      : value === stops[0] ? opts.ends?.[0]
-      : value === stops[stops.length - 1] ? opts.ends?.[1]
+      : isEnd ? opts.specimen ?? opts.ends?.[value === stops[0] ? 0 : 1]
       : undefined
-    if (sub !== undefined) dot.appendChild(el('span', 'set-slider-num', sub))
+    if (sub !== undefined) {
+      const label = el('span', 'set-slider-num', sub)
+      if (opts.specimen !== undefined) {
+        // The end label IS this dot's stop, worn at its own size — derived
+        // in place, so it can't drift from the table.
+        label.classList.add('set-slider-spec')
+        label.style.fontSize = `${value}rem`
+      }
+      dot.appendChild(label)
+    }
     slider.appendChild(dot)
   }
   return slider
@@ -306,12 +317,18 @@ function sliderPref(
 // One spec per slider, shared by the settings sections and the floating
 // palette so stops, labels, and aria-labels (also test selectors) can't
 // diverge between the two surfaces.
+//
+// The font slider's end labels are specimens, not words: "Aa" at the two
+// extreme stops' TRUE sizes, in the log's mono font (.set-slider-spec) —
+// the ends show exactly what they set. The d-pad slider keeps words: its
+// true sizes are label-row-impossible, and scaled-down glyph stand-ins read
+// worse than "Tiny"/"Chunky" (tried and reverted).
 const dpadSlider = () =>
   sliderPref('D-pad size', 'dpadSize', DPAD_STOPS, { ends: ['Tiny', 'Chunky'] })
 const msglogLinesSlider = () =>
   sliderPref('Message log lines', 'msglogLines', MSGLOG_LINE_STOPS, { numbered: true })
 const msglogFontSlider = () =>
-  sliderPref('Message log text size', 'msglogFont', MSGLOG_FONT_STOPS, { ends: ['Small', 'Large'] })
+  sliderPref('Message log text size', 'msglogFont', MSGLOG_FONT_STOPS, { specimen: 'Aa' })
 
 // --- floating size palette ----------------------------------------------------
 
