@@ -7,7 +7,6 @@
 // WASM engine worker, which needs the Phase A artifacts under
 // public/offline/.
 
-import { GAMEDATA_CACHE, fetchVersion, openVersionedCache } from './artifact-store'
 import { FakeEnginePort } from './fake-engine'
 import { WorkerEnginePort } from './engine-port'
 import { LocalConnection } from './local-connection'
@@ -66,16 +65,8 @@ export function bootOffline(params: URLSearchParams, name: string): OfflineBoot 
 
   installSaveHooks()
 
-  // Keep the offline-tiles cache keyed to the engine build we're booting:
-  // openVersionedCache clears it on a build change, so the SW's cache-first
-  // /gamedata/local/ route can never serve tileinfo/atlases from an older
-  // engine against a newer one (they must stay mutually consistent). The
-  // worker does the same for the artifact cache; tiles then refill via the
-  // readiness download (or plain network while online).
-  if (real) {
-    void fetchVersion().then((v) =>
-      openVersionedCache(GAMEDATA_CACHE, v.state === 'ok' ? v : null))
-  }
+  // Cache rolling (both stores, one version answer) happens in the worker:
+  // openOfflineStores in artifact-store.ts.
 
   // Ask the browser to exempt this origin's storage from eviction — the
   // offline save lives in IndexedDB, which is otherwise disposable under

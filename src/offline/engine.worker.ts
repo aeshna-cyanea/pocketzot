@@ -199,19 +199,19 @@ function nudge(): void {
 // about paths or version handling.
 
 import {
-  ARTIFACT_CACHE, fetchArtifact, fetchVersion, gunzipIfNeeded,
-  markEngineSetComplete, newStats, openVersionedCache,
+  fetchArtifact, fetchVersion, gunzipIfNeeded,
+  markEngineSetComplete, newStats, openOfflineStores,
 } from './artifact-store'
 
 const workerLog = (text: string): void => post({ type: 'log', text })
 
 async function openArtifactCache(): Promise<Cache | null> {
   const version = await fetchVersion()
-  return openVersionedCache(
-    ARTIFACT_CACHE,
+  const { engine } = await openOfflineStores(
     version.state === 'ok' ? version : null,
     workerLog,
   )
+  return engine
 }
 
 // Boot diagnostics: where the artifact bytes actually came from. netBytes

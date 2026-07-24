@@ -3,7 +3,7 @@ import { fakeCaches, type FakeCache } from '../test/fake-caches'
 import {
   ARTIFACT_CACHE, GAMEDATA_CACHE, cachedGamedataBuild, downloadOfflineData,
   fetchArtifact, fetchVersion, markEngineSetComplete, newStats,
-  openVersionedCache, probeReadiness,
+  openOfflineStores, openVersionedCache, probeReadiness,
 } from './artifact-store'
 
 // Route-map fetch stub: exact-path lookup, 404 otherwise. A `null` value
@@ -93,6 +93,24 @@ describe('openVersionedCache', () => {
     expect(await (await c.match('/offline/__build'))?.text()).toBe('build-2')
   })
 
+  it('boot rolls the gamedata store together with the engine store', async () => {
+    // Seed both stores under build-1, as after a full readiness download.
+    await openVersionedCache(ARTIFACT_CACHE, { build: 'build-1' })
+    await openVersionedCache(GAMEDATA_CACHE, { build: 'build-1' })
+    const gd = store.caches.get(GAMEDATA_CACHE)
+    if (!gd) throw new Error('gamedata cache missing')
+    await gd.put('/gamedata/local/main.png', new Response('atlas'))
+    // Boot against a new deploy: the engine self-update must not leave the
+    // previous build's tiles behind for the SW to serve (index skew).
+    await openOfflineStores({ build: 'build-2' })
+    expect(await gd.match('/gamedata/local/main.png')).toBeUndefined()
+    expect(await (await gd.match('/gamedata/local/__build'))?.text()).toBe('build-2')
+    // Offline boot (version unknown): both stores untouched.
+    await gd.put('/gamedata/local/main.png', new Response('atlas'))
+    await openOfflineStores(null)
+    expect(await gd.match('/gamedata/local/main.png')).toBeTruthy()
+  })
+
   it('stamps the game-version label, including onto an unchanged build', async () => {
     const c = await artifactCache()
     await openVersionedCache(ARTIFACT_CACHE, { build: 'build-1' })
@@ -166,7 +184,7 @@ describe('probeReadiness', () => {
     await markEngineSetComplete(c as unknown as Cache)
     await c.put('/offline/__build', new Response('abc123'))
     stubFetch(VERSION_OK)
-    expect(await probeReadiness()).toEqual({ state: 'ready', tiles: false, update: false })
+    expect(await probeReadiness()).toEqual({ state: 'ready', tiles: false, update: false, deploy: 'ok' })
   })
 
   it('is ready offline once marked, and flags a newer deploy as update', async () => {
@@ -174,10 +192,10 @@ describe('probeReadiness', () => {
     await markEngineSetComplete(c as unknown as Cache)
     await c.put('/offline/__build', new Response('abc123'))
     stubFetch({ '/offline/version.json': null })
-    expect(await probeReadiness()).toEqual({ state: 'ready', tiles: false, update: false })
+    expect(await probeReadiness()).toEqual({ state: 'ready', tiles: false, update: false, deploy: 'unreachable' })
 
     stubFetch({ '/offline/version.json': { body: '{"build":"NEWER"}', type: 'application/json' } })
-    expect(await probeReadiness()).toEqual({ state: 'ready', tiles: false, update: true })
+    expect(await probeReadiness()).toEqual({ state: 'ready', tiles: false, update: true, deploy: 'ok' })
   })
 
   it('labels the downloadable and cached sets with their game versions', async () => {
@@ -191,12 +209,12 @@ describe('probeReadiness', () => {
     await c.put('/offline/__version', new Response('0.34.1'))
     stubFetch({ '/offline/version.json': null })
     expect(await probeReadiness()).toEqual(
-      { state: 'ready', tiles: false, update: false, version: '0.34.1' })
+      { state: 'ready', tiles: false, update: false, deploy: 'unreachable', version: '0.34.1' })
 
     // A newer labeled deploy names the update target too.
     stubFetch({ '/offline/version.json': { body: '{"build":"NEWER","version":"0.35-a0"}', type: 'application/json' } })
     expect(await probeReadiness()).toEqual(
-      { state: 'ready', tiles: false, update: true, version: '0.34.1', updateVersion: '0.35-a0' })
+      { state: 'ready', tiles: false, update: true, deploy: 'ok', version: '0.34.1', updateVersion: '0.35-a0' })
   })
 })
 
@@ -239,7 +257,7 @@ describe('downloadOfflineData', () => {
     expect(await engine.match('/offline/__complete')).toBeTruthy()
     expect(await tiles.match('/gamedata/local/__complete')).toBeTruthy()
     expect(await probeReadiness()).toEqual(
-      { state: 'ready', tiles: true, update: false, version: '0.34.1' })
+      { state: 'ready', tiles: true, update: false, deploy: 'ok', version: '0.34.1' })
   })
 
   it('refuses to run without a reachable deploy', async () => {

@@ -139,6 +139,28 @@ export async function openVersionedCache(
   }
 }
 
+// Open BOTH stores rolled to the deployed build off one version answer —
+// the only way any caller (worker boot, readiness download) acquires the
+// pair. Boot self-updates the engine on a build change, and the SW serves
+// /gamedata/local/* cache-first, so the tiles store must roll in lockstep
+// or updated engines render against the previous build's tiles (shifted
+// tile indices — trees in hallways). A single fetchVersion keying both
+// stores also can't straddle a deploy the way two independent fetches
+// (worker + window) could. Gamedata is cleared, not refetched: tile
+// requests fall through to the network of the same deploy that declared
+// the build, and the readiness surface offers to finish the download.
+// Offline boots pass null and keep the existing consistent pair.
+export async function openOfflineStores(
+  v: { build: string; version?: string } | null,
+  log?: Log,
+): Promise<{ engine: Cache | null; gamedata: Cache | null }> {
+  const [gamedata, engine] = await Promise.all([
+    openVersionedCache(GAMEDATA_CACHE, v, log),
+    openVersionedCache(ARTIFACT_CACHE, v, log),
+  ])
+  return { engine, gamedata }
+}
+
 // --- cache-first fetch ---------------------------------------------------------
 
 // Cache-first fetch of one artifact; tries `paths` in order (gzipped name
@@ -246,10 +268,14 @@ export async function cachedGamedataBuild(): Promise<string | null> {
 export type Readiness =
   // Engine set verified cached; tiles = gamedata set too; update = we are
   // online and the deploy has a newer build (the cached set still boots
-  // offline by design). version labels the CACHED set ("0.34.1", from the
-  // __version stamp); updateVersion labels what an update would install —
-  // both display-only and absent when the install predates the stamp.
-  | { state: 'ready'; tiles: boolean; update: boolean; version?: string; updateVersion?: string }
+  // offline by design). deploy = the fetchVersion answer, so consumers can
+  // gate offered actions (a download can only succeed when 'ok') and word
+  // the reason honestly ('unreachable' = connect and retry; 'undeployed' =
+  // this deploy has nothing to download, ever). version labels the CACHED
+  // set ("0.34.1", from the __version stamp); updateVersion labels what an
+  // update would install — both display-only and absent when the install
+  // predates the stamp.
+  | { state: 'ready'; tiles: boolean; update: boolean; deploy: 'ok' | 'undeployed' | 'unreachable'; version?: string; updateVersion?: string }
   // Online, deploy confirmed, nothing (complete) cached — downloadable.
   // version labels the downloadable pack when the deploy declares it.
   | { state: 'not-cached'; version?: string }
@@ -267,7 +293,9 @@ export async function probeReadiness(): Promise<Readiness> {
     fetchVersion(),
   ])
   if (engineReady) {
-    const r: Readiness = { state: 'ready', tiles: tilesReady, update: false }
+    const r: Readiness = {
+      state: 'ready', tiles: tilesReady, update: false, deploy: version.state,
+    }
     try {
       const cache = await caches.open(ARTIFACT_CACHE)
       const storedVersion = await (await cache.match(VERSION_KEYS[ARTIFACT_CACHE]))?.text()
@@ -306,7 +334,7 @@ export async function downloadOfflineData(
   const stats = newStats()
 
   onProgress('Downloading engine…')
-  const cache = await openVersionedCache(ARTIFACT_CACHE, version)
+  const { engine: cache, gamedata } = await openOfflineStores(version)
   if (!cache) throw new Error('cache storage unavailable')
   await Promise.all([
     fetchArtifact(cache, stats, ...ENGINE_GLUE),
@@ -321,7 +349,6 @@ export async function downloadOfflineData(
   if (!await markEngineSetComplete(cache))
     throw new Error('engine data did not fit in storage')
 
-  const gamedata = await openVersionedCache(GAMEDATA_CACHE, version)
   if (gamedata) {
     const files = await gamedataFileList(gamedata, stats)
     if (files) {

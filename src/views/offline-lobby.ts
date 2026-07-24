@@ -340,9 +340,17 @@ export function buildOfflineLobbyView(
           r.updateVersion ? `Update available — DCSS ${r.updateVersion}` : 'Engine update available',
           'Update')
       } else if (!r.tiles) {
-        setReadiness('ok', 'Ready for offline play',
-          r.version ? `DCSS ${r.version} — text mode` : 'Text mode — tiles not added',
-          'Add tiles ~9 MB')
+        // Engine cached but the tiles half of the set is missing (legacy
+        // partial download, or a boot rolled the caches to a new build).
+        // Tiles aren't optional — a stale or absent pack misrenders the
+        // map — so present it as unfinished, not as an add-on. The button
+        // only appears when a download could succeed; an unreachable
+        // deploy gets the remedy, an artifact-less one no false advice.
+        setReadiness('warn', 'Download incomplete',
+          r.deploy === 'unreachable'
+            ? 'Tile data missing — connect to finish the download'
+            : r.version ? `DCSS ${r.version} — tile data missing` : 'Tile data missing',
+          r.deploy === 'ok' ? 'Finish download ~9 MB' : undefined)
       } else {
         setReadiness('ok', 'Ready for offline play',
           r.version ? `DCSS ${r.version} — engine and tiles` : 'Engine and tiles downloaded')

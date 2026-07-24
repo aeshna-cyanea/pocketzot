@@ -41,7 +41,7 @@ export function uiColor(index: number): string {
 }
 
 // Quote-escaping makes the output safe in attribute values too (harmless in
-// text nodes, where &quot; renders as ").
+// text content parsed as HTML, where &quot; renders as ").
 export function escHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
