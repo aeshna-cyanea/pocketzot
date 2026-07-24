@@ -12,7 +12,7 @@ import {
 } from '../game/input/control-sets'
 import {
   getPref, LOGIN_SPRITES_CHANGED_EVENT, MONSTER_LIST_MODE_CHANGED_EVENT,
-  RENDER_MODE_CHANGED_EVENT,
+  RENDER_MODE_CHANGED_EVENT, UI_SCALE_CHANGED_EVENT,
 } from '../prefs'
 
 beforeEach(() => {
@@ -187,7 +187,7 @@ describe('settings overlay', () => {
     expect($('.ed-slot-info')).toBeNull()
 
     findButton('Back').click()
-    expect($$('.settings-h').map(h => h.textContent)).toContain('Touch controls')
+    expect($$('.settings-h').map(h => h.textContent)).toContain('Control sets')
   })
 
   it('offers Duplicate & edit from a built-in view, saving nothing until Save', () => {
@@ -330,7 +330,8 @@ describe('settings overlay', () => {
     openSettings()
     const headings = $$('.settings-h').map(h => h.textContent)
     expect(headings).toEqual([
-      'Map display', 'Monster list', 'Character sprites', 'Touch controls', 'Help',
+      'Map display', 'Monster list', 'Message log', 'D-pad', 'Control sets',
+      'Character sprites', 'Help',
     ])
   })
 
@@ -442,5 +443,161 @@ describe('settings overlay', () => {
     findButton('Export').click()
     const out = $<HTMLTextAreaElement>('.settings-export-out textarea')!
     expect(out.value).toBe(encodeControlSet(builtinSets()[0]))
+  })
+})
+
+describe('size sliders', () => {
+  // Dots within a slider, found by their aria-label (the stop value).
+  const dot = (group: HTMLElement, value: number) =>
+    group.querySelector<HTMLButtonElement>(`[aria-label="${value}"]`)!
+
+  it('renders all three sliders with the active and stock dots marked', () => {
+    openSettings()
+    const dpad = segGroup('D-pad size')
+    expect(dpad.querySelectorAll('[role="radio"]')).toHaveLength(5)
+    // fresh install: active IS the stock stop — one dot carries both marks
+    const active = dot(dpad, 3.5)
+    expect(active.classList.contains('active')).toBe(true)
+    expect(active.classList.contains('default')).toBe(true)
+    expect(active.getAttribute('aria-checked')).toBe('true')
+    expect(segGroup('Message log lines').querySelectorAll('[role="radio"]')).toHaveLength(5)
+    expect(segGroup('Message log text size').querySelectorAll('[role="radio"]')).toHaveLength(5)
+  })
+
+  it('labels the lines slider dots with their values', () => {
+    openSettings()
+    const nums = [...segGroup('Message log lines').querySelectorAll('.set-slider-num')]
+    expect(nums.map(n => n.textContent)).toEqual(['2', '3', '4', '5', '6'])
+  })
+
+  it('labels only the endpoint dots of a worded slider', () => {
+    openSettings()
+    const nums = [...segGroup('D-pad size').querySelectorAll('.set-slider-num')]
+    expect(nums.map(n => n.textContent)).toEqual(['Tiny', 'Chunky'])
+  })
+
+  it('tapping a dot stores the pref and moves the marks', () => {
+    openSettings()
+    const dpad = segGroup('D-pad size')
+    dot(dpad, 3.9).click()
+    expect(getPref('dpadSize')).toBe(3.9)
+    expect(dot(dpad, 3.9).classList.contains('active')).toBe(true)
+    expect(dot(dpad, 3.9).getAttribute('aria-checked')).toBe('true')
+    expect(dot(dpad, 3.5).classList.contains('active')).toBe(false)
+    expect(dot(dpad, 3.5).getAttribute('aria-checked')).toBe('false')
+    // the stock stop keeps its hollow-ring marker after moving off it
+    expect(dot(dpad, 3.5).classList.contains('default')).toBe(true)
+  })
+
+  it('fires the ui-scale live-apply event on change', () => {
+    openSettings()
+    const seen = vi.fn()
+    window.addEventListener(UI_SCALE_CHANGED_EVENT, seen)
+    dot(segGroup('Message log lines'), 6).click()
+    expect(seen).toHaveBeenCalledTimes(1)
+    expect(getPref('msglogLines')).toBe(6)
+    window.removeEventListener(UI_SCALE_CHANGED_EVENT, seen)
+  })
+
+  it('snaps a hand-edited stored value to the nearest stop for display', () => {
+    localStorage.setItem('pocketzot:prefs', JSON.stringify({ msglogFont: 0.72 }))
+    openSettings()
+    expect(dot(segGroup('Message log text size'), 0.7).classList.contains('active')).toBe(true)
+  })
+
+  it('re-tapping the active dot is a no-op (no write, no event)', () => {
+    openSettings()
+    const seen = vi.fn()
+    window.addEventListener(UI_SCALE_CHANGED_EVENT, seen)
+    dot(segGroup('D-pad size'), 3.5).click()
+    expect(seen).not.toHaveBeenCalled()
+    window.removeEventListener(UI_SCALE_CHANGED_EVENT, seen)
+  })
+})
+
+describe('floating size palette', () => {
+  // The entry button is gated on a mounted game view (inside #app, which the
+  // palette watches to close itself when the game ends).
+  function mountFakeGameView(): HTMLElement {
+    const app = document.createElement('div')
+    app.id = 'app'
+    const gv = document.createElement('div')
+    gv.id = 'game-view'
+    app.appendChild(gv)
+    document.body.appendChild(app)
+    return gv
+  }
+
+  const adjustButtons = () =>
+    [...document.querySelectorAll('button')].filter(b => b.textContent === 'Adjust sizes')
+
+  it('offers no entry button without a game view', () => {
+    openSettings()
+    expect(adjustButtons()).toHaveLength(0)
+  })
+
+  it('shows a single entry button in-game', () => {
+    mountFakeGameView()
+    openSettings()
+    expect(adjustButtons()).toHaveLength(1)
+  })
+
+  it('collapses the two size sections into one combined entry in-game', () => {
+    mountFakeGameView()
+    openSettings()
+    const headings = $$('.settings-h').map(h => h.textContent)
+    expect(headings).toEqual([
+      'Map display', 'Monster list', 'D-pad and message log', 'Control sets',
+      'Character sprites', 'Help',
+    ])
+    // no sliders or previews on the card — the palette is the in-game surface
+    expect($('.settings-card .set-slider')).toBeNull()
+    expect($('.settings-card .set-dpad-preview')).toBeNull()
+    expect($('.settings-card .set-msglog-preview')).toBeNull()
+  })
+
+  it('opens the palette in place of the settings card, sliders wired', () => {
+    mountFakeGameView()
+    openSettings()
+    adjustButtons()[0].click()
+    expect(document.querySelector('.settings-card')).toBeNull()
+    const palette = document.querySelector<HTMLElement>('.size-palette')!
+    expect(palette.querySelectorAll('[role="radiogroup"]')).toHaveLength(3)
+    palette.querySelector<HTMLButtonElement>('[aria-label="D-pad size"] [aria-label="3.7"]')!.click()
+    expect(getPref('dpadSize')).toBe(3.7)
+  })
+
+  it('closes on ✕ and on Escape', () => {
+    mountFakeGameView()
+    openSettings()
+    adjustButtons()[0].click()
+    document.querySelector<HTMLButtonElement>('.size-palette-close')!.click()
+    expect(document.querySelector('.size-palette')).toBeNull()
+
+    openSettings()
+    adjustButtons()[0].click()
+    expect(document.querySelector('.size-palette')).not.toBeNull()
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    expect(document.querySelector('.size-palette')).toBeNull()
+  })
+
+  it('closes itself when the game view unmounts', async () => {
+    const gv = mountFakeGameView()
+    openSettings()
+    adjustButtons()[0].click()
+    expect(document.querySelector('.size-palette')).not.toBeNull()
+    gv.remove()
+    await new Promise(r => setTimeout(r, 0))
+    expect(document.querySelector('.size-palette')).toBeNull()
+  })
+
+  it('reopening settings closes a lingering palette', () => {
+    mountFakeGameView()
+    openSettings()
+    adjustButtons()[0].click()
+    expect(document.querySelector('.size-palette')).not.toBeNull()
+    openSettings()
+    expect(document.querySelector('.size-palette')).toBeNull()
+    expect(document.querySelector('.settings-card')).not.toBeNull()
   })
 })

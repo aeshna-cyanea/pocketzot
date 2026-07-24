@@ -9,6 +9,12 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-07-23
+
+- New size settings: the D-pad and the message log (number of lines shown
+  and text size) are now adjustable in Settings. While playing, you can
+  adjust these directly over the live game.
+
 ## 2026-07-20
 
 - Shift-tapping a spell in the quick-cast row now force-casts it (sends

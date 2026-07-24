@@ -14,11 +14,17 @@ export const RENDER_MODE_CHANGED_EVENT = 'pocketzot:render-mode-changed'
 // sprites (settings opens over the still-mounted login view).
 export const MONSTER_LIST_MODE_CHANGED_EVENT = 'pocketzot:monster-list-mode-changed'
 export const LOGIN_SPRITES_CHANGED_EVENT = 'pocketzot:login-sprites-changed'
+// One event for all three size prefs — the sole listener (ui-scale.ts)
+// re-reads every stop and rewrites the CSS variables wholesale.
+export const UI_SCALE_CHANGED_EVENT = 'pocketzot:ui-scale-changed'
 
 const PREF_EVENTS: Partial<Record<keyof Prefs, string>> = {
   mapRenderMode: RENDER_MODE_CHANGED_EVENT,
   monsterListMode: MONSTER_LIST_MODE_CHANGED_EVENT,
   loginSprites: LOGIN_SPRITES_CHANGED_EVENT,
+  dpadSize: UI_SCALE_CHANGED_EVENT,
+  msglogLines: UI_SCALE_CHANGED_EVENT,
+  msglogFont: UI_SCALE_CHANGED_EVENT,
 }
 
 // 'hidden' is reachable only from the settings page — once hidden there is no
@@ -39,6 +45,13 @@ export interface Prefs {
   // fresh install deliberately starts unread so the first launch surfaces the
   // release notes. See isChangelogUnread in views/docs.ts.
   changelogSeen: string | null
+  // Size sliders (settings page). Semantic values, not stop indices: rem for
+  // the two sizes, a line count for the log. Legal stops live in ui-scale.ts,
+  // which snaps any stored number to the nearest stop before applying — so
+  // these stay meaningful even if the stop tables change shape later.
+  dpadSize: number     // rem; --tc-dpad via --pz-dpad
+  msglogLines: number  // visible message-log lines; --msglog-h via --pz-msglog-lines
+  msglogFont: number   // rem; --msglog-font via --pz-msglog-font
 }
 
 const DEFAULTS: Prefs = {
@@ -48,6 +61,9 @@ const DEFAULTS: Prefs = {
   controlSetId: 'standard',
   loginSprites: true,
   changelogSeen: null,
+  dpadSize: 3.5,
+  msglogLines: 4,
+  msglogFont: 0.75,
 }
 
 function load(): Prefs {
@@ -70,6 +86,17 @@ function load(): Prefs {
 
 export function getPref<K extends keyof Prefs>(k: K): Prefs[K] {
   return load()[k]
+}
+
+// Whole-object read, for callers that need several keys at once and would
+// otherwise re-parse storage per key (e.g. ui-scale's apply()).
+export function getPrefs(): Prefs {
+  return load()
+}
+
+// The stock value, for UI that marks it (the settings sliders' hollow ring).
+export function defaultPref<K extends keyof Prefs>(k: K): Prefs[K] {
+  return DEFAULTS[k]
 }
 
 export function setPref<K extends keyof Prefs>(k: K, v: Prefs[K]): void {

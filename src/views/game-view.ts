@@ -504,6 +504,8 @@ export function buildGameView(
 
   const msgLog = document.createElement('div')
   msgLog.id = 'game-messages'
+  // Shared formatting with the settings-card log preview — see .msglog-box.
+  msgLog.className = 'msglog-box'
   msgLog.addEventListener('click', (e) => {
     if (isHarvesting()) return
     if (uiOverlay.style.display === 'none' && !(e.target as HTMLElement).closest('button, input, .game-text-input-row')) {

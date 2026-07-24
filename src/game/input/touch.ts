@@ -65,8 +65,9 @@ export interface TouchControls {
 
 // Arrow + numpad keycodes; shift = run-variant; ctrl = open-door / attack-stationary.
 // Center is the wait/confirm slot; sends '.' as text so it both waits one turn in
-// normal play and accepts the cursor target in X mode.
-const DPAD_LAYOUT: DpadDef[][] = [
+// normal play and accepts the cursor target in X mode. Exported so the settings
+// d-pad specimen renders the same faces as the live pad.
+export const DPAD_LAYOUT: DpadDef[][] = [
   [
     { label: '↖', plain: CK_HOME,  shifted: CK_SHIFT_HOME,  ctrled: CK_CTRL_HOME  },
     { label: '↑', plain: CK_UP,    shifted: CK_SHIFT_UP,    ctrled: CK_CTRL_UP    },

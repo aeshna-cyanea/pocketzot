@@ -7,7 +7,7 @@
 // mutators, setPref in prefs.ts): CONTROLS_CHANGED_EVENT (touch panel
 // re-renders), RENDER_MODE_CHANGED_EVENT (game view swaps renderers).
 
-import { mountCardOverlay } from './overlay'
+import { mountCardOverlay, mountOverlay } from './overlay'
 import {
   cloneSet, deleteControlSet, encodeControlSet, getActiveControlSet,
   importControlSet, isValidTabName, listControlSets, newSetId, saveControlSet,
@@ -15,15 +15,25 @@ import {
   GRID_ROWS, MAX_COLS, MAX_MACRO_LEN, PICKER_KEYS,
 } from '../game/input/control-sets'
 import type { ControlSet, ControlTabDef, SlotDef } from '../game/input/control-sets'
-import { getPref, setPref, type Prefs } from '../prefs'
+import { dcssToHtml } from '../game/dcss-colors'
+import { DPAD_LAYOUT } from '../game/input/touch'
+import { defaultPref, getPref, setPref, type Prefs } from '../prefs'
+import { DPAD_STOPS, MSGLOG_FONT_STOPS, MSGLOG_LINE_STOPS, nearestStop } from '../ui-scale'
 import { openGesturesDoc } from './docs'
 
+// Close handle of the last-mounted settings card, for surfaces that replace
+// it (the floating size palette). May be stale after ✕/Escape closed the
+// card — harmless, mountOverlay's close() is idempotent.
+let closeSettings: (() => void) | null = null
+
 export function openSettings(): void {
-  const { body } = mountCardOverlay('Settings', {
+  closePalette?.()  // one surface at a time; a stale palette would desync
+  const { body, close } = mountCardOverlay('Settings', {
     backdrop: 'settings-backdrop',
     card: 'settings-card',
     body: 'settings-body',
   })
+  closeSettings = close
   renderHome(body)
 }
 
@@ -71,19 +81,54 @@ function freshClone(base: ControlSet): ControlSet {
 
 // --- home page ---------------------------------------------------------------
 
+// Section order: in-game before out-of-game, quick toggles → size tuning →
+// deep customization, help last. The size block is context-dependent:
+// out-of-game the card is the only surface, so the Message log and D-pad
+// sections carry previews (specimen pad, fake log) that make adjusting
+// non-blind; in-game those previews are simulations of a subject one tap
+// away, so both sections collapse into a single "Sizes" entry opening the
+// floating palette over the live game.
 function renderHome(body: HTMLElement): void {
   body.innerHTML = ''
   renderDisplaySection(body)
   renderMonsterListSection(body)
-  renderSpritesSection(body)
+  if (document.getElementById('game-view')) {
+    renderSizesSection(body)
+  } else {
+    renderMsglogSection(body)
+    renderDpadSection(body)
+  }
   renderControlsSection(body)
+  renderSpritesSection(body)
   renderHelpSection(body)
 }
 
 // --- touch-controls section (control-set list) --------------------------------
 
+// D-pad size (out-of-game only): slider plus a real-size specimen pad
+// (settings covers the whole screen, so without one the resize would be
+// adjusted blind). The full 3×3 shows what one button alone can't — the
+// pad's overall footprint. It tracks --pz-dpad via CSS; no re-render needed
+// on tap. In portrait the whole strip scales with the d-pad (its height cap
+// derives from --tc-dpad); in landscape only the floating d-pad does.
+function renderDpadSection(body: HTMLElement): void {
+  body.appendChild(el('h2', 'settings-h', 'D-pad'))
+  const preview = el('div', 'set-dpad-preview')
+  preview.setAttribute('aria-hidden', 'true')
+  const pad = el('div', 'set-dpad-pad')
+  // Faces come from the live pad's own layout; the '.'-sending center is the
+  // dimmed wait slot.
+  for (const d of DPAD_LAYOUT.flat()) {
+    const isWait = 'text' in d && d.text === '.'
+    pad.appendChild(el('div', 'set-dpad-specimen' + (isWait ? ' wait' : ''), d.label))
+  }
+  preview.appendChild(pad)
+  body.appendChild(preview)
+  body.appendChild(dpadSlider())
+}
+
 function renderControlsSection(body: HTMLElement): void {
-  body.appendChild(el('h2', 'settings-h', 'Touch controls'))
+  body.appendChild(el('h2', 'settings-h', 'Control sets'))
   body.appendChild(el('p', 'settings-hint',
     'Control sets define the buttons on the three control tabs.'))
 
@@ -195,16 +240,188 @@ function segPref<K extends 'mapRenderMode' | 'monsterListMode' | 'loginSprites'>
     const b = button(label, 'settings-btn' + (value === active ? ' active' : ''), () => {
       if (getPref(prefKey) === value) return
       setPref(prefKey, value)
-      for (const sib of seg.children) {
-        sib.classList.toggle('active', sib === b)
-        sib.setAttribute('aria-checked', String(sib === b))
-      }
+      markChecked(seg, b)
     })
     b.setAttribute('role', 'radio')
     b.setAttribute('aria-checked', String(value === active))
     seg.appendChild(b)
   }
   return seg
+}
+
+// Re-mark `chosen` as the selected radio among its group's children (class +
+// aria-checked). Shared by segPref and sliderPref, whose children are all
+// radio buttons.
+function markChecked(group: HTMLElement, chosen: Element): void {
+  for (const sib of group.children) {
+    sib.classList.toggle('active', sib === chosen)
+    sib.setAttribute('aria-checked', String(sib === chosen))
+  }
+}
+
+// Numeric prefs whose legal values are a stop table (ui-scale.ts).
+type SliderPrefKey = 'dpadSize' | 'msglogLines' | 'msglogFont'
+
+// Discrete slider bound to a stop-table pref: a radiogroup of tap-dots on a
+// track — the page's ordered-magnitude counterpart to segPref's state
+// adjectives. Labels render under dots (endpoint words via `ends`, or every
+// value via `numbered`), the stock stop keeps a hollow ring, and the stored
+// value snaps to the nearest stop for display, mirroring ui-scale's clamp.
+// setPref fires the live-apply event; ui-scale rewrites the CSS variables,
+// which is also what updates the specimen/preview elements.
+function sliderPref(
+  ariaLabel: string,
+  prefKey: SliderPrefKey,
+  stops: readonly number[],
+  opts: { ends?: [string, string]; numbered?: boolean } = {},
+): HTMLElement {
+  const slider = el('div', 'set-slider')
+  slider.setAttribute('role', 'radiogroup')
+  slider.setAttribute('aria-label', ariaLabel)
+  slider.style.setProperty('--stops', String(stops.length))
+  const stock = defaultPref(prefKey)
+  const active = nearestStop(stops, getPref(prefKey))
+  for (const value of stops) {
+    // Re-tapping the active dot is a no-op via setPref's own equal-value
+    // bail (no write, no event); markChecked is idempotent.
+    const dot = button('', 'set-slider-dot'
+      + (value === active ? ' active' : '') + (value === stock ? ' default' : ''), () => {
+      setPref(prefKey, value)
+      markChecked(slider, dot)
+    })
+    dot.setAttribute('role', 'radio')
+    dot.setAttribute('aria-checked', String(value === active))
+    dot.setAttribute('aria-label', String(value))
+    dot.appendChild(el('span', 'set-slider-mark'))
+    const sub = opts.numbered ? String(value)
+      : value === stops[0] ? opts.ends?.[0]
+      : value === stops[stops.length - 1] ? opts.ends?.[1]
+      : undefined
+    if (sub !== undefined) dot.appendChild(el('span', 'set-slider-num', sub))
+    slider.appendChild(dot)
+  }
+  return slider
+}
+
+// One spec per slider, shared by the settings sections and the floating
+// palette so stops, labels, and aria-labels (also test selectors) can't
+// diverge between the two surfaces.
+const dpadSlider = () =>
+  sliderPref('D-pad size', 'dpadSize', DPAD_STOPS, { ends: ['Tiny', 'Chunky'] })
+const msglogLinesSlider = () =>
+  sliderPref('Message log lines', 'msglogLines', MSGLOG_LINE_STOPS, { numbered: true })
+const msglogFontSlider = () =>
+  sliderPref('Message log text size', 'msglogFont', MSGLOG_FONT_STOPS, { ends: ['Small', 'Large'] })
+
+// --- floating size palette ----------------------------------------------------
+
+// Close handle of the open palette; null when none. openSettings invokes it
+// so the two surfaces never coexist (a covered palette would show stale dots).
+let closePalette: (() => void) | null = null
+
+// The "Adjust sizes" palette: the same sliders, floating bare over the live
+// map — purely presentation, since sliders apply through ui-scale's root
+// variables wherever they're mounted. Top-anchored because both subjects
+// (log, touch strip) live at the bottom; no backdrop, so the game underneath
+// stays fully touch-interactive and IS the preview. Mounted via mountOverlay
+// for stack Escape handling; that also suppresses game key forwarding while
+// open (touch is untouched). Reachable only from the settings card while a
+// game view is mounted (renderSizesSection).
+function openSizePalette(): void {
+  const palette = el('div', 'size-palette')
+  // Keep slider taps from stealing keyboard focus off the game view.
+  palette.addEventListener('mousedown', (e) => e.preventDefault())
+  const close = mountOverlay(palette)
+  const dismiss = (): void => {
+    unmountWatch.disconnect()
+    closePalette = null
+    close()
+  }
+  closePalette = dismiss
+  // The game ending would strand the palette over the lobby — close along
+  // with the game view.
+  const unmountWatch = new MutationObserver(() => {
+    if (!document.getElementById('game-view')) dismiss()
+  })
+  const app = document.getElementById('app')
+  if (app) unmountWatch.observe(app, { childList: true })
+
+  // ✕ shares a header row with the first caption — absolutely positioning it
+  // in the corner would overlap the top slider's rightmost dot's tap area.
+  // Slider order mirrors the game's vertical stack (log above the touch
+  // strip), so each control sits on the palette the way its subject sits on
+  // the screen: message log first, d-pad last.
+  const x = button('✕', 'doc-close size-palette-close', dismiss)
+  x.setAttribute('aria-label', 'Close')
+  const header = el('div', 'size-palette-header')
+  header.appendChild(el('p', 'set-slider-cap', 'Message log lines'))
+  header.appendChild(x)
+  palette.appendChild(header)
+  palette.appendChild(msglogLinesSlider())
+  palette.appendChild(el('p', 'set-slider-cap', 'Message log text size'))
+  palette.appendChild(msglogFontSlider())
+  palette.appendChild(el('p', 'set-slider-cap', 'D-pad'))
+  palette.appendChild(dpadSlider())
+}
+
+// The in-game replacement for the two out-of-game size sections: the header
+// names both subjects so they stay findable in either mode, and a single
+// enabled button opens the palette (which holds all three sliders).
+// renderHome only calls this while a game view is mounted — with no game
+// behind, the palette would float over the login screen adjusting nothing
+// visible, and a disabled button would just sit there unactionable.
+function renderSizesSection(body: HTMLElement): void {
+  body.appendChild(el('h2', 'settings-h', 'D-pad and message log'))
+  body.appendChild(el('p', 'settings-hint',
+    'Adjust D-pad and message log sizes over the live game.'))
+  const row = el('div', 'settings-actions')
+  row.appendChild(button('Adjust sizes', 'settings-btn', () => {
+    closeSettings?.()
+    openSizePalette()
+  }))
+  body.appendChild(row)
+}
+
+function renderMsglogSection(body: HTMLElement): void {
+  body.appendChild(el('h2', 'settings-h', 'Message log'))
+  body.appendChild(el('p', 'settings-hint',
+    'Recent messages shown over the map. Tap the log in-game for full history.'))
+  // Fake log both sliders manipulate. DOM order is newest-first: the preview
+  // is column-reverse like the real log, so index 0 lands at the visual
+  // bottom and extra lines get trimmed off the top. Texts are real game
+  // messages, wire-exact: the yellow opener is the game-start welcome spam
+  // (main.cc _announce_goal_message sends it wrapped in <yellow>), and the
+  // long lines demonstrate how the font-size choice changes wrapping.
+  // Exactly SIX strings, so the 6-line setting stays fully backed even on a
+  // viewport wide enough that nothing wraps (iPad); on phones the wrapped
+  // surplus clips off the top like real scrolled-away history.
+  const SAMPLE_LINES = [
+    'Your surroundings suddenly seem different.',
+    'As you read the scroll of teleportation, it crumbles to dust.',
+    'You now have 147 gold pieces (gained 37).',
+    'You kill the kobold!',
+    'A kobold comes into view. It is wielding a club.',
+    "<yellow>It's a long way down to the Orb of Zot, but that shouldn't be any trouble.</yellow>",
+  ]
+  const frame = el('div', 'set-msglog-frame')
+  const preview = el('div', 'set-msglog-preview msglog-box')
+  preview.setAttribute('aria-hidden', 'true')
+  for (const line of SAMPLE_LINES) {
+    // Mirror appendMessage's row shape (game-view.ts): turn-mark slot plus
+    // dcssToHtml-rendered content, so metrics and colors match the real log.
+    const p = el('p', 'game-msg')
+    p.appendChild(el('span', 'msg-turn-mark', ' '))
+    const content = document.createElement('span')
+    content.innerHTML = dcssToHtml(line)
+    p.appendChild(content)
+    preview.appendChild(p)
+  }
+  frame.appendChild(preview)
+  body.appendChild(frame)
+  body.appendChild(el('p', 'set-slider-cap', 'Lines'))
+  body.appendChild(msglogLinesSlider())
+  body.appendChild(el('p', 'set-slider-cap', 'Text size'))
+  body.appendChild(msglogFontSlider())
 }
 
 function renderDisplaySection(body: HTMLElement): void {

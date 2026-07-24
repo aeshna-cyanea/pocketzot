@@ -1310,19 +1310,33 @@ html, body {
 }
 
 /* ── Game view ────────────────────────────────────────────── */
-#game-view {
+/* Message-log tokens. On :root (not #game-view) so the settings preview and
+   floating size palette consume the exact values the real log renders at
+   instead of restating the formula and drifting. */
+:root {
   /* Message-log typography, declared once so the height calc below can never
-     drift from what #game-messages actually renders at. */
-  --msglog-font: 0.75rem;
+     drift from what #game-messages actually renders at. Font size and line
+     count are user-adjustable: the settings sliders write --pz-msglog-font /
+     --pz-msglog-lines on :root (ui-scale.ts); the fallbacks here are the
+     stock values. */
+  --msglog-font: var(--pz-msglog-font, 0.75rem);
   --msglog-line: 1.3;
   /* Message-log height in lines (line-count × font × line-height rather than
      `lh`, which would re-resolve against each consumer's own line-height).
      A var so the spell-row rules below can offset #more-btn by exactly the
      log's height. 4 lines still spans several turns (the server glues
      same-turn messages onto one line) and tapping the log opens full
-     history; the line trimmed here comes back as clear map area, since
+     history; lines trimmed here come back as clear map area, since
      #map-grid reserves exactly this height above the floating log. */
-  --msglog-h: calc(4 * var(--msglog-font) * var(--msglog-line));
+  --msglog-h: calc(var(--pz-msglog-lines, 4) * var(--msglog-font) * var(--msglog-line));
+  /* Tight black halo + 1px drop: keeps every DCSS message color (incl. brown/
+     darkgrey) legible over bright floor tiles without raising the scrim — the
+     scrim level is tuned for layer separation, not contrast. Shared with the
+     floating chat chip so its legibility treatment can't drift from the log's. */
+  --msglog-text-shadow: 0 1px 2px #000, 0 0 3px #000;
+}
+
+#game-view {
   /* Floating-log scrim. Text legibility comes from the text-shadow on
      #game-messages, so the scrim's job is figure/ground separation — dimming
      the map content behind the log. ASCII is the binding case: behind the log
@@ -1332,11 +1346,6 @@ html, body {
      .tiles-mode override lightens it (set by setRenderMode in game-view.ts,
      which is also what swaps in TileMapView). */
   --msglog-bg: color-mix(in srgb, var(--bg) 30%, transparent);
-  /* Tight black halo + 1px drop: keeps every DCSS message color (incl. brown/
-     darkgrey) legible over bright floor tiles without raising the scrim — the
-     scrim level is tuned for layer separation, not contrast. Shared with the
-     floating chat chip so its legibility treatment can't drift from the log's. */
-  --msglog-text-shadow: 0 1px 2px #000, 0 0 3px #000;
   /* Spell-rail button band: 32px tile + 2×2px button padding + own 0.25rem
      padding. Shared so the rail's height, the log float that sits just above it,
      and the --more-- offset that clears both stay locked together. */
@@ -1490,6 +1499,37 @@ html, body {
 }
 
 /* Messages */
+/* Shared log-box formatting: #game-messages and the settings-card preview
+   both carry this class, so the specimen renders with the real log's actual
+   rules — typography, fixed --msglog-h height, padding, line wrapping,
+   column-reverse stacking — and can't drift from it. Placement, scrim, and
+   scroll-vs-clip overflow stay per-surface. */
+.msglog-box {
+  /* A fixed --msglog-h box; newest message pinned to the anchored edge via
+     column-reverse below. */
+  height: var(--msglog-h);
+  font-size: var(--msglog-font);
+  line-height: var(--msglog-line);
+  text-shadow: var(--msglog-text-shadow);
+  /* Vertical padding is the Safari fix, not cosmetic — don't zero it. With
+     box-sizing:border-box the padding-bottom lifts the bottom-pinned column up
+     off the bottom edge, which pushes the row scrolled just out of view a few
+     px clear of the top edge. That gap absorbs WebKit's fractional column-reverse
+     scroll offset (which Chrome rounds away but Safari/iOS doesn't), so the
+     hidden row's descenders no longer bleed in at the top. It also makes the
+     content box no longer an exact line-box multiple, removing the
+     boundary-aligned cut that made the artifact possible. */
+  padding: 0.2rem 0.2rem;
+  /* Bottom-pinned chat-log pattern: column-reverse lays children from the
+     visual bottom upward, which lets the browser keep scroll naturally at
+     the latest message without any JS scrollTop writes (which force layout).
+     Caller-side: insert new messages with `prepend`, not `appendChild`, so
+     they land at the DOM start = visual bottom. Order-dependent ops flip:
+     "most recent" is `firstChild`, "oldest" is `lastChild`,
+     `:first-child` is the most-recent message. */
+  display: flex;
+  flex-direction: column-reverse;
+}
 #game-messages {
   /* Floats translucently over the map's edge in BOTH orientations (bottom in
      portrait, top in landscape — the per-orientation rules set the anchor) so
@@ -1502,33 +1542,8 @@ html, body {
   right: 0;
   z-index: 3;
   background: var(--msglog-bg);
-  /* Inherits to all log content — see --msglog-text-shadow. */
-  text-shadow: var(--msglog-text-shadow);
-  font-size: var(--msglog-font);
-  line-height: var(--msglog-line);
-  /* A fixed --msglog-h floating box; newest message pinned to the anchored
-     edge via column-reverse below. */
-  height: var(--msglog-h);
   overflow-y: auto;
-  /* Vertical padding is the Safari fix, not cosmetic — don't zero it. With
-     box-sizing:border-box the padding-bottom lifts the bottom-pinned column up
-     off the bottom edge, which pushes the row scrolled just out of view a few
-     px clear of the top edge. That gap absorbs WebKit's fractional column-reverse
-     scroll offset (which Chrome rounds away but Safari/iOS doesn't), so the
-     hidden row's descenders no longer bleed in at the top. It also makes the
-     content box no longer an exact line-box multiple, removing the
-     boundary-aligned cut that made the artifact possible. */
-  padding: 0.2rem 0.2rem;
   cursor: pointer;
-  /* Bottom-pinned chat-log pattern: column-reverse lays children from the
-     visual bottom upward, which lets the browser keep scroll naturally at
-     the latest message without any JS scrollTop writes (which force layout).
-     Caller-side: insert new messages with `prepend`, not `appendChild`, so
-     they land at the DOM start = visual bottom. Order-dependent ops flip:
-     "most recent" is `firstChild`, "oldest" is `lastChild`,
-     `:first-child` is the most-recent message. */
-  display: flex;
-  flex-direction: column-reverse;
 }
 
 /* Tile rendering: lighter scrim — see --msglog-bg. */
@@ -3051,13 +3066,18 @@ html, body {
 }
 
 /* ── Unified touch controls ─────────────────────────────────── */
-#touch-controls {
+/* Token block shared with the settings pad preview (.set-dpad-pad), so the
+   specimen buttons can't drift from the strip's real resting look. */
+#touch-controls,
+.set-dpad-pad {
   /* D-pad cell size (consumed by .tc-dpad / .tc-dpad-btn) — also sets the
-     whole strip's height via the max-height calc below. 3.3rem ≈ 53px,
-     3.5rem ≈ 56px,
-     above the 44pt tap floor; was 3.6rem, then 3.3rem — the audited
-     minimum (dev-material/vertical-space-savings.md) */
-  --tc-dpad: 3.5rem;
+     whole strip's height via the max-height calc below, so the settings
+     slider scales the macro panel along with the d-pad. User-adjustable:
+     ui-scale.ts writes --pz-dpad on :root (stops live in its DPAD_STOPS
+     table — every stop must clear the 44px tap floor); 3.5rem is the stock
+     fallback. 3.3rem was the audited strip minimum
+     (dev-material/vertical-space-savings.md). */
+  --tc-dpad: var(--pz-dpad, 3.5rem);
   /* Resting palette one step darker than the app-wide tokens: at night the
      map is sparse dim glyphs on near-black, so --text/--surface2 buttons
      outshine the play area. Presses brighten (--tc-press + accent label) —
@@ -3068,6 +3088,9 @@ html, body {
   --tc-label: var(--text-dim);
   --tc-label-dim: #78716c;  /* one stone step below --text-dim, for the wait btn */
   --tc-border: rgba(245, 158, 11, 0.07);
+}
+
+#touch-controls {
   grid-area: touch;
   display: flex;
   flex-direction: row;
@@ -4017,6 +4040,170 @@ html, body {
   color: var(--text-dim);
 }
 .settings-seg .settings-btn.active { background: rgba(245, 158, 11, 0.12); }
+
+/* Discrete sliders: the page's second control vocabulary — segments are
+   state adjectives, dotted sliders are ordered magnitudes (sizes, counts).
+   A radiogroup of tap-dots on a track; labels sit UNDER dots (endpoint words
+   or per-dot numbers) so the full row width goes to tap targets. The stock
+   stop keeps a hollow ring so it stays findable without a reset button. */
+.set-slider-cap {
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  margin: 0.9rem 0 0;
+}
+.set-slider {
+  position: relative;
+  display: flex;
+  margin-top: 0.9rem;
+}
+.set-slider-cap + .set-slider { margin-top: 0.1rem; }
+/* Track line spans first-to-last dot center: dots are equal flex cells, so
+   half a cell insets each end. --stops is set inline by sliderPref. */
+.set-slider::before {
+  content: '';
+  position: absolute;
+  left: calc(100% / var(--stops) / 2);
+  right: calc(100% / var(--stops) / 2);
+  top: calc(1.1rem - 1px);  /* mark-row center (see .set-slider-mark margin) */
+  height: 2px;
+  background: var(--border);
+}
+.set-slider-dot {
+  position: relative;  /* paints above the track ::before */
+  flex: 1;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  -webkit-tap-highlight-color: transparent;
+}
+.set-slider-mark {
+  width: 10px;
+  height: 10px;
+  margin: calc(1.1rem - 5px) 0;
+  border-radius: 50%;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+}
+.set-slider-dot.default .set-slider-mark { background: var(--bg); }
+.set-slider-dot.active .set-slider-mark {
+  background: var(--accent);
+  border-color: var(--accent);
+  transform: scale(1.3);
+}
+.set-slider-num {
+  font-size: 0.65rem;
+  color: var(--text-dim);
+  margin-bottom: 0.15rem;
+}
+.set-slider-dot.active .set-slider-num { color: var(--accent); }
+
+/* D-pad size preview: the whole 3×3 pad at true size, centered above the
+   slider — one button alone can't convey the pad's overall footprint. The
+   box reserves the LARGEST stop's height (--pz-dpad-max, written by
+   ui-scale.ts from the stop table before any view mounts — no fallback
+   literal here, it would be a second authority that drifts) so the slider
+   below never shifts under the finger tapping it; leftover space splits
+   evenly above and below. */
+.set-dpad-preview {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: calc(var(--pz-dpad-max) * 3 + 4px);
+  margin-top: 0.5rem;
+}
+.set-dpad-preview + .set-slider { margin-top: 0.2rem; }
+/* Cell size and colors come from the shared #touch-controls token block
+   above. Not the real .tc-dpad/.tc-dpad-btn classes: the landscape media
+   query restyles those into the translucent map-float look, which would
+   hit the settings specimen too. */
+.set-dpad-pad {
+  display: grid;
+  grid-template-columns: repeat(3, var(--tc-dpad));
+  grid-template-rows: repeat(3, var(--tc-dpad));
+  gap: 2px;
+}
+.set-dpad-specimen {
+  background: var(--tc-fill);
+  border: 1px solid var(--tc-border);
+  border-radius: 4px;
+  color: var(--tc-label);
+  font-size: 1.4rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.set-dpad-specimen.wait { color: var(--tc-label-dim); }
+
+/* Message-log preview: a fake log both log sliders manipulate — reflects
+   line count AND text size at once, and shows the real screen cost of the
+   choice. Formatting comes from the shared .msglog-box class (the same rule
+   #game-messages uses), so wrapping, padding, and line rhythm can't drift
+   from the real log. The frame carries the border so the inner box's height
+   stays the true --msglog-h. */
+.set-msglog-frame {
+  margin-top: 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+}
+.set-msglog-preview {
+  /* Only what .msglog-box doesn't carry: the mono font the real log inherits
+     from #game-view, and clipping — the specimen clips surplus off the top
+     where the real log scrolls. */
+  font-family: var(--font-mono);
+  overflow: hidden;
+}
+/* The real log never compresses lines (it scrolls instead); with clipping in
+   place of scroll, only flex-shrink could squash them — forbid it so surplus
+   lines clip off the top whole, exactly like scrolled-away history. */
+.set-msglog-preview .game-msg {
+  flex-shrink: 0;
+}
+
+/* Floating size palette (in-game Settings → "Adjust sizes"): the sliders
+   bare over the live map, top-anchored clear of both subjects (log and
+   touch strip sit at the bottom). Because it sits away from its subjects,
+   nothing that needs
+   watching is behind it — so the scrim runs near-opaque for caption
+   legibility over bright glyph fields, with the log's text-shadow as backup.
+   Above all in-game tiers (log 3, overlays 5, chip 6). */
+.size-palette {
+  position: fixed;
+  top: max(0.5rem, var(--safe-top));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200;
+  width: min(92%, 24rem);
+  padding: 0.3rem 0.75rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  background: color-mix(in srgb, var(--bg) 89%, transparent);
+  text-shadow: var(--msglog-text-shadow);
+}
+.size-palette .set-slider { margin-top: 0; }
+.size-palette .set-slider-cap { margin: 0.35rem 0 0; }
+/* ✕ lives in a header row beside the first caption (not corner-floated,
+   which would overlap the top slider's rightmost dot). */
+.size-palette-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.size-palette-header .set-slider-cap { margin: 0; }
+/* Look (transparent, dim, press feedback) comes from .doc-close — this rule
+   is palette geometry only. */
+.size-palette-close {
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  margin-right: -0.5rem;
+  font-size: 0.9rem;
+}
 
 /* Shared look for every settings text field (import/export areas, editor
    inputs); per-field classes keep only their layout. */
