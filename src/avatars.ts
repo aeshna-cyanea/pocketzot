@@ -83,7 +83,11 @@ export interface Avatar extends AvatarMeta {
 
 export type AvatarKey = Pick<Avatar, 'wsUrl' | 'username' | 'gameId'>
 
-function keyOf(a: AvatarKey): string {
+// The slot an entry belongs to (server + account + version line). Exported so
+// callers scanning a list they already hold match slots by the store's own
+// identity rule instead of re-deriving one from the fields they happen to
+// care about.
+export function avatarSlotKey(a: AvatarKey): string {
   return a.wsUrl + SEP + a.username.toLowerCase() + SEP + a.gameId.toLowerCase()
 }
 
@@ -114,9 +118,9 @@ export function saveAvatar(
   const list = load()
   const turn = opts.turn ?? null
   const entry: Avatar = { ...a, turn, seenAt: Date.now() }
-  const k = keyOf(a)
+  const k = avatarSlotKey(a)
   // Slot's current entry = first match (the list is newest-first).
-  const idx = list.findIndex((x) => keyOf(x) === k)
+  const idx = list.findIndex((x) => avatarSlotKey(x) === k)
   const cur = idx >= 0 ? list[idx] : null
   const turnReset = cur != null && turn != null && cur.turn != null && turn < cur.turn
   // An outcome-stamped entry is closed — it cannot be the live save, so a new
@@ -159,7 +163,7 @@ export function recordAvatarOutcome(
   meta: AvatarMeta = {},
 ): void {
   const list = load()
-  const idx = list.findIndex((x) => keyOf(x) === keyOf(key))
+  const idx = list.findIndex((x) => avatarSlotKey(x) === avatarSlotKey(key))
   if (idx < 0) return
   const cur = list[idx]
   if (cur.outcome != null) return

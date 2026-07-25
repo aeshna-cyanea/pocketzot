@@ -13,6 +13,7 @@
 
 import { devLog, type GameConnection, type MessageHandler, type StateHandler } from '../ws/connection'
 import type { ClientMsg, ServerMsg } from '../ws/types'
+import { OFFLINE_WS_URL } from './offline-state'
 
 export class LocalConnection implements GameConnection {
   onMessage: MessageHandler = () => {}
@@ -31,7 +32,7 @@ export class LocalConnection implements GameConnection {
   // Stable pseudo-URL: parseable by `new URL()`, and never collides with a
   // real server's session/avatar/resume keys (all keyed by wsUrl).
   get wsUrl(): string {
-    return 'local://offline'
+    return OFFLINE_WS_URL
   }
 
   // '' makes getTileLoader's gamedata base resolve same-origin:

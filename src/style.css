@@ -939,6 +939,21 @@ html, body {
 .offline-slot-row { padding-right: 0.5rem; }
 .offline-slot-row::after { content: none; }
 
+/* Slot-row doll (offline-lobby.ts mountSlotDoll): the character's tile-stack —
+   or its baked thumbnail — at the row's left edge. Fixed box so the name and
+   metadata columns line up down the list; flex-end floors the sprite in it,
+   matching the character cards. :empty collapses it (like .login-avatars) so a
+   slot with no recipe — or one whose atlas never resolves — costs no width. */
+.offline-slot-doll {
+  flex: 0 0 auto;
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.offline-slot-doll:empty { display: none; }
+
 /* Slot-row metadata line: identity left (truncates), position pinned right
    (never truncates). Third line = latest milestone, rendered only when one
    was captured. */

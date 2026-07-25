@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Avatar } from '../avatars'
-import { joinDollRecipe, sortRecords, stripRecordLine } from './game-records'
+import { joinDollRecipe, liveDollRecipe, sortRecords, stripRecordLine } from './game-records'
 import { parseXlogLine, type XlogRecord } from './xlog'
 
 // end times: 0-based months, local wall clock (see xlog.ts).
@@ -97,5 +97,32 @@ describe('joinDollRecipe', () => {
 
   it('never joins without a parseable end time', () => {
     expect(joinDollRecipe(rec({ end: undefined }), [avatar()])).toBeNull()
+  })
+})
+
+describe('liveDollRecipe', () => {
+  const live = avatar({ outcome: undefined })
+
+  it('takes the live entry for the slot name, case-insensitively', () => {
+    expect(liveDollRecipe('Bram', [live])).toBe(live)
+    expect(liveDollRecipe('bram', [avatar({ username: 'BRAM', outcome: undefined })]))
+      .toHaveProperty('doll')
+  })
+
+  it('ignores other slots: online servers, other game ids, unrelated names', () => {
+    expect(liveDollRecipe('Bram', [avatar({ wsUrl: 'wss://crawl.dcss.io/socket', outcome: undefined })])).toBeNull()
+    expect(liveDollRecipe('Bram', [avatar({ gameId: '', outcome: undefined })])).toBeNull()
+    expect(liveDollRecipe('Ecco', [live])).toBeNull()
+  })
+
+  it('refuses a finished character — a same-named slot is a different life', () => {
+    expect(liveDollRecipe('Bram', [avatar()])).toBeNull()
+  })
+
+  it('takes the newest entry only: a reroll never inherits the dead one', () => {
+    // Store order is newest-first, so the reroll (still live) leads its
+    // predecessor's outcome-stamped entry.
+    expect(liveDollRecipe('Bram', [live, avatar()])).toBe(live)
+    expect(liveDollRecipe('Bram', [avatar(), live])).toBeNull()
   })
 })

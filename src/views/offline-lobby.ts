@@ -22,15 +22,22 @@ import {
   canPlayOffline, downloadOfflineData, NOT_READY_LABEL, probeReadiness, READY_LABEL,
   type Readiness,
 } from '../offline/artifact-store'
+import { listAllAvatars } from '../avatars'
 import { compactPlace, nameTitle } from '../game/char-label'
 import { escHtml } from '../game/dcss-colors'
+import { paintAvatars, type DollRecipe } from './avatar-tiles'
 import { deleteCountdownButtons } from './delete-countdown'
 import { maybeShowExitDialog } from './lobby'
 import { openRcEditor } from './rc-editor'
 import { openGameRecords } from './records-view'
-import { readGameRecords } from '../offline/game-records'
+import { liveDollRecipe, readGameRecords } from '../offline/game-records'
 import type { XlogRecord } from '../offline/xlog'
 import { attachScrollCue } from '../util/scroll-cue'
+
+// Slot-row doll size: 48px (32px cell × 1.5) — a notch under the character
+// cards' 56px, so the thumbnail still reads at a glance without out-growing
+// the two-line row it sits beside. Mirrored by .offline-slot-doll in the CSS.
+const SLOT_DOLL_SCALE = 1.5
 
 export function buildOfflineLobbyView(
   onPlay: (name: string) => void,
@@ -219,10 +226,19 @@ export function buildOfflineLobbyView(
       (chars[b]?.when ?? 0) - (chars[a]?.when ?? 0)
       || a.localeCompare(b, undefined, { sensitivity: 'base' }))
     savesEl.innerHTML = ''
-    for (const stem of stems) savesEl.appendChild(buildSlotRow(stem, chars[stem]))
+    // One store read for the whole list — every row's doll join walks it.
+    const avatars = listAllAvatars()
+    for (const stem of stems) {
+      const rec = chars[stem]
+      savesEl.appendChild(buildSlotRow(stem, rec, liveDollRecipe(rec?.name ?? stem, avatars)))
+    }
   }
 
-  function buildSlotRow(stem: string, rec: OfflineChar | undefined): HTMLElement {
+  function buildSlotRow(
+    stem: string,
+    rec: OfflineChar | undefined,
+    doll: DollRecipe | null,
+  ): HTMLElement {
     const name = rec?.name ?? stem
     const who = nameTitle(name, rec?.title)
     // Metadata line: identity (XL, combo^god) truncates on the left; position
@@ -257,6 +273,7 @@ export function buildOfflineLobbyView(
       </div>
       <button type="button" class="offline-slot-delete" aria-label="Delete ${escHtml(name)}">✕</button>
     `
+    mountSlotDoll(row, doll)
     const resume = (): void => gatedLaunch(name)
     row.addEventListener('click', resume)
     row.addEventListener('keydown', (e) => {
@@ -273,6 +290,21 @@ export function buildOfflineLobbyView(
       showDeleteConfirm(row, stem, name)
     })
     return row
+  }
+
+  // The character's own doll at the row's left edge — the same recipe the
+  // login shelf and crypt paint (avatar-tiles.ts). Offline captures bake a
+  // PNG thumbnail off the same-origin tiles pack (avatar-bake.ts), so the
+  // common case places with no atlas fetch and works with the radio off. A
+  // box that never receives one (no bake, no reachable atlas) collapses via
+  // :empty, the same way the login strip's does — a doll-less row gives its
+  // full width to the name and metadata.
+  function mountSlotDoll(row: HTMLElement, doll: DollRecipe | null): void {
+    if (!doll) return
+    const box = document.createElement('div')
+    box.className = 'offline-slot-doll'
+    row.prepend(box)
+    void paintAvatars(box, [doll], SLOT_DOLL_SCALE, 'offline-slot-doll-img')
   }
 
   // Deleting a character is the one irreversible act in this lobby, so the

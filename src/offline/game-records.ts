@@ -1,13 +1,16 @@
 // Finished-game records: the engine's xlog logfile read straight out of
 // IDBFS — no engine needed (save-transfer.ts owns the database access rules)
 // — plus the pure sort/join helpers the records browser builds its list
-// from. Reading is safe by construction wherever the offline lobby is
-// mounted (nothing else owns the mount there); a mid-game read would just
-// see the last persist checkpoint. Paths verified live
+// from. The doll joins against the avatars store live here too, both halves
+// together: joinDollRecipe for a finished game, liveDollRecipe for the save a
+// lobby slot still holds. Reading is safe by construction wherever the
+// offline lobby is mounted (nothing else owns the mount there); a mid-game
+// read would just see the last persist checkpoint. Paths verified live
 // (dev-material/character-cards.md "Step zero").
 
-import type { Avatar } from '../avatars'
+import { avatarSlotKey, type Avatar } from '../avatars'
 import type { DollRecipe } from '../views/avatar-tiles'
+import { OFFLINE_GAME_ID, OFFLINE_WS_URL } from './offline-state'
 import { deleteOfflineFiles, readOfflineFile, writeOfflineFiles } from './save-transfer'
 import { morgueFileName, parseXlog, parseXlogLine, xlogTimeMs, type XlogRecord } from './xlog'
 
@@ -105,7 +108,7 @@ export function joinDollRecipe(rec: XlogRecord, avatars: readonly Avatar[]): Dol
   let best: Avatar | null = null
   let bestGap = Infinity
   for (const a of avatars) {
-    if (a.wsUrl !== 'local://offline' || a.username.toLowerCase() !== name) continue
+    if (a.wsUrl !== OFFLINE_WS_URL || a.username.toLowerCase() !== name) continue
     if (a.turn != null && Number.isFinite(turns) && a.turn > turns) continue
     if (!a.outcome) continue // live save — its logfile entry doesn't exist yet
     const gap = Math.abs(a.outcome.endedAt - end)
@@ -115,4 +118,17 @@ export function joinDollRecipe(rec: XlogRecord, avatars: readonly Avatar[]): Dol
     }
   }
   return best
+}
+
+// The doll for a LIVE offline save (the lobby's slot rows) — the other half
+// of the store from joinDollRecipe. The slot's current entry is its first
+// match in the newest-first list (the same entry saveAvatar upserts against),
+// which is the character the save file belongs to. An outcome on it means
+// that character finished and the engine unlinked its save, so a slot
+// carrying the name again is a different life and must not borrow the dead
+// one's doll.
+export function liveDollRecipe(name: string, avatars: readonly Avatar[]): DollRecipe | null {
+  const key = avatarSlotKey({ wsUrl: OFFLINE_WS_URL, username: name, gameId: OFFLINE_GAME_ID })
+  const cur = avatars.find((a) => avatarSlotKey(a) === key)
+  return cur && !cur.outcome ? cur : null
 }

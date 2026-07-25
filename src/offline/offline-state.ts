@@ -18,6 +18,14 @@ const KEY = 'pocketzot:offline-chars'
 // Pre-slots single-character record, migrated into KEY on first read.
 const LEGACY_KEY = 'pocketzot:offline-last'
 
+// How an offline game identifies itself to every store keyed by connection:
+// LocalConnection.wsUrl is this pseudo-URL, and app.ts boots the game view
+// under this game id (with username = the character name). Together they are
+// an offline character's avatars-store slot key — see game-records.ts, whose
+// doll joins are the only readers outside the boot path.
+export const OFFLINE_WS_URL = 'local://offline'
+export const OFFLINE_GAME_ID = 'offline'
+
 export interface OfflineChar {
   name: string
   title?: string

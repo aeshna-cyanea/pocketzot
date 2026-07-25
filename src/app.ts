@@ -5,6 +5,7 @@ import { buildLobbyView } from './views/lobby'
 import { buildOfflineLobbyView } from './views/offline-lobby'
 import { buildGameView, type SpectateTarget } from './views/game-view'
 import type { TileLoader } from './game/tiles/tile-loader'
+import { OFFLINE_GAME_ID } from './offline/offline-state'
 import { attemptResume, clearGameStart, loadPersistedResume, markProactiveClose } from './reconnect'
 import { loadSession } from './auth/session'
 
@@ -99,7 +100,7 @@ async function showOfflineGame(name: string): Promise<void> {
   // Fixture replays get no gameId, keeping avatar/crypt writes disabled —
   // same reason boot.ts excludes them from the slot-record tracker: a golden
   // capture's character isn't yours and must not mint a phantom shelf entry.
-  const gameId = params.get('engine') === 'fake' ? '' : 'offline'
+  const gameId = params.get('engine') === 'fake' ? '' : OFFLINE_GAME_ID
   state = 'game'
   conn = boot.conn
   currentUsername = name
