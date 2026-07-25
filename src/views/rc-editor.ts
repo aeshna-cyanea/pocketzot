@@ -67,7 +67,7 @@ export async function openRcEditor(onSaved: (notice: string) => void): Promise<v
       data: new TextEncoder().encode(text.value),
     }]).then(() => {
       close()
-      onSaved('Options saved. They apply from the next game start.')
+      onSaved('Options saved.')
     }).catch((e: unknown) => {
       saveBtn.disabled = false
       errEl.hidden = false

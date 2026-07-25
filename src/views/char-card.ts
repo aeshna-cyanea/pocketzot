@@ -50,7 +50,7 @@ export interface CharCardModel {
                              // live saves, whose whole card is a snapshot of
                              // the last capture, not a recorded ending
   version?: string           // "0.34.1" / "dcss-0.34"
-  origin?: string            // "On this device" | server hostname
+  origin?: string            // "Local" | server tag ("CAO")
 
   dump?: DumpRef
   doll?: DollRecipe | null
@@ -323,7 +323,10 @@ export function xlogToCard(e: XlogRecord, doll?: DollRecipe | null): CharCardMod
     duration: dur != null ? formatDuration(dur) : undefined,
     endedAt: xlogTimeMs(e['end']) ?? undefined,
     version: e['v'],
-    origin: 'On this device',
+    // Parallel with the server tag the online adapter puts here ("CAO"), not
+    // the login card's roomier "On this device" — the meta line is a middot
+    // run of short facts.
+    origin: 'Local',
     dump: morgue ? { kind: 'idbfs', path: `/crawl/morgue/${morgue}` } : undefined,
     doll,
   }
@@ -343,6 +346,8 @@ const REASON_KIND: Record<string, CardResult['kind']> = {
 const REASON_VERB: Record<string, string> = {
   won: 'Won!',
   dead: 'Died',
+  // Matches the engine's own tmsg prose ("quit the game"), which the offline
+  // adapter renders verbatim — the two adapters' cards sit side by side.
   quit: 'Quit the game',
   'bailed out': 'Bailed out',
   saved: 'Saved',
@@ -382,11 +387,11 @@ export function avatarToCard(a: Avatar): CharCardModel {
     // A live save's card is a snapshot of the last capture, not an ending —
     // qualify its age so "16 days ago" doesn't read as when the run ended.
     dateQualifier: o ? undefined : 'Last seen',
-    // The offline sentinel gameId is pure noise next to origin "On this
-    // device"; real ids ("dcss-0.34") are the closest thing to a version
-    // the store carries.
+    // The offline sentinel gameId is pure noise next to origin "Local";
+    // real ids ("dcss-0.34") are the closest thing to a version the store
+    // carries.
     version: local ? undefined : a.gameId,
-    origin: local ? 'On this device' : serverTag(a.wsUrl),
+    origin: local ? 'Local' : serverTag(a.wsUrl),
     dump: o?.dump ? { kind: 'url', href: `${o.dump}.txt` } : undefined,
     doll: a,
   }

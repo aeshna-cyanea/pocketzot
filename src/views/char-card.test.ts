@@ -98,7 +98,7 @@ describe('xlogToCard', () => {
     expect(m.duration).toBe('00:00:25')
     expect(m.endedAt).toBe(new Date(2026, 6, 20, 22, 11, 49).getTime())
     expect(m.version).toBe('0.34.1')
-    expect(m.origin).toBe('On this device')
+    expect(m.origin).toBe('Local')
     expect(m.dump).toEqual({ kind: 'idbfs', path: '/crawl/morgue/morgue-TmsgProbe-20260720-221149.txt' })
   })
 
@@ -183,9 +183,9 @@ describe('avatarToCard', () => {
     expect(avatarToCard(closed).dateQualifier).toBeUndefined()
   })
 
-  it('labels offline-store entries as on-device, dropping the sentinel gameId', () => {
+  it('labels offline-store entries as local, dropping the sentinel gameId', () => {
     const m = avatarToCard(makeAvatar({ wsUrl: 'local://offline', gameId: 'offline' }))
-    expect(m.origin).toBe('On this device')
+    expect(m.origin).toBe('Local')
     expect(m.version).toBeUndefined()
   })
 

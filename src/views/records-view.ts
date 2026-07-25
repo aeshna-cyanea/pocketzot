@@ -86,7 +86,7 @@ function openMorgue(model: CharCardModel, rec: XlogRecord, onDeleted: () => void
   const pre = view.querySelector<HTMLElement>('.records-morgue-pre')!
   void readMorgueText(dump.path).then((text) => {
     if (!view.isConnected) return
-    pre.textContent = text ?? 'The morgue file for this game is gone.'
+    pre.textContent = text ?? 'No morgue file for this game.'
     fitToWidth(pre)
   }).catch(() => {
     pre.textContent = 'Could not read the morgue file.'

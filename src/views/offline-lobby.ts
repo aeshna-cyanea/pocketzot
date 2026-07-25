@@ -59,7 +59,7 @@ export function buildOfflineLobbyView(
         <button type="button" id="offline-download" class="offline-device-btn is-accent" hidden></button>
       </div>
       <div class="lobby-actions">
-        <button type="button" id="offline-new" class="lobby-btn-primary">New character</button>
+        <button type="button" id="offline-new" class="lobby-btn-primary">New game</button>
         <form id="offline-name-form" class="offline-name-form" hidden>
           <label class="login-label">
             Character name
@@ -354,8 +354,8 @@ export function buildOfflineLobbyView(
   //
   // Readiness also gates play (gatedLaunch), but the play controls keep their
   // normal labels: with this row directly above them stating the size, the
-  // consent is on screen and adjacent, and "New character" always reads
-  // "New character".
+  // consent is on screen and adjacent, and "New game" always reads
+  // "New game".
 
   const readinessEl = view.querySelector<HTMLElement>('#offline-readiness')!
   const readyGlyphEl = view.querySelector<HTMLElement>('#offline-ready-glyph')!
@@ -420,7 +420,7 @@ export function buildOfflineLobbyView(
           r.deploy === 'unreachable' ? 'Connect once to finish the download'
             : r.deploy !== 'ok' ? 'Tile data missing'
               : migratesSaves(r)
-                ? `Finishing also installs DCSS ${r.updateVersion} — updates your saved games`
+                ? `Also installs DCSS ${r.updateVersion} — updates saved games`
                 : '9 MB left — tile data',
           r.deploy === 'ok' ? 'Finish' : undefined)
       } else if (r.update) {
@@ -476,7 +476,7 @@ export function buildOfflineLobbyView(
     }
     // The deploy serves only its current build, so finishing a partial set
     // installs any pending update along with it. A tap on a play control
-    // ("New character", a save row) is not consent to migrate saved games
+    // ("New game", a save row) is not consent to migrate saved games
     // across a game version, so hand that decision back to the status row's
     // button. Silently: the row is directly above, already says "Not ready
     // to play offline", already names what Finish would install, and is
@@ -527,7 +527,7 @@ export function buildOfflineLobbyView(
         // a microtask, not activation time.
         const file = buildExportPackFile(files, await buildStamp)
         if (await sharePack(file)) {
-          showNotice(`Backup exported (${files.length} files).`)
+          showNotice('Backup exported.')
         }
       } catch (e) {
         showNotice(`Export failed: ${String(e)}`)
@@ -582,9 +582,11 @@ export function buildOfflineLobbyView(
       void (async () => {
         try {
           const { meta, files } = unpackSave(await f.arrayBuffer())
-          const count = await writeOfflineFiles(files)
+          await writeOfflineFiles(files)
+          // The refreshed slot list below is what shows *what* landed; the
+          // notice just dates the pack it came from.
           const when = meta.exportedAt ? ` from ${meta.exportedAt.slice(0, 10)}` : ''
-          showNotice(`Imported ${count} files${when}.`)
+          showNotice(`Backup imported${when}.`)
         } catch (e) {
           showNotice(`Import failed: ${String(e)}`)
         }
