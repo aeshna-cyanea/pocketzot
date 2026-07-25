@@ -469,6 +469,12 @@ export function buildOfflineLobbyView(
         r.version ? `21 MB — DCSS ${r.version}` : '21 MB', 'Download')
     } else if (r.state === 'offline-not-cached') {
       setReadiness('warn', NOT_READY_LABEL, 'Connect once to download')
+    } else if (r.state === 'no-store') {
+      // Nothing to press: this is the one not-ready state no download can
+      // fix, so the row states the condition and stops. Games still start
+      // (gateOpen), they just fetch the engine every launch — which is what
+      // the sub-line has to convey without a lecture about secure contexts.
+      setReadiness('warn', NOT_READY_LABEL, 'No storage here — games need the network')
     } else {
       // undeployed: this checkout/deploy ships no engine. The backup row
       // stays — saves can outlive an artifact-less deploy.
@@ -480,10 +486,16 @@ export function buildOfflineLobbyView(
   // does not close it (the cached build still plays, and updating is its own
   // consented tap). A deploy that ships no artifacts opens it too: there is
   // nothing to download, so boot should fail on its own terms rather than
-  // behind a button that cannot help.
+  // behind a button that cannot help. Same reasoning for 'no-store', except
+  // boot does not fail there: the engine fetches its artifacts straight off
+  // the network when there is no cache to put them in, so a launch is the
+  // one thing that still works and gating it would dead-end the lobby
+  // entirely (which is exactly what it did — the download it ran instead
+  // throws 'cache storage unavailable' by construction).
   function gateOpen(): boolean {
     if (readiness === null) return false
-    return readiness.state === 'undeployed' || canPlayOffline(readiness)
+    return readiness.state === 'undeployed' || readiness.state === 'no-store'
+      || canPlayOffline(readiness)
   }
 
   async function refreshReadiness(): Promise<void> {

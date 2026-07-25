@@ -270,13 +270,24 @@ async function markGamedataComplete(cache: Cache, files: string[]): Promise<bool
   return true
 }
 
-async function hasMarker(name: string): Promise<boolean> {
-  if (typeof caches === 'undefined') return false
+// Marker present / absent / no cache storage at all. The third answer is a
+// real condition, not a variant of "absent": CacheStorage is a
+// secure-context-only API, so a phone pointed at a plain-http dev origin has
+// no `caches` whatsoever, and a browser can refuse to open one besides
+// (private windows). Absent is fixed by downloading; unavailable can't be
+// fixed by any button, and collapsing them offers a download that is
+// guaranteed to throw.
+async function markerState(name: string): Promise<boolean | undefined> {
+  if (typeof caches === 'undefined') return undefined
   try {
     return !!await (await caches.open(name)).match(COMPLETE_KEYS[name])
   } catch {
-    return false
+    return undefined
   }
+}
+
+async function hasMarker(name: string): Promise<boolean> {
+  return await markerState(name) === true
 }
 
 // The tiles pack for consumers outside the engine path (the doll shelf's
@@ -318,11 +329,23 @@ export type Readiness =
   | { state: 'undeployed' }
   // No network and no cached set: can't play, can't download right now.
   | { state: 'offline-not-cached' }
+  // This browser has no cache storage to keep artifacts in (markerState).
+  // Not a download away from ready — no download can succeed — but not a
+  // dead end either: the engine boots straight off the network, since
+  // fetchArtifact falls back to plain fetch on a null cache. So: playable
+  // while connected, never playable offline — a wording that stays true
+  // when the deploy is momentarily unreachable, which is why that case
+  // lands here too. Unlabelled by the game version the others carry —
+  // nothing is being installed to name.
+  | { state: 'no-store' }
 
 // Can this device play right now, cache alone? Both offline surfaces ask it
 // — the lobby to gate a launch, the login card to word its subline — and
 // they must never disagree, which is this module's whole job. The engine
 // without its tiles is not playable: a missing pack misrenders the map.
+// Note 'no-store' is deliberately false here: such a device can start a game
+// (the lobby's gate says so) but only over the network, and a home-screen
+// card promising offline play would be lying about the one case that matters.
 export const canPlayOffline = (r: Readiness): boolean => r.state === 'ready' && r.tiles
 
 // The two words for that answer, here rather than in either view: the same
@@ -334,12 +357,25 @@ export const NOT_READY_LABEL = 'Not ready to play offline'
 export async function probeReadiness(): Promise<Readiness> {
   // Read-only on purpose: rendering a screen must never clear a cache
   // (openVersionedCache mutates on build change; only boot/download do that).
-  const [engineReady, tilesReady, version] = await Promise.all([
-    hasMarker(ARTIFACT_CACHE),
+  const [engineMarker, tilesReady, version] = await Promise.all([
+    markerState(ARTIFACT_CACHE),
     hasMarker(GAMEDATA_CACHE),
     fetchVersion(),
   ])
-  if (engineReady) {
+  // No cache storage: nothing is cached and nothing can be, so the cached-set
+  // questions below are all moot. Only an undeployed answer still matters —
+  // that dead end is the same with or without storage. Unreachable folds into
+  // no-store instead: its sub-line ("games need the network") is the one
+  // instruction this device can follow, and its open gate fails a launch tap
+  // with an honest network error — where offline-not-cached would advise
+  // "Connect once to download" (unsatisfiable here: connecting lands back on
+  // no-store, which has no button) behind a closed gate whose tap runs the
+  // download and throws on the missing cache.
+  if (engineMarker === undefined) {
+    if (version.state === 'undeployed') return { state: 'undeployed' }
+    return { state: 'no-store' }
+  }
+  if (engineMarker) {
     const r: Readiness = {
       state: 'ready', tiles: tilesReady, update: false, deploy: version.state,
     }

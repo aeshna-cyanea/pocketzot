@@ -216,6 +216,42 @@ describe('probeReadiness', () => {
     expect(await probeReadiness()).toEqual(
       { state: 'ready', tiles: false, update: true, deploy: 'ok', version: '0.34.1', updateVersion: '0.35-a0' })
   })
+
+  // CacheStorage is secure-context-only, so a phone pointed at a plain-http
+  // dev origin has no `caches` at all. That must not read as "not downloaded
+  // yet": the download it would offer throws by construction, while a launch
+  // still works off the network.
+  describe('without cache storage', () => {
+    it('reports no-store rather than not-cached', async () => {
+      vi.stubGlobal('caches', undefined)
+      stubFetch(VERSION_OK)
+      expect(await probeReadiness()).toEqual({ state: 'no-store' })
+
+      // Even a labelled deploy: there is no install to name a version of.
+      stubFetch(VERSION_LABELED)
+      expect(await probeReadiness()).toEqual({ state: 'no-store' })
+    })
+
+    it('still defers to the deploy having nothing to serve', async () => {
+      vi.stubGlobal('caches', undefined)
+      stubFetch({})
+      expect(await probeReadiness()).toEqual({ state: 'undeployed' })
+
+      // An unreachable deploy is no-store too, NOT offline-not-cached: that
+      // state's "Connect once to download" can never be followed here
+      // (connecting lands back on no-store, which has no button), and its
+      // closed gate would turn a launch tap into the download's
+      // cache-storage throw.
+      stubFetch({ '/offline/version.json': null })
+      expect(await probeReadiness()).toEqual({ state: 'no-store' })
+    })
+
+    it('reports no-store when the browser refuses to open a cache', async () => {
+      vi.stubGlobal('caches', { open: () => Promise.reject(new Error('denied')) })
+      stubFetch(VERSION_OK)
+      expect(await probeReadiness()).toEqual({ state: 'no-store' })
+    })
+  })
 })
 
 describe('cachedGamedataBuild', () => {
