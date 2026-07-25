@@ -141,15 +141,18 @@ export async function openVersionedCache(
 
 // Open BOTH stores rolled to the deployed build off one version answer —
 // the only way any caller (worker boot, readiness download) acquires the
-// pair. Boot self-updates the engine on a build change, and the SW serves
-// /gamedata/local/* cache-first, so the tiles store must roll in lockstep
-// or updated engines render against the previous build's tiles (shifted
-// tile indices — trees in hallways). A single fetchVersion keying both
-// stores also can't straddle a deploy the way two independent fetches
-// (worker + window) could. Gamedata is cleared, not refetched: tile
-// requests fall through to the network of the same deploy that declared
-// the build, and the readiness surface offers to finish the download.
-// Offline boots pass null and keep the existing consistent pair.
+// pair. The SW serves /gamedata/local/* cache-first, so the tiles store
+// must roll in lockstep with the engine or an updated engine renders
+// against the previous build's tiles (shifted tile indices — trees in
+// hallways). A single fetchVersion keying both stores also can't straddle
+// a deploy the way two independent fetches (worker + window) could.
+// Gamedata is cleared, not refetched: tile requests fall through to the
+// network of the same deploy that declared the build, and the readiness
+// surface offers to finish the download.
+//
+// In practice only the readiness download passes a build: engine updates
+// are consented there, and boot passes null to pin itself to the cached
+// pair (engine.worker.ts openArtifactCache).
 export async function openOfflineStores(
   v: { build: string; version?: string } | null,
   log?: Log,
@@ -162,6 +165,22 @@ export async function openOfflineStores(
 }
 
 // --- cache-first fetch ---------------------------------------------------------
+
+// Thrown when no alternative could be served. `status` is the last HTTP
+// status seen, or 0 for a network failure — the distinction callers need to
+// tell "this deploy doesn't ship the file" from "we couldn't ask". An
+// SPA-fallback html body reports 404: the file isn't there either way.
+export class ArtifactError extends Error {
+  constructor(readonly status: number, path: string) {
+    super(`artifact ${path}: HTTP ${status || 'unreachable'}`)
+    this.name = 'ArtifactError'
+  }
+}
+
+// A confirmed "this deploy ships no such file", as opposed to any failure to
+// find out (network drop mid-download, 5xx). Only the former may be read as
+// "nothing left to fetch".
+const isAbsent = (e: unknown): boolean => e instanceof ArtifactError && e.status === 404
 
 // Cache-first fetch of one artifact; tries `paths` in order (gzipped name
 // first, plain fallback for older installs). Never caches an HTML body — a
@@ -189,7 +208,7 @@ export async function fetchArtifact(
     stats.netBytes += buf.byteLength
     return buf
   }
-  throw new Error(`artifact ${paths[0]}: HTTP ${lastStatus || 'unreachable'}`)
+  throw new ArtifactError(lastStatus, paths[0])
 }
 
 // Transparent gunzip, keyed on magic bytes rather than filename: handles
@@ -210,19 +229,35 @@ async function anyCached(cache: Cache, alts: string[]): Promise<boolean> {
   return false
 }
 
+// Are the three boot-critical artifacts in the cache? Boot asks this before
+// falling through to the network, where the deploy serves only its current
+// build (engine.worker.ts openArtifactCache). Prewarm is not part of the
+// question: it's optional at deploy time and re-seeds itself.
+export async function bootArtifactsCached(cache: Cache | null): Promise<boolean> {
+  if (!cache) return false
+  for (const alts of [ENGINE_GLUE, ENGINE_WASM, ENGINE_DATA]) {
+    if (!await anyCached(cache, alts)) return false
+  }
+  return true
+}
+
+// The build id stamped on the cached engine set (undefined = never stamped,
+// i.e. nothing has been downloaded into this store yet).
+export async function cachedEngineBuild(cache: Cache | null): Promise<string | undefined> {
+  if (!cache) return undefined
+  return (await cache.match(BUILD_KEYS[ARTIFACT_CACHE]))?.text()
+}
+
 // Verify the boot-critical engine set is actually IN the cache, then write
 // the marker. Called after any flow that attempted the full set (worker
 // boot, explicit download); returns false when something is missing (quota
 // dropped a put) so callers can surface it.
 export async function markEngineSetComplete(cache: Cache | null): Promise<boolean> {
   if (!cache) return false
-  const required = [ENGINE_GLUE, ENGINE_WASM, ENGINE_DATA]
+  if (!await bootArtifactsCached(cache)) return false
   // Prewarm is optional at deploy time, but a cached manifest with no pack
   // is a partial set — require the pair together.
-  if (await anyCached(cache, PREWARM_MANIFEST)) required.push(PREWARM_BIN)
-  for (const alts of required) {
-    if (!await anyCached(cache, alts)) return false
-  }
+  if (await anyCached(cache, PREWARM_MANIFEST) && !await anyCached(cache, PREWARM_BIN)) return false
   await cache.put(COMPLETE_KEYS[ARTIFACT_CACHE], new Response('1')).catch(() => { /* quota */ })
   return true
 }
@@ -284,6 +319,18 @@ export type Readiness =
   // No network and no cached set: can't play, can't download right now.
   | { state: 'offline-not-cached' }
 
+// Can this device play right now, cache alone? Both offline surfaces ask it
+// — the lobby to gate a launch, the login card to word its subline — and
+// they must never disagree, which is this module's whole job. The engine
+// without its tiles is not playable: a missing pack misrenders the map.
+export const canPlayOffline = (r: Readiness): boolean => r.state === 'ready' && r.tiles
+
+// The two words for that answer, here rather than in either view: the same
+// fact reaches the user from the lobby's status row and the login card, and
+// a copy edit to one has to be a copy edit to both.
+export const READY_LABEL = 'Ready to play offline'
+export const NOT_READY_LABEL = 'Not ready to play offline'
+
 export async function probeReadiness(): Promise<Readiness> {
   // Read-only on purpose: rendering a screen must never clear a cache
   // (openVersionedCache mutates on build change; only boot/download do that).
@@ -301,7 +348,7 @@ export async function probeReadiness(): Promise<Readiness> {
       const storedVersion = await (await cache.match(VERSION_KEYS[ARTIFACT_CACHE]))?.text()
       if (storedVersion) r.version = storedVersion
       if (version.state === 'ok') {
-        const stored = await (await cache.match(BUILD_KEYS[ARTIFACT_CACHE]))?.text()
+        const stored = await cachedEngineBuild(cache)
         r.update = stored !== undefined && stored !== version.build
         if (r.update && version.version !== undefined) r.updateVersion = version.version
       }
@@ -350,35 +397,47 @@ export async function downloadOfflineData(
     throw new Error('engine data did not fit in storage')
 
   if (gamedata) {
-    const files = await gamedataFileList(gamedata, stats)
-    if (files) {
-      for (const [i, f] of files.entries()) {
-        onProgress(`Downloading tiles ${i + 1}/${files.length}…`)
-        await fetchArtifact(gamedata, stats, `/gamedata/local/${f}`)
-      }
-      if (!await markGamedataComplete(gamedata, files))
-        throw new Error('tile data did not fit in storage')
+    // A deploy with no /gamedata/local at all (null, and only then) marks
+    // the empty set complete: "nothing left to fetch" is the question both
+    // the status row and the play gate ask, and leaving it unmarked would
+    // strand a gated lobby on "Download incomplete" with no download that
+    // could ever finish it. A failed lookup throws instead — marking an
+    // empty set complete because the network dropped would claim the tiles
+    // are on device forever, with no button left to fetch them.
+    const files = await gamedataFileList(gamedata, stats) ?? []
+    for (const [i, f] of files.entries()) {
+      onProgress(`Downloading tiles ${i + 1}/${files.length}…`)
+      await fetchArtifact(gamedata, stats, `/gamedata/local/${f}`)
     }
+    if (!await markGamedataComplete(gamedata, files))
+      throw new Error('tile data did not fit in storage')
   }
   return stats
 }
 
 // The gamedata file list: manifest.json when the install ships one (also
 // cached, so offline re-verification keeps working), the fixed pre-manifest
-// set otherwise. Returns null when gamedata isn't deployed at all.
+// set otherwise. Returns null ONLY for a deploy that confirmably ships no
+// gamedata; any failure to find out propagates, because the caller reads
+// null as "nothing left to fetch" and marks the empty set complete.
 async function gamedataFileList(cache: Cache, stats: FetchStats): Promise<string[] | null> {
   try {
     const raw = await fetchArtifact(cache, stats, '/gamedata/local/manifest.json')
     const files = (JSON.parse(new TextDecoder().decode(raw)) as { files?: unknown }).files
     if (Array.isArray(files) && files.every((f) => typeof f === 'string') && files.length > 0)
       return files
-  } catch { /* no manifest — older install or no gamedata */ }
+  } catch (e) {
+    // An absent or malformed manifest still falls through to the probe below
+    // (older installs ship none); an unreachable one does not.
+    if (e instanceof ArtifactError && !isAbsent(e)) throw e
+  }
   // Distinguish "no manifest but files exist" from "no gamedata deployed":
   // probe the one file every install ships.
   try {
     await fetchArtifact(cache, stats, `/gamedata/local/${GAMEDATA_FALLBACK_FILES[0]}`)
     return GAMEDATA_FALLBACK_FILES
-  } catch {
+  } catch (e) {
+    if (!isAbsent(e)) throw e
     return null
   }
 }

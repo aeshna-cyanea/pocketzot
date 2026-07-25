@@ -191,26 +191,45 @@ function nudge(): void {
 // store — plain caches.open() from this dedicated worker; the app-shell
 // service worker passes /offline/* through untouched — and kept compressed
 // at rest, gunzipped per boot via DecompressionStream (native zlib speed;
-// well under wasm-instantiation time). /offline/version.json names the
-// current build: on change the cache is cleared and refetched; when it's
-// unreachable (no network) the existing cache boots the engine anyway. The
-// mechanics live in artifact-store.ts, shared with the readiness surface
-// (offline-lobby download button) so boot and prefetch can never disagree
-// about paths or version handling.
+// well under wasm-instantiation time). The mechanics live in
+// artifact-store.ts, shared with the readiness surface (offline-lobby
+// download button) so boot and prefetch can never disagree about paths or
+// version handling.
 
 import {
-  fetchArtifact, fetchVersion, gunzipIfNeeded,
+  bootArtifactsCached, cachedEngineBuild, fetchArtifact, fetchVersion, gunzipIfNeeded,
   markEngineSetComplete, newStats, openOfflineStores,
 } from './artifact-store'
 
 const workerLog = (text: string): void => post({ type: 'log', text })
 
+// Boot is pinned to whatever build the cache already holds (null = don't
+// roll): an engine update is a consented tap on the readiness surface, never
+// a silent swap under a save in progress — which matters most across a game
+// version, where the new binary migrates the save on load. Pinning also
+// keeps the two stores in lockstep for free (neither rolls here), and skips
+// a version.json round-trip on every boot.
+//
+// Missing artifacts still fall through to the network inside fetchArtifact,
+// which self-heals a partial eviction — but only against the same build:
+// the deploy serves whatever build is current at these fixed paths, so
+// refetching one evicted piece of an older set would cache a mismatched
+// glue/wasm/data trio under the old build's stamp, and every later boot
+// would fail the same way. So on a miss (and only then — this costs a
+// round-trip we otherwise skip) check the deploy, and send a skewed device
+// to the lobby's Update rather than mixing builds behind its back.
 async function openArtifactCache(): Promise<Cache | null> {
-  const version = await fetchVersion()
-  const { engine } = await openOfflineStores(
-    version.state === 'ok' ? version : null,
-    workerLog,
-  )
+  const { engine } = await openOfflineStores(null, workerLog)
+  if (engine && !await bootArtifactsCached(engine)) {
+    const [stored, deploy] = await Promise.all([cachedEngineBuild(engine), fetchVersion()])
+    if (deploy.state === 'ok' && stored !== undefined && stored !== deploy.build)
+      // Doesn't name the lobby's button: which one is showing depends on
+      // what else survived the eviction (Update if the readiness marker is
+      // still there, Download if it isn't).
+      throw new Error(
+        'the cached engine data was evicted and this deploy has a newer build — '
+        + 'open the offline lobby to reinstall it')
+  }
   return engine
 }
 
@@ -270,12 +289,16 @@ async function start(name: string): Promise<void> {
   // seeding) that would otherwise be a silent black screen. This first line
   // is the only signal during a first boot's ~13 MB artifact download.
   post({ type: 'progress', text: 'Loading the offline engine...' })
-  const cache = await openArtifactCache()
+  // Inside the try with the fetches: opening the cache can itself refuse to
+  // boot (build skew, above), and that has to reach the user through the
+  // same exit path as a missing artifact.
+  let cache: Cache | null = null
   let factory: CrawlFactory
   let wasmBinary: Uint8Array
   let dataBuffer: ArrayBuffer
   let glueSetsCrawlDir = false
   try {
+    cache = await openArtifactCache()
     // All three artifacts go through the cache+gunzip path; wasm and data
     // are handed to the glue as bytes (wasmBinary / getPreloadedPackage), so
     // the glue performs no fetches of its own. The glue itself is fetched +
@@ -322,7 +345,7 @@ async function start(name: string): Promise<void> {
     // starred exit_reason + nonzero exit into game_ended{reason:'error'}.
     post({
       type: 'lines',
-      chunk: `*${JSON.stringify({ msg: 'exit_reason', type: 'error', message: `Offline engine not installed or unreachable (${String(e)}).` })}\n`,
+      chunk: `*${JSON.stringify({ msg: 'exit_reason', type: 'error', message: `Offline engine not installed or unreachable (${e instanceof Error ? e.message : String(e)}).` })}\n`,
     })
     postExit(1)
     return

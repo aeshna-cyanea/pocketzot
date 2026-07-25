@@ -11,7 +11,7 @@ import { listAvatars } from '../avatars'
 import { paintAvatars } from './avatar-tiles'
 import { openCrypt } from './crypt-view'
 import { getOfflineChars, loadOfflineSlots, type OfflineChar } from '../offline/offline-state'
-import { probeReadiness } from '../offline/artifact-store'
+import { canPlayOffline, NOT_READY_LABEL, probeReadiness } from '../offline/artifact-store'
 import { compactPlace, nameTitle } from '../game/char-label'
 import { escHtml } from '../game/dcss-colors'
 
@@ -321,7 +321,7 @@ export function buildLoginView(
     let notReady = false
     const applyReadiness = (): void => {
       if (!notReady) return
-      sub.textContent = 'Not downloaded'
+      sub.textContent = NOT_READY_LABEL
       count.textContent = ''
     }
     const guess = getOfflineChars()
@@ -335,7 +335,7 @@ export function buildLoginView(
         view.querySelector('#offline-section')?.remove()
         return
       }
-      notReady = r.state !== 'ready'
+      notReady = !canPlayOffline(r)
       applyReadiness()
     })
     card.addEventListener('click', () => {

@@ -260,6 +260,38 @@ describe('downloadOfflineData', () => {
       { state: 'ready', tiles: true, update: false, deploy: 'ok', version: '0.34.1' })
   })
 
+  it('converges to ready on a deploy that ships no tiles at all', async () => {
+    // Nothing left to fetch is what both the status row and the play gate
+    // ask; leaving the empty set unmarked would strand the gate forever.
+    stubFetch({
+      ...VERSION_OK,
+      '/offline/crawl.js': { body: 'glue' },
+      '/offline/crawl.wasm.gz': { body: 'wasm' },
+      '/offline/crawl.data.gz': { body: 'data' },
+    })
+    await downloadOfflineData(() => {})
+    expect(await probeReadiness()).toEqual(
+      { state: 'ready', tiles: true, update: false, deploy: 'ok' })
+  })
+
+  it('does not mark the tiles set complete when the file list is unreachable', async () => {
+    // A mid-download network drop must not read as "this deploy ships no
+    // tiles": marking the empty set complete would claim the tiles are on
+    // device forever, with no button left that could fetch them.
+    await openVersionedCache(ARTIFACT_CACHE, { build: 'abc123' })
+    await seedEngineSet()
+    stubFetch({
+      ...VERSION_OK,
+      '/gamedata/local/manifest.json': null,
+      '/gamedata/local/enums.js': null,
+    })
+    await expect(downloadOfflineData(() => {})).rejects.toThrow(/unreachable/)
+    const tiles = store.caches.get(GAMEDATA_CACHE)!
+    expect(await tiles.match('/gamedata/local/__complete')).toBeUndefined()
+    expect(await probeReadiness()).toEqual(
+      { state: 'ready', tiles: false, update: false, deploy: 'ok' })
+  })
+
   it('refuses to run without a reachable deploy', async () => {
     stubFetch({ '/offline/version.json': null })
     await expect(downloadOfflineData(() => {})).rejects.toThrow('offline')

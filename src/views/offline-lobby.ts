@@ -18,7 +18,10 @@ import {
   buildExportPackFile, deleteOfflineSave, downloadPackFile, fetchEngineBuild,
   readOfflineFiles, unpackSave, writeOfflineFiles,
 } from '../offline/save-transfer'
-import { downloadOfflineData, probeReadiness, type Readiness } from '../offline/artifact-store'
+import {
+  canPlayOffline, downloadOfflineData, NOT_READY_LABEL, probeReadiness, READY_LABEL,
+  type Readiness,
+} from '../offline/artifact-store'
 import { compactPlace, nameTitle } from '../game/char-label'
 import { escHtml } from '../game/dcss-colors'
 import { deleteCountdownButtons } from './delete-countdown'
@@ -47,6 +50,14 @@ export function buildOfflineLobbyView(
     </div>
     <div class="lobby-scroll">
       <div id="lobby-notice" class="lobby-notice" hidden></div>
+      <div id="offline-readiness" class="offline-ready offline-device-row" hidden>
+        <span id="offline-ready-glyph" class="offline-device-glyph is-dot">●</span>
+        <span class="offline-device-lines">
+          <span id="offline-ready-status" class="offline-device-label">Checking offline data…</span>
+          <span id="offline-ready-sub" class="offline-device-sub"></span>
+        </span>
+        <button type="button" id="offline-download" class="offline-device-btn is-accent" hidden></button>
+      </div>
       <div class="lobby-actions">
         <button type="button" id="offline-new" class="lobby-btn-primary">New character</button>
         <form id="offline-name-form" class="offline-name-form" hidden>
@@ -76,14 +87,6 @@ export function buildOfflineLobbyView(
       </div>
       <h2 class="lobby-section-title">Storage</h2>
       <div class="offline-device">
-        <div id="offline-readiness" class="offline-device-row" hidden>
-          <span id="offline-ready-glyph" class="offline-device-glyph is-dot">●</span>
-          <span class="offline-device-lines">
-            <span id="offline-ready-status" class="offline-device-label">Checking offline data…</span>
-            <span id="offline-ready-sub" class="offline-device-sub" hidden></span>
-          </span>
-          <button type="button" id="offline-download" class="offline-device-btn is-accent" hidden></button>
-        </div>
         <div class="offline-device-row">
           <span class="offline-device-glyph">✎</span>
           <span class="offline-device-lines">
@@ -124,6 +127,12 @@ export function buildOfflineLobbyView(
   // One boot per mount: every path out of this view unmounts it, so a second
   // tap on any slot/start button would just double-boot the engine.
   let launched = false
+  // The play gate (see the readiness section): offline play needs the whole
+  // on-device set, so while it's incomplete every launch control runs the
+  // download first and then continues into the game it was asked for. Null
+  // until the mount-time probe lands.
+  let readiness: Readiness | null = null
+  let downloading = false
 
   view.querySelector('#lobby-back')!.addEventListener('click', onBack)
 
@@ -133,6 +142,30 @@ export function buildOfflineLobbyView(
     onPlay(name)
   }
 
+  // Every launch control routes through here: with the set on device the tap
+  // just does its thing, and without it the tap becomes the download and
+  // then the thing — rather than a dead end pointing at another row. The
+  // ready path stays synchronous so a focus() still lands inside the tap and
+  // phones raise the keyboard; the download path can't preserve that.
+  function gatedRun(action: () => void): void {
+    if (gateOpen()) {
+      action()
+      return
+    }
+    void (async () => {
+      await readinessProbe
+      if (gateOpen() || await runDownload('gate')) action()
+    })()
+  }
+
+  const gatedLaunch = (name: string): void => {
+    // Silent while a download runs: the status row is carrying its live
+    // progress label ("Downloading tiles 3/12…"), which answers why the tap
+    // did nothing better than a notice repeating it would.
+    if (launched || downloading) return
+    gatedRun(() => launch(name))
+  }
+
   const showNotice = (text: string): void => {
     noticeEl.textContent = text
     noticeEl.hidden = text === ''
@@ -140,11 +173,13 @@ export function buildOfflineLobbyView(
 
   // --- New character -------------------------------------------------------
 
-  newBtn.addEventListener('click', () => {
+  function showNameForm(): void {
     newBtn.hidden = true
     nameForm.hidden = false
     nameInput.focus()
-  })
+  }
+
+  newBtn.addEventListener('click', () => gatedRun(showNameForm))
 
   nameForm.addEventListener('submit', async (e) => {
     e.preventDefault()
@@ -161,7 +196,7 @@ export function buildOfflineLobbyView(
       return
     }
     nameError.style.display = 'none'
-    launch(name)
+    gatedLaunch(name)
   })
 
   // --- Save slots ----------------------------------------------------------
@@ -222,7 +257,7 @@ export function buildOfflineLobbyView(
       </div>
       <button type="button" class="offline-slot-delete" aria-label="Delete ${escHtml(name)}">✕</button>
     `
-    const resume = (): void => launch(name)
+    const resume = (): void => gatedLaunch(name)
     row.addEventListener('click', resume)
     row.addEventListener('keydown', (e) => {
       // Only the row's own keys: Enter/Space on the nested delete button
@@ -303,6 +338,24 @@ export function buildOfflineLobbyView(
   // worker's exact fetch path without booting the engine, plus the tiles
   // gamedata the worker never touches. Hidden entirely when the deploy ships
   // no artifacts (the login card hides itself the same way).
+  //
+  // The row answers three questions in one line, so it sits at the top of the
+  // lobby — above the play controls — rather than under "Storage", which is a
+  // disk heading for a capability question:
+  //   1. am I ready?      → Ready / Not ready to play offline, three states
+  //                         total ("partly downloaded" is still not ready, it
+  //                         just costs fewer MB to fix).
+  //   2. what do I press?  → at most one button, right there.
+  //   3. when do I update? → the Update button exists only when there is an
+  //                         update, and nothing mentions updating otherwise.
+  // Ready is the common case on every launch after the first, so a yes with
+  // nothing to press renders as a flat one-line strip; anything actionable
+  // (or wrong) is promoted to a full card row.
+  //
+  // Readiness also gates play (gatedLaunch), but the play controls keep their
+  // normal labels: with this row directly above them stating the size, the
+  // consent is on screen and adjacent, and "New character" always reads
+  // "New character".
 
   const readinessEl = view.querySelector<HTMLElement>('#offline-readiness')!
   const readyGlyphEl = view.querySelector<HTMLElement>('#offline-ready-glyph')!
@@ -320,14 +373,26 @@ export function buildOfflineLobbyView(
     button?: string,
   ): void {
     readinessEl.hidden = false
+    // Quiet when the answer is yes and there is nothing to press.
+    readinessEl.classList.toggle('is-slim', tone === 'ok' && button === undefined)
     readyGlyphEl.className = `offline-device-glyph is-dot is-${tone}`
+    readyGlyphEl.textContent = tone === 'ok' ? '●' : '○'
     readyStatusEl.textContent = label
-    // null = no detail: keep the line reserved (nbsp) so the label doesn't
-    // hop vertically when a two-line state switches to download progress.
-    readySubEl.hidden = false
-    readySubEl.textContent = sub ?? ' '
+    // Empty sub collapses (CSS :empty) — the row's min-height holds the
+    // shape, so nothing hops when a state switches to download progress.
+    readySubEl.textContent = sub ?? ''
     downloadBtn.hidden = button === undefined
     if (button !== undefined) downloadBtn.textContent = button
+  }
+
+  // Same game version = a rebuild, and updating is a nothing-burger. A
+  // different one is not: the new binary migrates saved games forward on
+  // load with no way back. Every surface that can start a download asks this
+  // before wording itself.
+  function migratesSaves(r: Readiness): boolean {
+    return r.state === 'ready' && r.update
+      && r.updateVersion !== undefined && r.version !== undefined
+      && r.updateVersion !== r.version
   }
 
   function renderReadiness(r: Readiness): void {
@@ -335,30 +400,43 @@ export function buildOfflineLobbyView(
     // deploy/cache declares one (version.json `version`, __version stamp —
     // artifact-store.ts); older installs fall back to the unversioned copy.
     if (r.state === 'ready') {
-      if (r.update) {
-        setReadiness('ok', 'Ready for offline play',
-          r.updateVersion ? `Update available — DCSS ${r.updateVersion}` : 'Engine update available',
+      // Tiles before updates: an available update still plays, a missing
+      // tiles half does not — and this row must never read "ready" while
+      // gateOpen() is shut, which is exactly what it would do in the state
+      // that has both.
+      if (!r.tiles) {
+        // Engine cached but the tiles half of the set is missing (an
+        // interrupted download, or partial eviction). Tiles aren't optional
+        // — a stale or absent pack misrenders the map — so this is still
+        // "not ready", it just costs less to fix. The button only appears
+        // when a download could succeed; an unreachable deploy gets the
+        // remedy instead, an artifact-less one no false advice.
+        //
+        // The deploy only serves its current build at the artifact paths, so
+        // finishing necessarily takes any pending update with it. When that
+        // crosses a game version, the sub-line says so — pressing the button
+        // is then the consent for both.
+        setReadiness('warn', NOT_READY_LABEL,
+          r.deploy === 'unreachable' ? 'Connect once to finish the download'
+            : r.deploy !== 'ok' ? 'Tile data missing'
+              : migratesSaves(r)
+                ? `Finishing also installs DCSS ${r.updateVersion} — updates your saved games`
+                : '9 MB left — tile data',
+          r.deploy === 'ok' ? 'Finish' : undefined)
+      } else if (r.update) {
+        setReadiness('ok', READY_LABEL,
+          r.updateVersion === undefined ? 'Update available'
+            : migratesSaves(r) ? `DCSS ${r.updateVersion} available — updates your saved games`
+              : `DCSS ${r.updateVersion} available`,
           'Update')
-      } else if (!r.tiles) {
-        // Engine cached but the tiles half of the set is missing (legacy
-        // partial download, or a boot rolled the caches to a new build).
-        // Tiles aren't optional — a stale or absent pack misrenders the
-        // map — so present it as unfinished, not as an add-on. The button
-        // only appears when a download could succeed; an unreachable
-        // deploy gets the remedy, an artifact-less one no false advice.
-        setReadiness('warn', 'Download incomplete',
-          r.deploy === 'unreachable'
-            ? 'Tile data missing — connect to finish the download'
-            : r.version ? `DCSS ${r.version} — tile data missing` : 'Tile data missing',
-          r.deploy === 'ok' ? 'Finish download ~9 MB' : undefined)
       } else {
-        setReadiness('ok', 'Ready for offline play',
-          r.version ? `DCSS ${r.version} — engine and tiles` : 'Engine and tiles downloaded')
+        setReadiness('ok', READY_LABEL, r.version ? `DCSS ${r.version}` : null)
       }
     } else if (r.state === 'not-cached') {
-      setReadiness('dim', 'Not downloaded', r.version ? `DCSS ${r.version}` : null, 'Download ~21 MB')
+      setReadiness('dim', NOT_READY_LABEL,
+        r.version ? `21 MB — DCSS ${r.version}` : '21 MB', 'Download')
     } else if (r.state === 'offline-not-cached') {
-      setReadiness('warn', 'Not downloaded', 'No connection — connect once to download')
+      setReadiness('warn', NOT_READY_LABEL, 'Connect once to download')
     } else {
       // undeployed: this checkout/deploy ships no engine. The backup row
       // stays — saves can outlive an artifact-less deploy.
@@ -366,27 +444,66 @@ export function buildOfflineLobbyView(
     }
   }
 
-  async function refreshReadiness(): Promise<void> {
-    const r = await probeReadiness()
-    if (view.isConnected) renderReadiness(r)
+  // Open when the device holds a complete set — an available engine update
+  // does not close it (the cached build still plays, and updating is its own
+  // consented tap). A deploy that ships no artifacts opens it too: there is
+  // nothing to download, so boot should fail on its own terms rather than
+  // behind a button that cannot help.
+  function gateOpen(): boolean {
+    if (readiness === null) return false
+    return readiness.state === 'undeployed' || canPlayOffline(readiness)
   }
 
-  downloadBtn.addEventListener('click', () => {
-    downloadBtn.disabled = true
-    void downloadOfflineData((label) => setReadiness('dim', label, null))
-      .then((stats) => {
-        showNotice(stats.netBytes > 0
-          ? 'Downloaded offline data.'
-          : 'Offline data verified. Everything was already downloaded.')
-      })
-      .catch((e: unknown) => showNotice(`Download failed: ${String(e instanceof Error ? e.message : e)}`))
-      .then(() => {
-        downloadBtn.disabled = false
-        return refreshReadiness()
-      })
-  })
+  async function refreshReadiness(): Promise<void> {
+    const r = await probeReadiness()
+    if (!view.isConnected) return
+    readiness = r
+    renderReadiness(r)
+  }
 
-  void refreshReadiness()
+  // The single download path, shared by the status row's button ('button')
+  // and by the play gate ('gate'). Resolves true when the device came out of
+  // it ready to play.
+  async function runDownload(from: 'button' | 'gate'): Promise<boolean> {
+    if (downloading) return false
+    // Nothing can be fetched while the deploy isn't answering — say that
+    // plainly instead of letting downloadOfflineData throw the same fact
+    // back as a failure.
+    if (readiness?.state === 'offline-not-cached'
+      || (readiness?.state === 'ready' && readiness.deploy === 'unreachable')) {
+      showNotice('No connection — connect once to download the offline data.')
+      return false
+    }
+    // The deploy serves only its current build, so finishing a partial set
+    // installs any pending update along with it. A tap on a play control
+    // ("New character", a save row) is not consent to migrate saved games
+    // across a game version, so hand that decision back to the status row's
+    // button. Silently: the row is directly above, already says "Not ready
+    // to play offline", already names what Finish would install, and is
+    // already the only button on screen — a notice restating it in warning
+    // yellow says the same thing twice.
+    if (from === 'gate' && readiness !== null && migratesSaves(readiness)) return false
+    downloading = true
+    downloadBtn.disabled = true
+    newBtn.disabled = true
+    showNotice('')
+    try {
+      // No success notice: the status row flipping to "Ready to play
+      // offline" is the confirmation, and it's the one worth reading.
+      await downloadOfflineData((label) => setReadiness('dim', label, null))
+    } catch (e) {
+      showNotice(`Download failed: ${String(e instanceof Error ? e.message : e)}`)
+    }
+    downloading = false
+    downloadBtn.disabled = false
+    newBtn.disabled = false
+    await refreshReadiness()
+    return gateOpen()
+  }
+
+  downloadBtn.addEventListener('click', () => { void runDownload('button') })
+
+  const readinessProbe = refreshReadiness()
 
   // --- Backup export/import --------------------------------------------------
   // Same pack format and rules as the __pzSave console hooks (offline/boot.ts):
