@@ -124,13 +124,6 @@ function write(map: Record<string, OfflineChar>): void {
   } catch { /* storage full/blocked — labels just degrade to the stem */ }
 }
 
-export function forgetOfflineChar(stem: string): void {
-  const map = getOfflineChars()
-  if (!(stem in map)) return
-  delete map[stem]
-  write(map)
-}
-
 // True the records up against the actual save files (stems from
 // listOfflineSaves). null = the browser couldn't be probed — records stand.
 // Drops records whose save is gone (wiped IDB, deletion from another tab);

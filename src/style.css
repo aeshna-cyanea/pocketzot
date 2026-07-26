@@ -923,7 +923,8 @@ html, body {
 
 /* ── Offline lobby (views/offline-lobby.ts) ──────────────────
    Shares the online lobby's shell (header/list/rows); these are the
-   offline-only pieces: name form, slot delete + inline confirm, backup row. */
+   offline-only pieces: name form, the slot row's doll and milestone line,
+   readiness strip, storage rows. */
 
 .offline-name-form {
   display: flex;
@@ -934,10 +935,6 @@ html, body {
   border-radius: 6px;
   padding: 0.75rem;
 }
-
-/* Slot rows carry a delete button where online rows show the "→" cue. */
-.offline-slot-row { padding-right: 0.5rem; }
-.offline-slot-row::after { content: none; }
 
 /* Slot-row doll (offline-lobby.ts mountSlotDoll): the character's tile-stack —
    or its baked thumbnail — at the row's left edge. Fixed box so the name and
@@ -954,29 +951,17 @@ html, body {
 }
 .offline-slot-doll:empty { display: none; }
 
-/* Slot-row metadata line: identity left (truncates), position pinned right
-   (never truncates). Third line = latest milestone, rendered only when one
-   was captured. */
-.offline-slot-meta {
-  display: flex;
-  align-items: baseline;
-  gap: 0.6em;
-  font-size: 0.85rem;
-  color: var(--text-dim);
-}
-.offline-slot-meta-left {
-  flex: 0 1 auto;
-  min-width: 0;
+/* The slot row's meta line carries more than an online row's (identity, place,
+   turn) beside a doll, so it truncates instead of wrapping the row onto a
+   fourth line — the same treatment as the milestone line under it. */
+.offline-slot-row .lobby-game-info {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.offline-slot-meta-right {
-  flex: 0 0 auto;
-  margin-left: auto;
-  white-space: nowrap;
-}
-.offline-slot-meta-right:empty { display: none; }
+
+/* Third slot-row line = latest milestone, rendered only when one was
+   captured (the two above it are the shared .lobby-game-* row lines). */
 .offline-slot-milestone {
   font-size: 0.8rem;
   font-style: italic;
@@ -986,6 +971,10 @@ html, body {
   white-space: nowrap;
 }
 
+/* The offline surfaces' delete affordance: a bare ✕ at a row's right edge
+   (records-view's morgue cards). Slot rows have none — a saved character goes
+   away by quitting it in-game, so its row is tap-to-resume like the online
+   lobby's, arrow cue and all. */
 .offline-slot-delete {
   flex: 0 0 auto;
   min-width: 36px;
@@ -1003,22 +992,9 @@ html, body {
 }
 .offline-slot-delete:active { background: var(--surface2); }
 
-/* Confirm state stays a single line: the name label ellipsizes, the buttons
-   never wrap. The Delete button counts down taps ("Delete in 3" → 2 → 1) —
-   fixed-width text in the mono font, so it doesn't jiggle. */
-.offline-slot-row.is-confirming {
-  cursor: default;
-  gap: 0.5rem;
-}
-.offline-slot-confirm-label {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.85rem;
-  color: var(--warn);
-}
+/* The confirm pair (delete-countdown.ts) never wraps. The Delete button counts
+   down taps ("Delete in 3" → 2 → 1) — fixed-width text in the mono font, so it
+   doesn't jiggle. */
 .offline-slot-confirm-del,
 .offline-slot-confirm-cancel {
   flex: 0 0 auto;
@@ -4768,7 +4744,7 @@ html, body {
 }
 .records-morgue-del { margin-left: 0.5rem; }
 /* Delete confirm swapped into the header's right side (title+✕ removed);
-   reuses the slot-confirm label/button styles. */
+   reuses the shared confirm-button styles. */
 .records-morgue-confirm {
   margin-left: auto;
   display: flex;

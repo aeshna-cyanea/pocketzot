@@ -7,15 +7,15 @@
 // supply the display meta and stand in alone when the probe is unavailable.
 //
 // Mounted only while no engine runs (games mount the game view in its place),
-// which is what makes import/delete safe here — nothing else owns IDBFS.
+// which is what makes import safe here — nothing else owns IDBFS.
 
 import type { GameExit } from '../ws/types'
 import {
-  forgetOfflineChar, loadOfflineSlots, slotStem,
+  loadOfflineSlots, slotStem,
   validateOfflineName, OFFLINE_NAME_MAX, type OfflineChar,
 } from '../offline/offline-state'
 import {
-  buildExportPackFile, deleteOfflineSave, downloadPackFile, fetchEngineBuild,
+  buildExportPackFile, downloadPackFile, fetchEngineBuild,
   readOfflineFiles, unpackSave, writeOfflineFiles,
 } from '../offline/save-transfer'
 import {
@@ -26,7 +26,6 @@ import { listAllAvatars } from '../avatars'
 import { compactPlace, nameTitle } from '../game/char-label'
 import { escHtml } from '../game/dcss-colors'
 import { paintAvatars, type DollRecipe } from './avatar-tiles'
-import { deleteCountdownButtons } from './delete-countdown'
 import { maybeShowExitDialog } from './lobby'
 import { openRcEditor } from './rc-editor'
 import { openGameRecords } from './records-view'
@@ -87,9 +86,7 @@ export function buildOfflineLobbyView(
           <div class="lobby-game-toprow">
             <span class="lobby-game-user">Scores and morgues</span>
           </div>
-          <div class="offline-slot-meta">
-            <span class="offline-slot-meta-left" id="offline-records-sub"></span>
-          </div>
+          <span class="lobby-game-info" id="offline-records-sub"></span>
         </div>
       </div>
       <h2 class="lobby-section-title">Storage</h2>
@@ -241,18 +238,17 @@ export function buildOfflineLobbyView(
   ): HTMLElement {
     const name = rec?.name ?? stem
     const who = nameTitle(name, rec?.title)
-    // Metadata line: identity (XL, combo^god) truncates on the left; position
-    // (turn, place) is pinned right and never truncates. The combo comes from
-    // milestone snapshots, everything else from live player deltas
+    // Metadata line: one left-aligned run in the online lobby's own idiom
+    // (lobby.ts buildRow) — identity first, then where and how long. The combo
+    // comes from milestone snapshots, everything else from live player deltas
     // (offline-state.ts).
-    const left: string[] = []
-    if (rec?.xl != null) left.push(`XL${rec.xl}`)
-    if (rec?.char) left.push(rec.god ? `${rec.char}^${rec.god}` : rec.char)
-    else if (rec?.god) left.push(rec.god)
-    const right: string[] = []
-    if (rec?.turn != null) right.push(`T:${rec.turn}`)
-    if (rec?.place) right.push(compactPlace(rec.place, rec.depth))
-    if (left.length === 0 && right.length === 0) left.push('Saved game')
+    const parts: string[] = []
+    if (rec?.xl != null) parts.push(`XL${rec.xl}`)
+    if (rec?.char) parts.push(rec.god ? `${rec.char}^${rec.god}` : rec.char)
+    else if (rec?.god) parts.push(rec.god)
+    if (rec?.place) parts.push(compactPlace(rec.place, rec.depth))
+    if (rec?.turn != null) parts.push(`T:${rec.turn}`)
+    if (parts.length === 0) parts.push('Saved game')
 
     const row = document.createElement('div')
     row.className = 'lobby-game-row offline-slot-row'
@@ -265,29 +261,18 @@ export function buildOfflineLobbyView(
         <div class="lobby-game-toprow">
           <span class="lobby-game-user">${escHtml(who)}</span>
         </div>
-        <div class="offline-slot-meta">
-          <span class="offline-slot-meta-left">${escHtml(left.join(' '))}</span>
-          <span class="offline-slot-meta-right">${escHtml(right.join(' '))}</span>
-        </div>
+        <span class="lobby-game-info">${escHtml(parts.join(' '))}</span>
         ${rec?.milestone ? `<span class="offline-slot-milestone">${escHtml(rec.milestone)}</span>` : ''}
       </div>
-      <button type="button" class="offline-slot-delete" aria-label="Delete ${escHtml(name)}">✕</button>
     `
     mountSlotDoll(row, doll)
     const resume = (): void => gatedLaunch(name)
     row.addEventListener('click', resume)
     row.addEventListener('keydown', (e) => {
-      // Only the row's own keys: Enter/Space on the nested delete button
-      // bubbles here, and preventDefault would swallow its activation.
-      if (e.target !== row) return
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault()
         resume()
       }
-    })
-    row.querySelector('.offline-slot-delete')!.addEventListener('click', (e) => {
-      e.stopPropagation()
-      showDeleteConfirm(row, stem, name)
     })
     return row
   }
@@ -305,31 +290,6 @@ export function buildOfflineLobbyView(
     box.className = 'offline-slot-doll'
     row.prepend(box)
     void paintAvatars(box, [doll], SLOT_DOLL_SCALE, 'offline-slot-doll-img')
-  }
-
-  // Deleting a character is the one irreversible act in this lobby, so the
-  // confirm is deliberately heavy: the row swaps to a single-line confirm
-  // armed with the shared three-tap countdown (delete-countdown.ts).
-  function showDeleteConfirm(row: HTMLElement, stem: string, name: string): void {
-    const clone = document.createElement('div')
-    clone.className = 'lobby-game-row offline-slot-row is-confirming'
-    clone.innerHTML = `<span class="offline-slot-confirm-label">Delete ${escHtml(name)}?</span>`
-    // The confirm row is one line where the slot row is two — pin the height
-    // of the row it replaces so the swap doesn't shift the list.
-    clone.style.minHeight = `${row.getBoundingClientRect().height}px`
-    const { cancelBtn, delBtn } = deleteCountdownButtons(() => {
-      void deleteOfflineSave(stem)
-        .then(() => forgetOfflineChar(stem))
-        .catch((e: unknown) => showNotice(`Could not delete the save: ${String(e)}`))
-        .then(() => refreshSaves())
-    })
-    // Cancel is a pure-UI undo: the original row (listeners intact) was never
-    // removed from memory — put it back rather than re-probing IndexedDB.
-    cancelBtn.addEventListener('click', () => {
-      clone.replaceWith(row)
-    })
-    clone.append(cancelBtn, delBtn)
-    row.replaceWith(clone)
   }
 
   // --- Past games ------------------------------------------------------------

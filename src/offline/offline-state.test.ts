@@ -6,7 +6,7 @@ import { fakeStorage } from '../test/fake-storage'
 vi.stubGlobal('localStorage', fakeStorage())
 
 import {
-  getOfflineChars, forgetOfflineChar, offlineTracker,
+  getOfflineChars, offlineTracker,
   reconcileOfflineChars, slotStem, validateOfflineName,
 } from './offline-state'
 import type { ServerMsg } from '../ws/types'
@@ -218,14 +218,6 @@ describe('reconcileOfflineChars', () => {
   it('leaves records alone when the probe is unavailable', () => {
     trackerWithRecord('Bram')
     expect(Object.keys(reconcileOfflineChars(null))).toEqual(['Bram'])
-  })
-})
-
-describe('forgetOfflineChar', () => {
-  it('removes one slot record', () => {
-    trackerWithRecord('Bram')
-    forgetOfflineChar('Bram')
-    expect(getOfflineChars()).toEqual({})
   })
 })
 

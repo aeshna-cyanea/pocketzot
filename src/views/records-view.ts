@@ -97,9 +97,8 @@ function openMorgue(model: CharCardModel, rec: XlogRecord, onDeleted: () => void
   const titleEl = view.querySelector<HTMLElement>('.records-morgue-title')!
   const xBtn = view.querySelector<HTMLButtonElement>('.records-morgue-del')!
   xBtn.addEventListener('click', () => {
-    // No "Delete X?" label: the slot rows need one to name WHICH slot, but
-    // here the record fills the screen — the buttons say the rest, and a
-    // label would truncate at phone width anyway.
+    // No "Delete X?" label: the record fills the screen, so the buttons say
+    // the rest — and a label would truncate at phone width anyway.
     const confirm = document.createElement('div')
     confirm.className = 'records-morgue-confirm'
     const { cancelBtn, delBtn } = deleteCountdownButtons(() => {

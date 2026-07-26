@@ -238,24 +238,10 @@ export async function listOfflineSaves(): Promise<string[] | null> {
   }
 }
 
-// Delete one save slot's package file. The engine keeps a whole character in
-// the single saves/<stem>.cs package; shared state (bones, morgues, scores)
-// deliberately stays. Only run while no engine is up — the caller (offline
-// lobby) exists exactly when none is.
-export async function deleteOfflineSave(stem: string): Promise<void> {
-  if (!stem || stem.includes('/')) throw new Error(`bad save stem: ${stem}`)
-  const db = await openDb()
-  try {
-    const txn = db.transaction(STORE, 'readwrite')
-    txn.objectStore(STORE).delete(`${MOUNT}/saves/${stem}.cs`)
-    await txnDone(txn)
-  } finally {
-    db.close()
-  }
-}
-
-// Delete files from the mount (missing paths are no-ops). Same safety
-// contract as deleteOfflineSave: only run while no engine is up.
+// Delete files from the mount (missing paths are no-ops). Only run while no
+// engine is up — the callers (offline lobby surfaces) exist exactly when none
+// is. Note there is deliberately no delete-a-character path: a save goes away
+// by quitting it in-game, the same as in crawl proper.
 export async function deleteOfflineFiles(paths: string[]): Promise<void> {
   for (const p of paths) {
     if (!isMountPath(p)) throw new Error(`bad path: ${p}`)
