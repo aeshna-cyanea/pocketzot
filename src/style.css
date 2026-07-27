@@ -1085,7 +1085,7 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
 }
 .offline-ready .offline-device-sub:empty { display: none; }
 /* Quiet form: no surface, no reserved height, label and detail on one line
-   ("● Ready to play offline · DCSS 0.35-a0"). It's the every-launch state,
+   ("● DCSS 0.35-a0 · Installed"). It's the every-launch state,
    so it must not sit on top of the lobby as a card. */
 .offline-ready.is-slim {
   padding: 0.1rem 0.15rem;

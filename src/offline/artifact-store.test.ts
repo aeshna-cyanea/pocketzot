@@ -357,6 +357,10 @@ describe('removeOfflineData', () => {
     // land there as a downloadable state — not as a stale "ready".
     expect(await probeReadiness()).toEqual({ state: 'not-cached', version: '0.34.1' })
     expect(await measureOfflineData()).toEqual({ engine: 0, tiles: 0, total: 0 })
+    // Neither probing nor measuring may resurrect the stores it just found
+    // absent (caches.open creates; read-only paths go via openExisting).
+    expect(store.caches.has(ARTIFACT_CACHE)).toBe(false)
+    expect(store.caches.has(GAMEDATA_CACHE)).toBe(false)
   })
 
   it('reports no storage rather than throwing when there is none', async () => {
@@ -395,5 +399,8 @@ describe('formatBytes', () => {
     expect(formatBytes(1.25 * 1048576)).toBe('1.3 MB')
     expect(formatBytes(400 * 1024)).toBe('400 KB')
     expect(formatBytes(0)).toBe('1 KB')
+    // Just under the MB line KB rounding would hit 1024; promote instead.
+    expect(formatBytes(1048200)).toBe('1.0 MB')
+    expect(formatBytes(1023 * 1024)).toBe('1023 KB')
   })
 })

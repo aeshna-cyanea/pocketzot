@@ -355,8 +355,13 @@ export function buildLoginView(
             // The whole reason ("games need a connection") is a lobby-width
             // sentence; here the fact has to stand alone.
             : r.state === 'no-store' ? "Can't be installed here"
-              // Engine cached, tiles half missing — finishable, and cheaper.
-              : r.state === 'ready' ? '9 MB download left'
+              // Engine cached, tiles half missing — finishable, and cheaper,
+              // but only while the deploy can actually serve the rest: an
+              // unreachable one gets the blocker (same as above), any other
+              // non-ok answer no false advice.
+              : r.state === 'ready'
+                ? (r.deploy === 'ok' ? '9 MB download left'
+                  : r.deploy === 'unreachable' ? 'Needs a connection once' : null)
                 : null
       if (line === null) return
       sub.textContent = line

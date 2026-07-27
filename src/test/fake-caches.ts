@@ -1,7 +1,7 @@
 // Map-backed CacheStorage shim for tests (happy-dom ships Response/fetch
 // types but no `caches`), same pattern as fake-storage.ts. Install with
 // vi.stubGlobal('caches', fakeCaches().storage). Only the surface
-// artifact-store.ts touches: open/match/put/delete/keys, string keys.
+// artifact-store.ts touches: open/has/match/put/delete/keys, string keys.
 
 export class FakeCache {
   readonly store = new Map<string, Response>()
@@ -37,6 +37,9 @@ export function fakeCaches(): { storage: unknown; caches: Map<string, FakeCache>
           caches.set(name, c)
         }
         return c
+      },
+      async has(name: string): Promise<boolean> {
+        return caches.has(name)
       },
       // Whole-store delete (removeOfflineData). Like the real thing, opening
       // the name again afterwards yields a fresh empty cache.

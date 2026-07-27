@@ -270,6 +270,17 @@ async function markGamedataComplete(cache: Cache, files: string[]): Promise<bool
   return true
 }
 
+// Open a store only if it already exists — caches.open() CREATES an absent
+// cache, so a read-only probe going through it would resurrect empty
+// pz-offline-* stores on a removed or never-installed device. Every
+// read-only path (readiness probe, measure, gamedata-build lookup) opens
+// through here; storage errors propagate for callers to map to their own
+// "unavailable" answer.
+async function openExisting(name: string): Promise<Cache | null> {
+  if (!(await caches.has(name))) return null
+  return caches.open(name)
+}
+
 // Marker present / absent / no cache storage at all. The third answer is a
 // real condition, not a variant of "absent": CacheStorage is a
 // secure-context-only API, so a phone pointed at a plain-http dev origin has
@@ -280,7 +291,9 @@ async function markGamedataComplete(cache: Cache, files: string[]): Promise<bool
 async function markerState(name: string): Promise<boolean | undefined> {
   if (typeof caches === 'undefined') return undefined
   try {
-    return !!await (await caches.open(name)).match(COMPLETE_KEYS[name])
+    const cache = await openExisting(name)
+    if (!cache) return false
+    return !!await cache.match(COMPLETE_KEYS[name])
   } catch {
     return undefined
   }
@@ -300,8 +313,8 @@ async function hasMarker(name: string): Promise<boolean> {
 export async function cachedGamedataBuild(): Promise<string | null> {
   if (typeof caches === 'undefined') return null
   try {
-    const cache = await caches.open(GAMEDATA_CACHE)
-    if (!await cache.match(COMPLETE_KEYS[GAMEDATA_CACHE])) return null
+    const cache = await openExisting(GAMEDATA_CACHE)
+    if (!cache || !await cache.match(COMPLETE_KEYS[GAMEDATA_CACHE])) return null
     const build = await (await cache.match(BUILD_KEYS[GAMEDATA_CACHE]))?.text()
     return build || null
   } catch {
@@ -490,9 +503,11 @@ async function gamedataFileList(cache: Cache, stats: FetchStats): Promise<string
 // lobby — where nothing has booted — is the only caller, same rule as backup
 // import and the RC editor.
 //
-// Returns true when storage exists and the delete ran; false when there are
-// no caches at all (nothing was installed, nothing to free). A cache the
-// browser has already evicted deletes as a no-op, which is the same outcome.
+// Returns true when CacheStorage exists and the deletes ran; false only when
+// the browser has no CacheStorage (the no-store state — nothing was ever
+// installed) or a delete rejected. The per-cache delete booleans are
+// deliberately ignored: deleting an absent or already-evicted cache is a
+// successful no-op with the same outcome, not a failure to report.
 export async function removeOfflineData(): Promise<boolean> {
   if (typeof caches === 'undefined') return false
   try {
@@ -539,7 +554,8 @@ export async function measureOfflineData(): Promise<OfflineDataSize> {
 async function measureCache(name: string): Promise<number> {
   if (typeof caches === 'undefined') return 0
   try {
-    const cache = await caches.open(name)
+    const cache = await openExisting(name)
+    if (!cache) return 0
     const keys = await cache.keys()
     const sizes = await Promise.all(keys.map(async (k) => {
       const res = await cache.match(k)
@@ -565,6 +581,9 @@ async function measureCache(name: string): Promise<number> {
 export function formatBytes(n: number): string {
   const mb = n / 1048576
   if (mb >= 10) return `${Math.round(mb)} MB`
-  if (mb >= 1) return `${mb.toFixed(1)} MB`
-  return `${Math.max(1, Math.round(n / 1024))} KB`
+  const kb = Math.max(1, Math.round(n / 1024))
+  // kb rounding can hit 1024 just under the MB line; promote instead of
+  // printing "1024 KB".
+  if (mb >= 1 || kb >= 1024) return `${mb.toFixed(1)} MB`
+  return `${kb} KB`
 }
