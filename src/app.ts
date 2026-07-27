@@ -1,4 +1,4 @@
-import type { GameConnection } from './ws/connection'
+import { WsConnection, type GameConnection } from './ws/connection'
 import type { GameExit } from './ws/types'
 import { buildLoginView } from './views/login'
 import { buildLobbyView } from './views/lobby'
@@ -136,11 +136,18 @@ function showLogin(notice?: string): void {
   state = 'login'
   clearGameStart()
   setView(buildLoginView((result) => {
-    adoptConn(result.conn)
-    currentUsername = result.username
-    currentIsGuest = result.guest ?? false
-    showLobby(currentUsername, currentIsGuest)
+    enterLobby(result.conn, result.username, result.guest ?? false)
   }, notice, () => showOfflineLobby()))
+}
+
+// Every route onto a server ends the same way: take the connection, record who
+// we are on it, show that server's lobby. The identity pair and the mounted
+// view have to move together — showGame and connLost both read it back.
+function enterLobby(c: GameConnection, username: string, guest: boolean, exit?: GameExit): void {
+  adoptConn(c)
+  currentUsername = username
+  currentIsGuest = guest
+  showLobby(username, guest, exit)
 }
 
 function showLobby(username: string, guest: boolean, exit?: GameExit): void {
@@ -153,7 +160,30 @@ function showLobby(username: string, guest: boolean, exit?: GameExit): void {
     (spectating, loader, gameId) => showGame(spectating, loader, gameId),
     () => showLogin(),
     exit,
+    guest ? switchSpectateServer : undefined,
   ))
+}
+
+// Guest-only server hop, from the lobby's header chip. The new socket is
+// opened before the old one is dropped, so a server that won't answer leaves
+// the user on the lobby they were already watching rather than stranded on
+// the login screen. A guest connection needs no login handshake — the server
+// pushes its lobby snapshot on open (see login.ts's spectate path).
+async function switchSpectateServer(wsUrl: string): Promise<void> {
+  const prev = conn
+  const next = new WsConnection(wsUrl)
+  await next.connect()
+  // The lobby stays live while we connect, so the user may have moved on — into
+  // a game they tapped (still this connection, so `state` is what catches it),
+  // or onto some other connection entirely: back to login, into the offline
+  // lobby, signed in. Whatever is on screen now wins; drop the unasked-for
+  // socket rather than closing one that something is already reading.
+  if (state !== 'lobby' || conn !== prev) {
+    next.close()
+    return
+  }
+  conn?.close()
+  enterLobby(next, '', true)
 }
 
 function showGame(spectating?: SpectateTarget, loader?: TileLoader, gameId?: string): void {
@@ -213,8 +243,7 @@ function startResume(wsUrl: string): void {
     },
     onLobby: (newConn, exit) => {
       resumeActive = false
-      adoptConn(newConn)
-      showLobby(currentUsername, currentIsGuest, exit)
+      enterLobby(newConn, currentUsername, currentIsGuest, exit)
     },
     onGiveUp: (notice) => {
       resumeActive = false

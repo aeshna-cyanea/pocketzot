@@ -114,9 +114,11 @@ export function buildLoginView(
 
         <div class="login-subsection login-spectate-section">
           <div class="login-sub-label">Spectate as guest</div>
-          <select id="spectate-select" class="login-spectate-select" aria-label="Server"></select>
+          <div class="login-spectate-row">
+            <select id="spectate-select" class="login-spectate-select" aria-label="Server"></select>
+            <button id="spectate-btn" type="button" class="login-btn login-btn-spectate">Spectate →</button>
+          </div>
           <div id="spectate-error" class="login-error" style="display:none" role="alert"></div>
-          <button id="spectate-btn" type="button" class="login-btn login-btn-spectate">Spectate →</button>
         </div>
       </section>
 
@@ -178,6 +180,10 @@ export function buildLoginView(
     o1.value = s.wsUrl; o1.textContent = s.label
     formSelect.appendChild(o1)
   }
+  // Hostnames, not the server tags: this is the home screen, where a visitor
+  // without an account is the likeliest person to use it, and "CDI" means
+  // nothing to them. The compressed row has the width for a hostname anyway
+  // (measured) — the tag belongs in the lobby chip, which genuinely doesn't.
   for (const s of SPECTATE_SERVERS) {
     const o2 = document.createElement('option')
     o2.value = s.wsUrl; o2.textContent = s.label

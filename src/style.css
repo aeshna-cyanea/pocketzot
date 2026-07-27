@@ -474,6 +474,46 @@ html, body {
 }
 .login-spectate-select:focus { border-color: var(--accent); color: var(--text); }
 
+/* Spectating stays a first-class path, but a one-line one: the server picker
+   and the go button share a row instead of stacking full-width under a label.
+   That's 37px back for the offline group below (measured, 402x874) without
+   costing a tap or hiding the path. Stretch, so the two controls are exactly
+   the same height rather than nearly.
+
+   The select's 10rem basis is a wrap threshold, not a width: it holds a
+   hostname (login.ts), and a phone narrow enough to clip that down to
+   "crawl.dc" (~320px) wraps the row back into the old full-width stack
+   instead, both children growing to fill their line. 375px keeps the single
+   row with the hostname intact, so the compression holds everywhere it helps
+   and gives way where it would cost legibility — no width breakpoint needed,
+   and none exists in this stylesheet to follow. */
+.login-spectate-row {
+  display: flex;
+  align-items: stretch;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.login-spectate-row .login-spectate-select {
+  flex: 1 1 10rem;
+  min-width: 0;
+  width: auto;
+  margin-bottom: 0;
+  /* WebKit renders a menulist select at ~23px, ignoring its vertical padding,
+     so beside the button it would sit visibly short. Pin it to the button's
+     height — which also keeps the wrapped narrow layout, where there is no
+     button on the line to stretch against, identical to the single-row one.
+     `height`, not `min-height`: WebKit honours the former on a menulist and
+     ignores the latter (measured). rem so it still tracks the root font. */
+  height: 2.25rem;
+}
+.login-spectate-row .login-btn-spectate {
+  /* Grows only to fill its own line once wrapped; on the shared row the
+     select gets the slack, since the hostname is what needs the pixels. */
+  flex: 1 0 auto;
+  width: auto;
+  padding: 0.5rem 0.85rem;
+}
+
 .login-label {
   display: flex;
   flex-direction: column;
@@ -639,8 +679,10 @@ html, body {
   cursor: pointer;
 }
 
-/* Static identity badge (non-interactive). Pill shape distinguishes it from
-   the back button next to it so the user doesn't read it as tappable. */
+/* Guest identity badge. Pill shape distinguishes it from the back button next
+   to it. Usually static (offline lobby, spectator bar) — but in the lobby of a
+   server with somewhere to switch to it is a button opening the server menu,
+   so only the non-button form disclaims tappability. */
 .lobby-account-chip.is-guest {
   cursor: default;
   background: var(--surface);
@@ -649,6 +691,7 @@ html, body {
   color: var(--text-dim);
   padding: 0.3rem 0.7rem;
 }
+button.lobby-account-chip.is-guest { cursor: pointer; }
 
 .lobby-chip-user { color: var(--accent); }
 .lobby-chip-sep  { color: var(--text-dim); }
@@ -695,6 +738,18 @@ html, body {
   white-space: nowrap;  /* the unread dot rides the label, never a 2nd line */
 }
 .lobby-account-menu-item:active { background: var(--surface2); }
+
+/* Guest server switcher (lobby.ts): the server you're on is marked, not just
+   coloured, and every row reserves the mark's width so the hostnames stay in
+   one column. Full hostnames here — the chip abbreviates because it shares a
+   line, a menu has the room to be unambiguous. */
+.lobby-server-item::before {
+  content: "✓";
+  visibility: hidden;
+  margin-right: 0.5em;
+}
+.lobby-server-item.is-current::before { visibility: visible; }
+.lobby-server-item.is-current { color: var(--accent); }
 
 .lobby-btn-primary {
   background: var(--accent);
