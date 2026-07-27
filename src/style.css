@@ -1069,46 +1069,27 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
 .offline-slot-confirm-del:active,
 .offline-slot-confirm-cancel:active { background: var(--surface2); }
 
-/* Offline readiness (offline lobby): the answer to "can I play on the
-   plane?", so it sits at the top above the play controls rather than inside
-   the Storage card below. Two shapes, same slots: a flat one-line strip when
-   the answer is yes and there's nothing to press, promoted to a bordered row
-   with a button whenever there is (download / finish / update). The element
-   carries .offline-device-row and the .offline-device-* piece classes, so
-   the promoted form IS a Storage row rather than a copy of one that drifts;
-   .offline-ready only adds the card frame the Storage card's container
-   supplies there, plus the slim form below. */
-.offline-ready {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-}
-.offline-ready .offline-device-sub:empty { display: none; }
-/* Quiet form: no surface, no reserved height, label and detail on one line
-   ("● DCSS 0.35-a0 · Installed"). It's the every-launch state,
-   so it must not sit on top of the lobby as a card. */
-.offline-ready.is-slim {
-  padding: 0.1rem 0.15rem;
-  min-height: 0;
-  background: none;
-  border-color: transparent;
-}
-.offline-ready.is-slim .offline-device-lines {
-  flex-direction: row;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0 0.4rem;
-}
-.offline-ready.is-slim .offline-device-label {
-  font-size: 0.8rem;
+/* Price of the tap, under the play controls: shown only while the on-device
+   set is incomplete, so the size a launch would spend sits with the control
+   that spends it (the game-data row that used to carry it now lives at the
+   bottom under its own heading). Indented to the button's text, dim, and
+   gone entirely when there's nothing to pay. */
+.offline-gate-note {
+  font-size: 0.75rem;
+  line-height: 1.4;
   color: var(--text-dim);
+  /* Indented to the play button's own text inset (its 1rem padding) so the
+     price hangs off the control rather than off the page margin. */
+  padding-left: 1rem;
+  margin-top: -0.15rem;
 }
-.offline-ready.is-slim .offline-device-sub::before { content: "· "; }
 
-/* "Storage" card (offline lobby): settings-style rows — status glyph,
-   two-line label, right-aligned compact actions — in one surface card, so
-   the options file and backup read as one organized device-management block
-   instead of loose paragraphs and buttons. */
+/* Device cards (offline lobby): settings-style rows — status glyph, two-line
+   label, right-aligned compact actions — in one surface card each, under
+   GAME DATA (what the app installed: the engine + tiles pack, its state and
+   size) and YOUR DATA (what you made: options file, backup). Two headings
+   rather than one "Storage" card, so a row's group says whose data it is and
+   therefore what removing it would cost. */
 .offline-device {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -1154,6 +1135,10 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   line-height: 1.35;
   color: var(--text-dim);
 }
+/* The game-data row writes its condition here every state change; an empty
+   one collapses rather than reserving a blank line (the row's min-height
+   holds the shape). */
+.offline-device-sub:empty { display: none; }
 .offline-device-btn {
   flex-shrink: 0;
   align-self: center;

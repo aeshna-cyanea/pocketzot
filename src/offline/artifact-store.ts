@@ -518,6 +518,19 @@ export async function removeOfflineData(): Promise<boolean> {
   }
 }
 
+// What the surfaces quote BEFORE anything is on the device, where there is
+// nothing to measure: the price of an install, and of finishing one that
+// only has its engine half. Declared rather than fetched — the number has to
+// be on screen the instant the probe says "not installed", and asking the
+// deploy for it would cost a round trip to say what barely changes between
+// builds. Measured off a full local install (Content-Length sums, see
+// measureOfflineData): 13,147,300 bytes of engine across 8 entries and
+// 9,812,565 of tiles across 20 — 12.5 + 9.4 = 21.9 MiB, which is what
+// formatBytes prints as "22 MB" once the set is on the device. Keep these
+// agreeing with that; recheck when the engine build changes shape.
+export const INSTALL_SIZE_LABEL = '22 MB'
+export const TILES_SIZE_LABEL = '9 MB'
+
 // Bytes on the device, split the way the download is: engine (the wasm
 // build) and tiles (the gamedata pack). Absent stores read 0, so a partial
 // or removed set measures honestly rather than throwing.

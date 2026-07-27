@@ -19,7 +19,8 @@ import {
   readOfflineFiles, unpackSave, writeOfflineFiles,
 } from '../offline/save-transfer'
 import {
-  canPlayOffline, downloadOfflineData, probeReadiness,
+  canPlayOffline, downloadOfflineData, formatBytes, INSTALL_SIZE_LABEL,
+  measureOfflineData, probeReadiness, TILES_SIZE_LABEL,
   type Readiness,
 } from '../offline/artifact-store'
 import { listAllAvatars } from '../avatars'
@@ -56,14 +57,6 @@ export function buildOfflineLobbyView(
     </div>
     <div class="lobby-scroll">
       <div id="lobby-notice" class="lobby-notice" hidden></div>
-      <div id="offline-readiness" class="offline-ready offline-device-row" hidden>
-        <span id="offline-ready-glyph" class="offline-device-glyph is-dot">●</span>
-        <span class="offline-device-lines">
-          <span id="offline-ready-status" class="offline-device-label">Checking offline data…</span>
-          <span id="offline-ready-sub" class="offline-device-sub"></span>
-        </span>
-        <button type="button" id="offline-download" class="offline-device-btn is-accent" hidden></button>
-      </div>
       <div class="lobby-actions">
         <button type="button" id="offline-new" class="lobby-btn-primary">New game</button>
         <form id="offline-name-form" class="offline-name-form" hidden>
@@ -76,6 +69,7 @@ export function buildOfflineLobbyView(
           <button type="submit" class="lobby-btn-primary">Start game</button>
         </form>
       </div>
+      <div id="offline-gate-note" class="offline-gate-note" hidden></div>
       <h2 class="lobby-section-title">Saved Games</h2>
       <div id="offline-saves" class="lobby-list">
         <div class="lobby-loading">Loading…</div>
@@ -89,7 +83,18 @@ export function buildOfflineLobbyView(
           <span class="lobby-game-info" id="offline-records-sub"></span>
         </div>
       </div>
-      <h2 class="lobby-section-title">Storage</h2>
+      <h2 class="lobby-section-title" id="offline-data-title" hidden>Game data</h2>
+      <div class="offline-device" id="offline-data-card" hidden>
+        <div id="offline-readiness" class="offline-device-row">
+          <span id="offline-ready-glyph" class="offline-device-glyph is-dot">●</span>
+          <span class="offline-device-lines">
+            <span id="offline-ready-status" class="offline-device-label">Game data</span>
+            <span id="offline-ready-sub" class="offline-device-sub">Checking…</span>
+          </span>
+          <button type="button" id="offline-download" class="offline-device-btn is-accent" hidden></button>
+        </div>
+      </div>
+      <h2 class="lobby-section-title">Your data</h2>
       <div class="offline-device">
         <div class="offline-device-row">
           <span class="offline-device-glyph">✎</span>
@@ -332,28 +337,37 @@ export function buildOfflineLobbyView(
   // no artifacts (the login card hides itself the same way).
   //
   // The row names the thing and states its condition — "DCSS 0.35-a0 /
-  // Installed", the way a settings screen lists what's on the device — rather
-  // than grading the device against a task ("Ready to play offline"). A
-  // verdict has to be re-read every launch to learn nothing; an attribute is
-  // read once and stays true. What follows from it is still on screen:
+  // Installed · 23 MB", the way a settings screen lists what's on the device
+  // — rather than grading the device against a task ("Ready to play
+  // offline"). A verdict has to be re-read every launch to learn nothing; an
+  // attribute is read once and stays true. What follows from it is still on
+  // screen:
   //   1. can I play?      → an install state, not a yes/no about me.
   //   2. what do I press?  → at most one button, right there.
   //   3. when do I update? → the Update button exists only when there is an
   //                         update, and nothing mentions updating otherwise.
-  // Installed-and-current is the common case on every launch after the first,
-  // so it renders as a flat one-line strip; anything actionable (or wrong) is
-  // promoted to a full card row.
   //
-  // Readiness also gates play (gatedLaunch), but the play controls keep their
-  // normal labels: with this row directly above them stating the size, the
-  // consent is on screen and adjacent, and "New game" always reads
-  // "New game".
+  // It sits under its own GAME DATA heading at the bottom, beside YOUR DATA,
+  // because that is where someone goes looking for a payload and its size —
+  // and because on every launch after the first it has nothing to say, which
+  // is a poor use of the space above the play controls. What DOES belong up
+  // there is the one thing the position used to carry: while the set is
+  // incomplete, the note under the play controls prices the tap that will
+  // complete it (gateNote), so consent stays adjacent to the control that
+  // spends it and "New game" still reads "New game".
 
-  const readinessEl = view.querySelector<HTMLElement>('#offline-readiness')!
+  const dataTitleEl = view.querySelector<HTMLElement>('#offline-data-title')!
+  const dataCardEl = view.querySelector<HTMLElement>('#offline-data-card')!
   const readyGlyphEl = view.querySelector<HTMLElement>('#offline-ready-glyph')!
   const readyStatusEl = view.querySelector<HTMLElement>('#offline-ready-status')!
   const readySubEl = view.querySelector<HTMLElement>('#offline-ready-sub')!
   const downloadBtn = view.querySelector<HTMLButtonElement>('#offline-download')!
+  const gateNoteEl = view.querySelector<HTMLElement>('#offline-gate-note')!
+
+  // Bumped by every state write, so a measurement that lands after the state
+  // moved on (a download finished, the probe re-ran) can't paint a size onto
+  // a row that no longer has one.
+  let sizeToken = 0
 
   // One row, four slots: status glyph (● in ok/warn/dim), the pack's name,
   // dim sub-line stating its condition, right-aligned action. Every state
@@ -364,9 +378,9 @@ export function buildOfflineLobbyView(
     sub: string | null,
     button?: string,
   ): void {
-    readinessEl.hidden = false
-    // Quiet when the answer is yes and there is nothing to press.
-    readinessEl.classList.toggle('is-slim', tone === 'ok' && button === undefined)
+    sizeToken++
+    dataTitleEl.hidden = false
+    dataCardEl.hidden = false
     readyGlyphEl.className = `offline-device-glyph is-dot is-${tone}`
     readyGlyphEl.textContent = tone === 'ok' ? '●' : '○'
     readyStatusEl.textContent = label
@@ -375,6 +389,41 @@ export function buildOfflineLobbyView(
     readySubEl.textContent = sub ?? ''
     downloadBtn.hidden = button === undefined
     if (button !== undefined) downloadBtn.textContent = button
+  }
+
+  // The size, once something is actually on the device: measured, not the
+  // declared install price, because those diverge the moment a build changes
+  // shape and this is the line someone reads to decide whether to keep it.
+  // Appended rather than rendered with the state so the row is complete
+  // before the measurement resolves — it's fast (header sums, no body
+  // reads), but it is not synchronous.
+  function appendMeasuredSize(base: string): void {
+    const token = sizeToken
+    void measureOfflineData().then(({ total }) => {
+      if (!view.isConnected || token !== sizeToken || total === 0) return
+      readySubEl.textContent = `${base} · ${formatBytes(total)}`
+    })
+  }
+
+  // The play controls' price tag: shown only while the gate is shut and only
+  // saying what the next tap does about it. Ready (the common case) and the
+  // states no download can fix leave the play controls unadorned.
+  function renderGateNote(r: Readiness | null): void {
+    const note = r === null || gateOpen() ? null
+      : r.state === 'not-cached' ? `Installs ${INSTALL_SIZE_LABEL} the first time`
+        : r.state === 'offline-not-cached' ? 'Needs a connection once to install'
+          : r.state === 'ready' && !r.tiles
+            ? (r.deploy !== 'ok' ? 'Needs a connection once to finish installing'
+              // Finishing would carry a game-version update with it, so these
+              // taps deliberately do nothing (runDownload) and the decision
+              // goes to the Install button below. Say so before the tap, not
+              // after it fails.
+              : migratesSaves(r)
+                ? `Finishing also installs DCSS ${r.updateVersion} and updates your saved games — use Install below`
+                : `Finishes a ${TILES_SIZE_LABEL} download first`)
+            : null
+    gateNoteEl.textContent = note ?? ''
+    gateNoteEl.hidden = note === null
   }
 
   // Same game version = a rebuild, and updating is a nothing-burger. A
@@ -421,7 +470,7 @@ export function buildOfflineLobbyView(
             : r.deploy !== 'ok' ? 'Partly installed · tile data missing'
               : migratesSaves(r)
                 ? `Partly installed · finishing installs DCSS ${r.updateVersion}, updating saved games`
-                : 'Partly installed · 9 MB left',
+                : `Partly installed · ${TILES_SIZE_LABEL} left`,
           r.deploy === 'ok' ? 'Install' : undefined)
       } else if (r.update) {
         setReadiness('ok', packName(r),
@@ -431,9 +480,10 @@ export function buildOfflineLobbyView(
           'Update')
       } else {
         setReadiness('ok', packName(r), 'Installed')
+        appendMeasuredSize('Installed')
       }
     } else if (r.state === 'not-cached') {
-      setReadiness('dim', packName(r), 'Not installed · 21 MB', 'Install')
+      setReadiness('dim', packName(r), `Not installed · ${INSTALL_SIZE_LABEL}`, 'Install')
     } else if (r.state === 'offline-not-cached') {
       setReadiness('warn', packName(r), 'Not installed · connect once to download')
     } else if (r.state === 'no-store') {
@@ -443,10 +493,14 @@ export function buildOfflineLobbyView(
       // has to convey without a lecture about secure contexts.
       setReadiness('warn', packName(r), "Can't be installed on this browser — games need a connection")
     } else {
-      // undeployed: this checkout/deploy ships no engine. The backup row
-      // stays — saves can outlive an artifact-less deploy.
-      readinessEl.hidden = true
+      // undeployed: this checkout/deploy ships no engine. The whole GAME DATA
+      // section goes, heading included — there is no payload to have an
+      // opinion about. YOUR DATA stays: saves outlive an artifact-less deploy.
+      sizeToken++
+      dataTitleEl.hidden = true
+      dataCardEl.hidden = true
     }
+    renderGateNote(r)
   }
 
   // Open when the device holds a complete set — an available engine update
@@ -487,17 +541,19 @@ export function buildOfflineLobbyView(
     }
     // The deploy serves only its current build, so finishing a partial set
     // installs any pending update along with it. A tap on a play control
-    // ("New game", a save row) is not consent to migrate saved games
-    // across a game version, so hand that decision back to the status row's
-    // button. Silently: the row is directly above, already says the pack is
-    // partly installed, already names what finishing would install, and is
-    // already the only button on screen — a notice restating it in warning
-    // yellow says the same thing twice.
+    // ("New game", a save row) is not consent to migrate saved games across a
+    // game version, so hand that decision back to the Install button in the
+    // game-data card. Silently, because the note under the play controls
+    // already says that in advance (renderGateNote) — the tap doing nothing
+    // is the note's claim coming true, not an unexplained dead end.
     if (from === 'gate' && readiness !== null && migratesSaves(readiness)) return false
     downloading = true
     downloadBtn.disabled = true
     newBtn.disabled = true
     showNotice('')
+    // The note prices a tap that is now happening; the row below carries the
+    // live progress from here.
+    gateNoteEl.hidden = true
     try {
       // No success notice: the status row flipping to "Installed" is the
       // confirmation, and it's the one worth reading. Progress goes in the

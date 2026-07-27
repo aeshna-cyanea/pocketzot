@@ -11,7 +11,10 @@ import { listAvatars } from '../avatars'
 import { paintAvatars } from './avatar-tiles'
 import { openCrypt } from './crypt-view'
 import { getOfflineChars, loadOfflineSlots, type OfflineChar } from '../offline/offline-state'
-import { canPlayOffline, probeReadiness, type Readiness } from '../offline/artifact-store'
+import {
+  canPlayOffline, INSTALL_SIZE_LABEL, probeReadiness, TILES_SIZE_LABEL,
+  type Readiness,
+} from '../offline/artifact-store'
 import { compactPlace, nameTitle } from '../game/char-label'
 import { escHtml } from '../game/dcss-colors'
 
@@ -346,8 +349,8 @@ export function buildLoginView(
         // The price, not the state: the card's title is an action ("New
         // game", a character), so the line under it reads as what that tap
         // costs. The lobby row is about the pack itself and says "Not
-        // installed · 21 MB" there.
-        : r.state === 'not-cached' ? '21 MB download'
+        // installed · 22 MB" there.
+        : r.state === 'not-cached' ? `${INSTALL_SIZE_LABEL} download`
           // Same size, and the tap can't spend it yet — so the blocker
           // replaces the price rather than qualifying it.
           : r.state === 'offline-not-cached' ? 'Needs a connection once'
@@ -360,7 +363,7 @@ export function buildLoginView(
               // unreachable one gets the blocker (same as above), any other
               // non-ok answer no false advice.
               : r.state === 'ready'
-                ? (r.deploy === 'ok' ? '9 MB download left'
+                ? (r.deploy === 'ok' ? `${TILES_SIZE_LABEL} download left`
                   : r.deploy === 'unreachable' ? 'Needs a connection once' : null)
                 : null
       if (line === null) return
