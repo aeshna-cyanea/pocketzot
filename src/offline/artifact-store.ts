@@ -348,11 +348,10 @@ export type Readiness =
 // card promising offline play would be lying about the one case that matters.
 export const canPlayOffline = (r: Readiness): boolean => r.state === 'ready' && r.tiles
 
-// The two words for that answer, here rather than in either view: the same
-// fact reaches the user from the lobby's status row and the login card, and
-// a copy edit to one has to be a copy edit to both.
-export const READY_LABEL = 'Ready to play offline'
-export const NOT_READY_LABEL = 'Not ready to play offline'
+// Neither surface renders that answer as a verdict ("Ready to play offline"
+// / "Not ready…"). Both state what is on the device and what it costs — the
+// payload has a name and a size, and a capability follows from those — so
+// the wording lives in the views, next to the state each one shows.
 
 export async function probeReadiness(): Promise<Readiness> {
   // Read-only on purpose: rendering a screen must never clear a cache

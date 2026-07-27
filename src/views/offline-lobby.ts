@@ -19,7 +19,7 @@ import {
   readOfflineFiles, unpackSave, writeOfflineFiles,
 } from '../offline/save-transfer'
 import {
-  canPlayOffline, downloadOfflineData, NOT_READY_LABEL, probeReadiness, READY_LABEL,
+  canPlayOffline, downloadOfflineData, probeReadiness,
   type Readiness,
 } from '../offline/artifact-store'
 import { listAllAvatars } from '../avatars'
@@ -324,25 +324,25 @@ export function buildOfflineLobbyView(
     })
   }).catch(() => {}) // no records row on a probe failure — nothing to browse
 
-  // --- Readiness: "am I ready for the flight?" -------------------------------
+  // --- Game data ------------------------------------------------------------
   // A probe, never a stored flag (artifact-store.ts): the status re-checks the
   // caches at mount and after every download. The button runs the engine
   // worker's exact fetch path without booting the engine, plus the tiles
   // gamedata the worker never touches. Hidden entirely when the deploy ships
   // no artifacts (the login card hides itself the same way).
   //
-  // The row answers three questions in one line, so it sits at the top of the
-  // lobby — above the play controls — rather than under "Storage", which is a
-  // disk heading for a capability question:
-  //   1. am I ready?      → Ready / Not ready to play offline, three states
-  //                         total ("partly downloaded" is still not ready, it
-  //                         just costs fewer MB to fix).
+  // The row names the thing and states its condition — "DCSS 0.35-a0 /
+  // Installed", the way a settings screen lists what's on the device — rather
+  // than grading the device against a task ("Ready to play offline"). A
+  // verdict has to be re-read every launch to learn nothing; an attribute is
+  // read once and stays true. What follows from it is still on screen:
+  //   1. can I play?      → an install state, not a yes/no about me.
   //   2. what do I press?  → at most one button, right there.
   //   3. when do I update? → the Update button exists only when there is an
   //                         update, and nothing mentions updating otherwise.
-  // Ready is the common case on every launch after the first, so a yes with
-  // nothing to press renders as a flat one-line strip; anything actionable
-  // (or wrong) is promoted to a full card row.
+  // Installed-and-current is the common case on every launch after the first,
+  // so it renders as a flat one-line strip; anything actionable (or wrong) is
+  // promoted to a full card row.
   //
   // Readiness also gates play (gatedLaunch), but the play controls keep their
   // normal labels: with this row directly above them stating the size, the
@@ -355,9 +355,9 @@ export function buildOfflineLobbyView(
   const readySubEl = view.querySelector<HTMLElement>('#offline-ready-sub')!
   const downloadBtn = view.querySelector<HTMLButtonElement>('#offline-download')!
 
-  // One row, four slots: status glyph (● in ok/warn/dim), one-line label,
-  // dim sub-line detail, right-aligned action. Every state fills the same
-  // slots so the card never reflows into a different shape.
+  // One row, four slots: status glyph (● in ok/warn/dim), the pack's name,
+  // dim sub-line stating its condition, right-aligned action. Every state
+  // fills the same slots so the card never reflows into a different shape.
   function setReadiness(
     tone: 'ok' | 'warn' | 'dim',
     label: string,
@@ -387,10 +387,17 @@ export function buildOfflineLobbyView(
       && r.updateVersion !== r.version
   }
 
+  // The label slot names the pack by its game version ("DCSS 0.34.1") when
+  // the deploy/cache declares one (version.json `version`, __version stamp —
+  // artifact-store.ts); installs predating the stamp have nothing to name, so
+  // they fall back to the generic noun and let the sub-line carry the state.
+  function packName(r: Readiness): string {
+    return r.state === 'ready' || r.state === 'not-cached'
+      ? (r.version ? `DCSS ${r.version}` : 'Game data')
+      : 'Game data'
+  }
+
   function renderReadiness(r: Readiness): void {
-    // Sub-lines name the game version of the pack ("DCSS 0.34.1") when the
-    // deploy/cache declares one (version.json `version`, __version stamp —
-    // artifact-store.ts); older installs fall back to the unversioned copy.
     if (r.state === 'ready') {
       // Tiles before updates: an available update still plays, a missing
       // tiles half does not — and this row must never read "ready" while
@@ -399,42 +406,42 @@ export function buildOfflineLobbyView(
       if (!r.tiles) {
         // Engine cached but the tiles half of the set is missing (an
         // interrupted download, or partial eviction). Tiles aren't optional
-        // — a stale or absent pack misrenders the map — so this is still
-        // "not ready", it just costs less to fix. The button only appears
-        // when a download could succeed; an unreachable deploy gets the
-        // remedy instead, an artifact-less one no false advice.
+        // — a stale or absent pack misrenders the map — so the pack is
+        // "partly installed", not installed, it just costs less to finish.
+        // The button only appears when a download could succeed; an
+        // unreachable deploy gets the remedy instead, an artifact-less one no
+        // false advice.
         //
         // The deploy only serves its current build at the artifact paths, so
         // finishing necessarily takes any pending update with it. When that
         // crosses a game version, the sub-line says so — pressing the button
         // is then the consent for both.
-        setReadiness('warn', NOT_READY_LABEL,
-          r.deploy === 'unreachable' ? 'Connect once to finish the download'
-            : r.deploy !== 'ok' ? 'Tile data missing'
+        setReadiness('warn', packName(r),
+          r.deploy === 'unreachable' ? 'Partly installed · connect once to finish'
+            : r.deploy !== 'ok' ? 'Partly installed · tile data missing'
               : migratesSaves(r)
-                ? `Also installs DCSS ${r.updateVersion} — updates saved games`
-                : '9 MB left — tile data',
-          r.deploy === 'ok' ? 'Finish' : undefined)
+                ? `Partly installed · finishing installs DCSS ${r.updateVersion}, updating saved games`
+                : 'Partly installed · 9 MB left',
+          r.deploy === 'ok' ? 'Install' : undefined)
       } else if (r.update) {
-        setReadiness('ok', READY_LABEL,
-          r.updateVersion === undefined ? 'Update available'
-            : migratesSaves(r) ? `DCSS ${r.updateVersion} available — updates your saved games`
-              : `DCSS ${r.updateVersion} available`,
+        setReadiness('ok', packName(r),
+          r.updateVersion === undefined ? 'Installed · update available'
+            : migratesSaves(r) ? `Update to DCSS ${r.updateVersion} available — updates your saved games`
+              : `Update to DCSS ${r.updateVersion} available`,
           'Update')
       } else {
-        setReadiness('ok', READY_LABEL, r.version ? `DCSS ${r.version}` : null)
+        setReadiness('ok', packName(r), 'Installed')
       }
     } else if (r.state === 'not-cached') {
-      setReadiness('dim', NOT_READY_LABEL,
-        r.version ? `21 MB — DCSS ${r.version}` : '21 MB', 'Download')
+      setReadiness('dim', packName(r), 'Not installed · 21 MB', 'Install')
     } else if (r.state === 'offline-not-cached') {
-      setReadiness('warn', NOT_READY_LABEL, 'Connect once to download')
+      setReadiness('warn', packName(r), 'Not installed · connect once to download')
     } else if (r.state === 'no-store') {
-      // Nothing to press: this is the one not-ready state no download can
-      // fix, so the row states the condition and stops. Games still start
-      // (gateOpen), they just fetch the engine every launch — which is what
-      // the sub-line has to convey without a lecture about secure contexts.
-      setReadiness('warn', NOT_READY_LABEL, 'No storage here — games need the network')
+      // Nothing to press: this is the one state no download can fix, so the
+      // row states the condition and stops. Games still start (gateOpen),
+      // they just fetch the engine every launch — which is what the sub-line
+      // has to convey without a lecture about secure contexts.
+      setReadiness('warn', packName(r), "Can't be installed on this browser — games need a connection")
     } else {
       // undeployed: this checkout/deploy ships no engine. The backup row
       // stays — saves can outlive an artifact-less deploy.
@@ -482,8 +489,8 @@ export function buildOfflineLobbyView(
     // installs any pending update along with it. A tap on a play control
     // ("New game", a save row) is not consent to migrate saved games
     // across a game version, so hand that decision back to the status row's
-    // button. Silently: the row is directly above, already says "Not ready
-    // to play offline", already names what Finish would install, and is
+    // button. Silently: the row is directly above, already says the pack is
+    // partly installed, already names what finishing would install, and is
     // already the only button on screen — a notice restating it in warning
     // yellow says the same thing twice.
     if (from === 'gate' && readiness !== null && migratesSaves(readiness)) return false
@@ -492,9 +499,12 @@ export function buildOfflineLobbyView(
     newBtn.disabled = true
     showNotice('')
     try {
-      // No success notice: the status row flipping to "Ready to play
-      // offline" is the confirmation, and it's the one worth reading.
-      await downloadOfflineData((label) => setReadiness('dim', label, null))
+      // No success notice: the status row flipping to "Installed" is the
+      // confirmation, and it's the one worth reading. Progress goes in the
+      // condition slot — the pack keeps its name throughout, so only the
+      // line that states what's happening to it changes.
+      const name = readiness ? packName(readiness) : 'Game data'
+      await downloadOfflineData((label) => setReadiness('dim', name, label))
     } catch (e) {
       showNotice(`Download failed: ${String(e instanceof Error ? e.message : e)}`)
     }

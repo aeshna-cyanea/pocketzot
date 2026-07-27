@@ -11,7 +11,7 @@ import { listAvatars } from '../avatars'
 import { paintAvatars } from './avatar-tiles'
 import { openCrypt } from './crypt-view'
 import { getOfflineChars, loadOfflineSlots, type OfflineChar } from '../offline/offline-state'
-import { canPlayOffline, NOT_READY_LABEL, probeReadiness } from '../offline/artifact-store'
+import { canPlayOffline, probeReadiness, type Readiness } from '../offline/artifact-store'
 import { compactPlace, nameTitle } from '../game/char-label'
 import { escHtml } from '../game/dcss-colors'
 
@@ -300,6 +300,7 @@ export function buildLoginView(
       const rec = slots.length > 0
         ? Object.values(chars).sort((a, b) => b.when - a.when)[0]
         : undefined
+      hasChar = rec !== undefined
       if (!rec) {
         // No saves, or saves the browser knows nothing about (imported
         // pack, wiped localStorage) — the lobby labels the latter by stem.
@@ -317,17 +318,48 @@ export function buildLoginView(
       }
       applyReadiness()
     }
-    // Readiness, fallback-only (the card stays quiet when ready): the
-    // subline flips to the negative state so "installed the app for the
-    // flight but never downloaded" is visible from the home screen. It
-    // takes the whole line — the title still names the character, and
-    // squeezing flavor next to the warning truncates both. Applied after
-    // every setCard repaint. A deploy that ships no engine hides the whole
-    // section instead.
-    let notReady = false
+    // Readiness, in the subline. A character to resume outranks it — that's
+    // the card's whole point, and the pack is necessarily installed if
+    // there's a character to name — so this speaks in two cases: nothing
+    // installed yet (what it costs, so "installed the app for the flight but
+    // never downloaded" is visible from the home screen), and installed with
+    // nothing saved (what's on the device, so the first tap is informed).
+    // Never a verdict about the device ("Not ready to play offline"): what's
+    // installed, or what it would cost — the benefit is already on the group
+    // label above it, and the lobby is one tap away for the longer sentence.
+    // The lobby's fuller install-state wording doesn't fit here anyway: this
+    // subline ellipsizes past ~27 characters (212px of room beside the
+    // card's tag and chevron), and a truncated state is worse than a terse
+    // one. It takes the whole line; squeezing flavor next to it truncates
+    // both. Applied after every setCard repaint. A deploy that ships no
+    // engine hides the whole section instead.
+    let hasChar = false
+    let readiness: Readiness | null = null
     const applyReadiness = (): void => {
-      if (!notReady) return
-      sub.textContent = NOT_READY_LABEL
+      const r = readiness
+      if (r === null) return
+      const line = canPlayOffline(r)
+        // Installed and playable: only worth a line when there's no
+        // character to name, and only when the pack knows its own version
+        // (older installs predate the stamp — "On this device" stands).
+        ? (hasChar || r.state !== 'ready' || !r.version ? null : `DCSS ${r.version} installed`)
+        // The price, not the state: the card's title is an action ("New
+        // game", a character), so the line under it reads as what that tap
+        // costs. The lobby row is about the pack itself and says "Not
+        // installed · 21 MB" there.
+        : r.state === 'not-cached' ? '21 MB download'
+          // Same size, and the tap can't spend it yet — so the blocker
+          // replaces the price rather than qualifying it.
+          : r.state === 'offline-not-cached' ? 'Needs a connection once'
+            // Cache-less browser: no download fixes this, so don't price one.
+            // The whole reason ("games need a connection") is a lobby-width
+            // sentence; here the fact has to stand alone.
+            : r.state === 'no-store' ? "Can't be installed here"
+              // Engine cached, tiles half missing — finishable, and cheaper.
+              : r.state === 'ready' ? '9 MB download left'
+                : null
+      if (line === null) return
+      sub.textContent = line
       count.textContent = ''
     }
     const guess = getOfflineChars()
@@ -341,7 +373,7 @@ export function buildLoginView(
         view.querySelector('#offline-section')?.remove()
         return
       }
-      notReady = !canPlayOffline(r)
+      readiness = r
       applyReadiness()
     })
     card.addEventListener('click', () => {
