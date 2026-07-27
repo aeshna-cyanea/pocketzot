@@ -38,6 +38,14 @@ export function fakeCaches(): { storage: unknown; caches: Map<string, FakeCache>
         }
         return c
       },
+      // Whole-store delete (removeOfflineData). Like the real thing, opening
+      // the name again afterwards yields a fresh empty cache.
+      async delete(name: string): Promise<boolean> {
+        return caches.delete(name)
+      },
+      async keys(): Promise<string[]> {
+        return [...caches.keys()]
+      },
     },
   }
 }

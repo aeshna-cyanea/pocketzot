@@ -476,3 +476,95 @@ async function gamedataFileList(cache: Cache, stats: FetchStats): Promise<string
     return null
   }
 }
+
+// --- remove & measure ------------------------------------------------------------
+// The two things a "game data" surface needs beyond installing: how much is
+// on the device, and a way to take it off. Both are cache-only by
+// construction — the engine's IDBFS mount (saves, morgues, scores, options)
+// lives in IndexedDB and is never touched here, which is what makes removal
+// a redownload rather than data loss.
+
+// Delete both stores. Safe only while no engine is running: the worker holds
+// its cache handles open for the length of a game, and pulling the artifacts
+// out from under a live wasm module would fail its next fetch. The offline
+// lobby — where nothing has booted — is the only caller, same rule as backup
+// import and the RC editor.
+//
+// Returns true when storage exists and the delete ran; false when there are
+// no caches at all (nothing was installed, nothing to free). A cache the
+// browser has already evicted deletes as a no-op, which is the same outcome.
+export async function removeOfflineData(): Promise<boolean> {
+  if (typeof caches === 'undefined') return false
+  try {
+    await Promise.all([caches.delete(ARTIFACT_CACHE), caches.delete(GAMEDATA_CACHE)])
+    return true
+  } catch {
+    return false
+  }
+}
+
+// Bytes on the device, split the way the download is: engine (the wasm
+// build) and tiles (the gamedata pack). Absent stores read 0, so a partial
+// or removed set measures honestly rather than throwing.
+export interface OfflineDataSize {
+  engine: number
+  tiles: number
+  total: number
+}
+
+// Cheap on purpose: the cached responses are same-origin, so their
+// Content-Length survives in the stored headers and summing it never reads a
+// body. Entries without one (a chunked response, and the synthetic markers)
+// fall back to reading the blob — correct, and small enough not to matter.
+// The __build/__version/__complete entries are counted too; they are a
+// handful of bytes and excluding them would be a lie about what's on disk.
+//
+// Content-Length first is also the more useful of the two numbers, not just
+// the cheaper one: it's the bytes the install actually fetched, which is
+// what the surface quoted before the tap and what a re-download would cost
+// again. Body size is not the same figure — measured against the vite dev
+// server, the engine store's headers sum to 13 MB while its bodies sum to
+// 48 MB, because it serves the pre-gzipped artifacts with Content-Encoding
+// and the browser stores them expanded. True disk footprint is somewhere
+// between and browser-decided (it may recompress at rest), so it isn't a
+// number we can report honestly at all; the download size is.
+export async function measureOfflineData(): Promise<OfflineDataSize> {
+  const [engine, tiles] = await Promise.all([
+    measureCache(ARTIFACT_CACHE),
+    measureCache(GAMEDATA_CACHE),
+  ])
+  return { engine, tiles, total: engine + tiles }
+}
+
+async function measureCache(name: string): Promise<number> {
+  if (typeof caches === 'undefined') return 0
+  try {
+    const cache = await caches.open(name)
+    const keys = await cache.keys()
+    const sizes = await Promise.all(keys.map(async (k) => {
+      const res = await cache.match(k)
+      if (!res) return 0
+      const len = Number(res.headers.get('content-length'))
+      if (Number.isFinite(len) && len > 0) return len
+      try {
+        return (await res.blob()).size
+      } catch {
+        return 0
+      }
+    }))
+    return sizes.reduce((a, b) => a + b, 0)
+  } catch {
+    return 0
+  }
+}
+
+// One rounding rule for every surface that prints a size. Whole MB above
+// 10 MB (nobody reads "12.4 MB" differently from "12 MB" when deciding
+// whether to install), one decimal below, and KB under a megabyte so a
+// half-installed set doesn't read as "0 MB".
+export function formatBytes(n: number): string {
+  const mb = n / 1048576
+  if (mb >= 10) return `${Math.round(mb)} MB`
+  if (mb >= 1) return `${mb.toFixed(1)} MB`
+  return `${Math.max(1, Math.round(n / 1024))} KB`
+}

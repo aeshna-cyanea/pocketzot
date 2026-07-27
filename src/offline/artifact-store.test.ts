@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fakeCaches, type FakeCache } from '../test/fake-caches'
 import {
   ARTIFACT_CACHE, GAMEDATA_CACHE, cachedGamedataBuild, downloadOfflineData,
-  fetchArtifact, fetchVersion, markEngineSetComplete, newStats,
-  openOfflineStores, openVersionedCache, probeReadiness,
+  fetchArtifact, fetchVersion, formatBytes, markEngineSetComplete,
+  measureOfflineData, newStats, openOfflineStores, openVersionedCache,
+  probeReadiness, removeOfflineData,
 } from './artifact-store'
 
 // Route-map fetch stub: exact-path lookup, 404 otherwise. A `null` value
@@ -333,5 +334,66 @@ describe('downloadOfflineData', () => {
     await expect(downloadOfflineData(() => {})).rejects.toThrow('offline')
     stubFetch({})
     await expect(downloadOfflineData(() => {})).rejects.toThrow('no offline engine')
+  })
+})
+
+describe('removeOfflineData', () => {
+  it('drops both stores and leaves the device measuring not-installed', async () => {
+    stubFetch({
+      ...VERSION_LABELED,
+      '/offline/crawl.js': { body: 'glue' },
+      '/offline/crawl.wasm.gz': { body: 'wasm' },
+      '/offline/crawl.data.gz': { body: 'data' },
+      '/gamedata/local/manifest.json': { body: '{"files":["main.png"]}', type: 'application/json' },
+      '/gamedata/local/main.png': { body: 'png' },
+    })
+    await downloadOfflineData(() => {})
+    expect((await probeReadiness()).state).toBe('ready')
+
+    expect(await removeOfflineData()).toBe(true)
+    expect(store.caches.has(ARTIFACT_CACHE)).toBe(false)
+    expect(store.caches.has(GAMEDATA_CACHE)).toBe(false)
+    // The probe is the surface's only source of truth, so removal has to
+    // land there as a downloadable state — not as a stale "ready".
+    expect(await probeReadiness()).toEqual({ state: 'not-cached', version: '0.34.1' })
+    expect(await measureOfflineData()).toEqual({ engine: 0, tiles: 0, total: 0 })
+  })
+
+  it('reports no storage rather than throwing when there is none', async () => {
+    vi.stubGlobal('caches', undefined)
+    expect(await removeOfflineData()).toBe(false)
+    expect(await measureOfflineData()).toEqual({ engine: 0, tiles: 0, total: 0 })
+  })
+})
+
+describe('measureOfflineData', () => {
+  it('sums content-length per store without reading bodies', async () => {
+    const engine = await artifactCache()
+    await engine.put('/offline/crawl.wasm.gz', new Response('x', {
+      headers: { 'Content-Length': '12000000' },
+    }))
+    const tiles = await (store.storage as { open(n: string): Promise<FakeCache> }).open(GAMEDATA_CACHE)
+    await tiles.put('/gamedata/local/main.png', new Response('y', {
+      headers: { 'Content-Length': '9000000' },
+    }))
+    expect(await measureOfflineData()).toEqual({
+      engine: 12000000, tiles: 9000000, total: 21000000,
+    })
+  })
+
+  it('falls back to the body when a response carries no length', async () => {
+    const engine = await artifactCache()
+    await engine.put('/offline/crawl.js', new Response('12345'))
+    expect((await measureOfflineData()).engine).toBe(5)
+  })
+})
+
+describe('formatBytes', () => {
+  it('rounds by magnitude so no surface prints a misleading zero', () => {
+    expect(formatBytes(21 * 1048576)).toBe('21 MB')
+    expect(formatBytes(12.4 * 1048576)).toBe('12 MB')
+    expect(formatBytes(1.25 * 1048576)).toBe('1.3 MB')
+    expect(formatBytes(400 * 1024)).toBe('400 KB')
+    expect(formatBytes(0)).toBe('1 KB')
   })
 })
