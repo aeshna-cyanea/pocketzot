@@ -1,5 +1,7 @@
 // Flavor text for the crypt/sepulcher/thing
-export const CRYPT_LINES: string[] = [
+import { flavorLabel } from './flavor'
+
+export const CRYPT_LINES: readonly string[] = [
   'GAZE UPON THE EXALTED, THE AMBITIOUS, THE DISGRACED',
   'DISTURB NOT THEIR HALLOWED REPOSE',
   'MEDITATE UPON THY TRIUMPHS',
@@ -7,6 +9,5 @@ export const CRYPT_LINES: string[] = [
 ]
 
 export function pickCryptLine(): string {
-  if (CRYPT_LINES.length === 0) return ''
-  return CRYPT_LINES[Math.floor(Math.random() * CRYPT_LINES.length)]
+  return flavorLabel(CRYPT_LINES)
 }
