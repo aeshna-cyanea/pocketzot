@@ -416,10 +416,13 @@ export function buildOfflineLobbyView(
             ? (r.deploy !== 'ok' ? 'Needs a connection once to finish installing'
               // Finishing would carry a game-version update with it, so these
               // taps deliberately do nothing (runDownload) and the decision
-              // goes to the Install button below. Say so before the tap, not
-              // after it fails.
+              // goes to the game-data card's button below. Named by reading
+              // its current label (setReadiness has already painted it — the
+              // one caller runs this after) so the note can't point at a word
+              // the button isn't showing. Say so before the tap, not after it
+              // fails.
               : migratesSaves(r)
-                ? `Finishing also installs DCSS ${r.updateVersion} and updates your saved games — use Install below`
+                ? `Finishing also installs DCSS ${r.updateVersion} and updates your saved games — use ${downloadBtn.textContent} below`
                 : `Finishes a ${TILES_SIZE_LABEL} download first`)
             : null
     gateNoteEl.textContent = note ?? ''
@@ -471,7 +474,7 @@ export function buildOfflineLobbyView(
               : migratesSaves(r)
                 ? `Partly installed · finishing installs DCSS ${r.updateVersion}, updating saved games`
                 : `Partly installed · ${TILES_SIZE_LABEL} left`,
-          r.deploy === 'ok' ? 'Install' : undefined)
+          r.deploy === 'ok' ? 'Acquire' : undefined)
       } else if (r.update) {
         setReadiness('ok', packName(r),
           r.updateVersion === undefined ? 'Installed · update available'
@@ -483,7 +486,7 @@ export function buildOfflineLobbyView(
         appendMeasuredSize('Installed')
       }
     } else if (r.state === 'not-cached') {
-      setReadiness('dim', packName(r), `Not installed · ${INSTALL_SIZE_LABEL}`, 'Install')
+      setReadiness('dim', packName(r), `Not installed · ${INSTALL_SIZE_LABEL}`, 'Acquire')
     } else if (r.state === 'offline-not-cached') {
       setReadiness('warn', packName(r), 'Not installed · connect once to download')
     } else if (r.state === 'no-store') {
@@ -542,8 +545,8 @@ export function buildOfflineLobbyView(
     // The deploy serves only its current build, so finishing a partial set
     // installs any pending update along with it. A tap on a play control
     // ("New game", a save row) is not consent to migrate saved games across a
-    // game version, so hand that decision back to the Install button in the
-    // game-data card. Silently, because the note under the play controls
+    // game version, so hand that decision back to the game-data card's
+    // download button. Silently, because the note under the play controls
     // already says that in advance (renderGateNote) — the tap doing nothing
     // is the note's claim coming true, not an unexplained dead end.
     if (from === 'gate' && readiness !== null && migratesSaves(readiness)) return false
