@@ -488,8 +488,12 @@ export function buildLoginView(
     clearErrors()
     const wsUrl = spectateSelect.value
     setLastSpectateServer(wsUrl)
+    // The busy state pulses (login-busy) rather than relabelling: the
+    // button's contents never change, so it can't resize and shove the
+    // server picker's edge around mid-tap the way a "Connecting…" swap did.
     spectateBtn.disabled = true
-    spectateBtn.textContent = 'Connecting…'
+    spectateBtn.classList.add('login-busy')
+    spectateBtn.setAttribute('aria-busy', 'true')
 
     const conn = new WsConnection(wsUrl)
     try {
@@ -497,7 +501,8 @@ export function buildLoginView(
     } catch {
       showSpectateError(`Could not connect to ${labelFor(wsUrl)}`)
       spectateBtn.disabled = false
-      spectateBtn.textContent = 'Spectate →'
+      spectateBtn.classList.remove('login-busy')
+      spectateBtn.removeAttribute('aria-busy')
       return
     }
 

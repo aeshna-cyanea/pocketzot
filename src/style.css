@@ -565,6 +565,21 @@ html, body {
   cursor: default;
 }
 
+/* In-progress, as opposed to unavailable: a plain :disabled dim reads as the
+   latter, so buttons that disable themselves while a connection is in flight
+   add this class to breathe instead. Animates only opacity — never size — so
+   nothing in the row moves mid-tap. */
+.login-btn.login-busy:disabled {
+  animation: login-busy-pulse 0.9s ease-in-out infinite alternate;
+}
+@keyframes login-busy-pulse {
+  from { opacity: 0.85; }
+  to { opacity: 0.3; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .login-btn.login-busy:disabled { animation: none; }
+}
+
 .login-btn-spectate {
   background: transparent;
   color: var(--text-dim);
