@@ -4,9 +4,10 @@
 // dump aligned on a phone). Rides the crypt-view full-screen shell and is
 // opened from the offline lobby only — so no engine owns IDBFS while the
 // morgue reads (and record deletes) run. The caller passes the records it
-// already read for its row label; they only change when a game ends, which
-// unmounts the lobby — or via the morgue view's own delete, reported back
-// through `onChange` so the lobby row's count stays true.
+// already read for its row label; nothing else can touch the logfile while
+// this full-screen view is up, so the snapshot stays valid for its lifetime.
+// The morgue view's own deletes are signalled through `onChange` — the
+// caller re-reads the file rather than trusting our in-memory filter.
 
 import { listAllAvatars } from '../avatars'
 import {
@@ -20,7 +21,7 @@ import { fitToWidth } from './fit-terminal'
 
 export function openGameRecords(
   records: readonly XlogRecord[],
-  onChange?: (remaining: readonly XlogRecord[]) => void,
+  onChange?: () => void,
 ): void {
   if (document.querySelector('.records-view')) return // already open
   const { view } = mountCryptShell('records-view', `
@@ -44,7 +45,7 @@ export function openGameRecords(
       onOpen: () => openMorgue(model, rec, () => {
         live = live.filter((r) => r !== rec)
         render()
-        onChange?.(live)
+        onChange?.()
       }),
     })]
   }))

@@ -299,35 +299,37 @@ export function buildOfflineLobbyView(
 
   // --- Past games ------------------------------------------------------------
   // The section (title + entry row) appears once the logfile has at least one
-  // entry (game-records.ts). Records only change when a game ends, which
-  // unmounts this lobby — so the mount-time read stays fresh for the row's
-  // lifetime and is handed to the browser as-is.
+  // entry (game-records.ts). The row re-reads the logfile whenever an
+  // in-lobby action may have changed it — a backup import, a delete in the
+  // records browser — so its count is always the file's, never a client-side
+  // guess. (A game ending unmounts this view, so play needs no hook.)
 
   const recordsRow = view.querySelector<HTMLElement>('#offline-records-row')!
-  void readGameRecords().then((recs) => {
-    if (!view.isConnected || recs.length === 0) return
-    let live: readonly XlogRecord[] = recs
-    const subEl = view.querySelector<HTMLElement>('#offline-records-sub')!
-    const titleEl = view.querySelector<HTMLElement>('#offline-records-title')!
-    const sync = (): void => {
-      subEl.textContent = `${live.length} finished game${live.length === 1 ? '' : 's'}`
-      titleEl.hidden = live.length === 0
-      recordsRow.hidden = live.length === 0
+  const recordsSubEl = view.querySelector<HTMLElement>('#offline-records-sub')!
+  const recordsTitleEl = view.querySelector<HTMLElement>('#offline-records-title')!
+  let records: readonly XlogRecord[] = []
+  const setRecords = (recs: readonly XlogRecord[]): void => {
+    records = recs
+    const empty = recs.length === 0
+    recordsSubEl.textContent = `${recs.length} finished game${recs.length === 1 ? '' : 's'}`
+    recordsTitleEl.hidden = empty
+    recordsRow.hidden = empty
+  }
+  async function refreshRecords(): Promise<void> {
+    // A failed probe keeps the row's last state — nothing new to browse.
+    const recs = await readGameRecords().catch(() => null)
+    if (recs === null || !view.isConnected) return
+    setRecords(recs)
+  }
+  const openRecords = (): void => openGameRecords(records, () => { void refreshRecords() })
+  recordsRow.addEventListener('click', openRecords)
+  recordsRow.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      openRecords()
     }
-    sync()
-    // The browser reports deletes back so the row's count stays true.
-    const open = (): void => openGameRecords(live, (remaining) => {
-      live = remaining
-      sync()
-    })
-    recordsRow.addEventListener('click', open)
-    recordsRow.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault()
-        open()
-      }
-    })
-  }).catch(() => {}) // no records row on a probe failure — nothing to browse
+  })
+  void refreshRecords()
 
   // --- Game data ------------------------------------------------------------
   // A probe, never a stored flag (artifact-store.ts): the status re-checks the
@@ -663,7 +665,9 @@ export function buildOfflineLobbyView(
         } catch (e) {
           showNotice(`Import failed: ${String(e)}`)
         }
-        await refreshSaves()
+        // The pack can carry both save files and the logfile; refresh every
+        // surface either lands on.
+        await Promise.all([refreshSaves(), refreshRecords()])
       })()
     })
     input.click()
