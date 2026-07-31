@@ -6,12 +6,20 @@
 // morgue reads (and record deletes) run. The caller passes the records it
 // already read for its row label; nothing else can touch the logfile while
 // this full-screen view is up, so the snapshot stays valid for its lifetime.
-// The morgue view's own deletes are signalled through `onChange` — the
-// caller re-reads the file rather than trusting our in-memory filter.
+// Dolls come from each record's own morgue sidecar (game-records.ts,
+// materialized by the lobby before this opens) — a deterministic file
+// lookup rather than a store join, with the live join kept only as the
+// fallback for a record whose sidecar never landed (the lobby's materialize
+// is best-effort, and a store write can fail under storage pressure). The
+// fallback fades on its own as the avatar history rolls characters off;
+// the sidecar is what makes an old record's doll durable. Deletes are signalled
+// through `onChange` — the caller re-reads the file rather than trusting our
+// in-memory filter.
 
 import { listAllAvatars } from '../avatars'
 import {
-  deleteGameRecord, joinDollRecipe, readMorgueText, sortRecords, type RecordsSort,
+  deleteGameRecord, joinDollRecipe, readDollSidecars, readMorgueText, sortRecords,
+  type RecordsSort,
 } from '../offline/game-records'
 import type { XlogRecord } from '../offline/xlog'
 import { cardHeadline, renderCharCard, xlogToCard, type CharCardModel } from './char-card'
@@ -32,23 +40,33 @@ export function openGameRecords(
     '<div class="records-list"></div>')
 
   const listEl = view.querySelector<HTMLElement>('.records-list')!
-  // One store read, one join pass, and one card build per open (keyed by
-  // record reference — sortRecords copies the array only): re-sorts and
-  // post-delete re-renders just re-append the cached elements, so dolls
-  // never repaint.
-  const avatars = listAllAvatars()
+  // One sidecar read and one card build per open (keyed by record reference —
+  // sortRecords copies the array only): re-sorts and post-delete re-renders
+  // just re-append the cached elements, so dolls never repaint. The list
+  // fills when the read lands (a few ms — one IDBFS transaction); sort taps
+  // in that window re-render nothing and settle with the fill.
   let live: readonly XlogRecord[] = records
   let mode: RecordsSort = 'recent'
-  const cards = new Map(records.map((rec): [XlogRecord, HTMLElement] => {
-    const model = xlogToCard(rec, joinDollRecipe(rec, avatars))
-    return [rec, renderCharCard(model, {
-      onOpen: () => openMorgue(model, rec, () => {
-        live = live.filter((r) => r !== rec)
-        render()
-        onChange?.()
-      }),
-    })]
-  }))
+  let cards = new Map<XlogRecord, HTMLElement>()
+  void readDollSidecars(records)
+    .catch(() => new Map<XlogRecord, string>())
+    .then((dolls) => {
+      if (!view.isConnected) return
+      // Only read the store when something actually needs the fallback.
+      const avatars = records.some((rec) => !dolls.has(rec)) ? listAllAvatars() : []
+      cards = new Map(records.map((rec): [XlogRecord, HTMLElement] => {
+        const url = dolls.get(rec)
+        const model = xlogToCard(rec, url, url ? null : joinDollRecipe(rec, avatars))
+        return [rec, renderCharCard(model, {
+          onOpen: () => openMorgue(model, rec, () => {
+            live = live.filter((r) => r !== rec)
+            render()
+            onChange?.()
+          }),
+        })]
+      }))
+      render()
+    })
 
   function render(): void {
     listEl.innerHTML = ''
@@ -56,7 +74,10 @@ export function openGameRecords(
       listEl.innerHTML = '<div class="lobby-empty">No finished games yet.</div>'
       return
     }
-    for (const rec of sortRecords(live, mode)) listEl.append(cards.get(rec)!)
+    for (const rec of sortRecords(live, mode)) {
+      const card = cards.get(rec)
+      if (card) listEl.append(card)
+    }
   }
 
   for (const btn of view.querySelectorAll<HTMLButtonElement>('.records-sort-btn')) {

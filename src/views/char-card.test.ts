@@ -17,6 +17,11 @@ import {
 // under test, so stub it out (its own orchestration has avatar-tiles.test.ts).
 vi.mock('./avatar-tiles', () => ({
   paintAvatars: vi.fn(async () => {}),
+  bakedImg: vi.fn((url: string) => {
+    const img = document.createElement('img')
+    img.src = url
+    return img
+  }),
 }))
 
 describe('godRankLine', () => {
@@ -123,6 +128,23 @@ describe('xlogToCard', () => {
   it('shows no result line without tmsg (our engine always writes it)', () => {
     const { tmsg: _tmsg, ...rest } = rec
     expect(xlogToCard(rest).result.verb).toBe('')
+  })
+
+  it('renders a sidecar doll URL as a ready image', () => {
+    const m = xlogToCard(rec, 'data:image/png;base64,AA')
+    expect(m.dollUrl).toBe('data:image/png;base64,AA')
+    const card = renderCharCard(m)
+    const img = card.querySelector<HTMLImageElement>('.char-card-doll img')
+    expect(img?.src).toBe('data:image/png;base64,AA')
+    // No sidecar, no recipe → no doll box at all.
+    expect(renderCharCard(xlogToCard(rec)).querySelector('.char-card-doll')).toBeNull()
+  })
+
+  it('falls back to a live recipe when the sidecar is missing', () => {
+    const a = makeAvatar()
+    const m = xlogToCard(rec, undefined, a)
+    expect(m.doll).toBe(a)
+    expect(renderCharCard(m).querySelector('.char-card-doll')).not.toBeNull()
   })
 })
 

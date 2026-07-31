@@ -266,11 +266,23 @@ function contentsToBytes(c: unknown): Uint8Array | null {
 
 // Read one file's bytes from the mount, or null when it doesn't exist.
 export async function readOfflineFile(path: string): Promise<Uint8Array | null> {
+  return (await readOfflineFilesAt([path])).get(path) ?? null
+}
+
+// Read a specific set of files in one connection and transaction — absent
+// paths (and directory entries) are simply missing from the result.
+export async function readOfflineFilesAt(paths: readonly string[]): Promise<Map<string, Uint8Array>> {
+  const out = new Map<string, Uint8Array>()
+  if (paths.length === 0) return out
   const db = await openDb()
   try {
-    const v = await request(db.transaction(STORE, 'readonly').objectStore(STORE).get(path)) as
-      { contents?: unknown } | undefined
-    return contentsToBytes(v?.contents)
+    const store = db.transaction(STORE, 'readonly').objectStore(STORE)
+    await Promise.all(paths.map(async (p) => {
+      const v = await request(store.get(p)) as { contents?: unknown } | undefined
+      const data = contentsToBytes(v?.contents)
+      if (data !== null) out.set(p, data)
+    }))
+    return out
   } finally {
     db.close()
   }

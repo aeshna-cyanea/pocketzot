@@ -1,7 +1,24 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Avatar } from '../avatars'
-import { joinDollRecipe, liveDollRecipe, sortRecords, stripRecordLine } from './game-records'
+import { storeBakedDoll } from '../game/tiles/avatar-bake'
+import { dollTileSpec } from '../game/tiles/tile-view'
+import { fakeStorage } from '../test/fake-storage'
+import {
+  deleteGameRecord, dollSidecarPath, joinDollRecipe, liveDollRecipe,
+  materializeDollSidecars, readDollSidecars, sortRecords, stripRecordLine,
+} from './game-records'
+import { deleteOfflineFiles, readOfflineFilesAt, writeOfflineFiles } from './save-transfer'
 import { parseXlogLine, type XlogRecord } from './xlog'
+
+// The IDBFS layer is save-transfer's own concern — mock it and assert the
+// reads/writes the sidecar machinery issues against it.
+vi.mock('./save-transfer', () => ({
+  listOfflineSaves: vi.fn(async () => null), // imported by offline-state
+  readOfflineFile: vi.fn(async () => null),
+  readOfflineFilesAt: vi.fn(async () => new Map<string, Uint8Array>()),
+  writeOfflineFiles: vi.fn(async () => 0),
+  deleteOfflineFiles: vi.fn(async () => {}),
+}))
 
 // end times: 0-based months, local wall clock (see xlog.ts).
 const END_NOON = '20260619120000S'   // Jul 19 12:00
@@ -124,5 +141,78 @@ describe('liveDollRecipe', () => {
     // predecessor's outcome-stamped entry.
     expect(liveDollRecipe('Bram', [live, avatar()])).toBe(live)
     expect(liveDollRecipe('Bram', [avatar(), live])).toBeNull()
+  })
+})
+
+// rec()'s END_LATER instant: xlog months are 0-based, filenames 1-based.
+const SIDECAR = '/crawl/morgue/morgue-Bram-20260720-221149.doll.png'
+const PNG_URL = 'data:image/png;base64,AQID' // bytes 1,2,3
+
+describe('doll sidecars', () => {
+  beforeEach(() => {
+    vi.stubGlobal('localStorage', fakeStorage()) // the bake cache lives there
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.clearAllMocks()
+  })
+
+  it('dollSidecarPath shares the morgue stem', () => {
+    expect(dollSidecarPath(rec())).toBe(SIDECAR)
+    expect(dollSidecarPath(rec({ end: undefined }))).toBeNull()
+    expect(dollSidecarPath(rec({ name: undefined }))).toBeNull()
+  })
+
+  it('materializes a missing sidecar from the joined avatar\'s bake', async () => {
+    const a = avatar({ fp: 'fp1' })
+    storeBakedDoll('fp1', dollTileSpec({ doll: a.doll, mcache: a.mcache }), PNG_URL)
+    await materializeDollSidecars([rec()], [a])
+    expect(writeOfflineFiles).toHaveBeenCalledTimes(1)
+    const files = vi.mocked(writeOfflineFiles).mock.calls[0][0]
+    expect(files).toHaveLength(1)
+    expect(files[0].path).toBe(SIDECAR)
+    expect(Array.from(files[0].data)).toEqual([1, 2, 3])
+  })
+
+  it('writes nothing for existing sidecars, joinless records, or bakeless joins', async () => {
+    // Already materialized:
+    vi.mocked(readOfflineFilesAt).mockResolvedValueOnce(new Map([[SIDECAR, new Uint8Array([9])]]))
+    await materializeDollSidecars([rec()], [avatar({ fp: 'fp1' })])
+    // No joinable avatar; joined but unfingerprinted; fingerprinted but never baked:
+    await materializeDollSidecars([rec()], [])
+    await materializeDollSidecars([rec()], [avatar()])
+    await materializeDollSidecars([rec()], [avatar({ fp: 'fp-unbaked' })])
+    expect(writeOfflineFiles).not.toHaveBeenCalled()
+  })
+
+  it('readDollSidecars returns data URLs keyed by record', async () => {
+    const r = rec()
+    vi.mocked(readOfflineFilesAt).mockResolvedValueOnce(new Map([[SIDECAR, new Uint8Array([1, 2, 3])]]))
+    const dolls = await readDollSidecars([r, rec({ end: undefined })])
+    expect(dolls.get(r)).toBe(PNG_URL)
+    expect(dolls.size).toBe(1)
+  })
+
+  it('treats a zero-length sidecar as absent, so it gets repaired', async () => {
+    const r = rec()
+    // A truncated write / a size:0 entry in an imported pack: readable, but
+    // no image. It must not read as a doll, nor block re-materialization.
+    const empty = new Map([[SIDECAR, new Uint8Array(0)]])
+    vi.mocked(readOfflineFilesAt).mockResolvedValueOnce(empty).mockResolvedValueOnce(empty)
+    expect((await readDollSidecars([r])).size).toBe(0)
+
+    const a = avatar({ fp: 'fp1' })
+    storeBakedDoll('fp1', dollTileSpec({ doll: a.doll, mcache: a.mcache }), PNG_URL)
+    await materializeDollSidecars([r], [a])
+    expect(vi.mocked(writeOfflineFiles).mock.calls[0][0][0].path).toBe(SIDECAR)
+  })
+
+  it('deleteGameRecord removes the sidecar with the morgue pair', async () => {
+    await deleteGameRecord(rec())
+    expect(deleteOfflineFiles).toHaveBeenCalledWith([
+      '/crawl/morgue/morgue-Bram-20260720-221149.txt',
+      '/crawl/morgue/morgue-Bram-20260720-221149.lst',
+      SIDECAR,
+    ])
   })
 })

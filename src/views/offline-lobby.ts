@@ -30,7 +30,7 @@ import { paintAvatars, type DollRecipe } from './avatar-tiles'
 import { maybeShowExitDialog } from './lobby'
 import { openRcEditor } from './rc-editor'
 import { openGameRecords } from './records-view'
-import { liveDollRecipe, readGameRecords } from '../offline/game-records'
+import { liveDollRecipe, materializeDollSidecars, readGameRecords } from '../offline/game-records'
 import type { XlogRecord } from '../offline/xlog'
 import { attachScrollCue } from '../util/scroll-cue'
 
@@ -319,6 +319,13 @@ export function buildOfflineLobbyView(
     // A failed probe keeps the row's last state — nothing new to browse.
     const recs = await readGameRecords().catch(() => null)
     if (recs === null || !view.isConnected) return
+    // Freeze newly-finished (or newly-imported) games' dolls into their
+    // morgue sidecars (game-records.ts) while the avatar store still holds
+    // them — engine-stopped here by construction, like every mutation on
+    // this surface. Before the row appears, so the records browser can't
+    // open ahead of its dolls.
+    await materializeDollSidecars(recs, listAllAvatars()).catch(() => {})
+    if (!view.isConnected) return
     setRecords(recs)
   }
   const openRecords = (): void => openGameRecords(records, () => { void refreshRecords() })

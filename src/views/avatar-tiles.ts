@@ -131,8 +131,9 @@ export async function paintAvatars(
 }
 
 // A baked thumbnail as a plain <img>, sized like the tile-stack box it stands
-// in for (the bake is native 32×32; CSS scales it, pixelated).
-function bakedImg(url: string, scale: number): HTMLElement {
+// in for (the bake is native 32×32; CSS scales it, pixelated). Exported for
+// the character card's sidecar dolls, which arrive as ready data URLs.
+export function bakedImg(url: string, scale: number): HTMLElement {
   const img = document.createElement('img')
   img.className = 'doll-bake'
   img.src = url

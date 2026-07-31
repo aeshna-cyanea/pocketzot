@@ -4,16 +4,17 @@
 // the adapters (xlogToCard / avatarToCard) own ALL source-specific
 // derivation, and renderCharCard lays out whatever the model carries,
 // hiding what's absent — the two sources differ in richness (see
-// dev-material/character-cards.md). The doll thumbnail is the one async
-// edge: it paints through paintAvatars (bake-first, so offline dolls place
-// instantly) after the card is in the tree.
+// dev-material/character-cards.md). Dolls arrive two ways: a ready image URL
+// (offline records' morgue sidecars — placed synchronously), or a recipe,
+// the one async edge, painted through paintAvatars (bake-first, so offline
+// dolls place instantly) after the card is in the tree.
 
 import type { Avatar } from '../avatars'
 import { compactPlace, nameTitle } from '../game/char-label'
 import { tagFor } from '../servers'
 import type { XlogRecord } from '../offline/xlog'
 import { morgueFileName, xlogTimeMs } from '../offline/xlog'
-import { paintAvatars, type DollRecipe } from './avatar-tiles'
+import { bakedImg, paintAvatars, type DollRecipe } from './avatar-tiles'
 
 export type DumpRef =
   | { kind: 'url'; href: string }    // online: morgue URL (extension included)
@@ -54,6 +55,7 @@ export interface CharCardModel {
 
   dump?: DumpRef
   doll?: DollRecipe | null
+  dollUrl?: string | null        // ready image URL (morgue sidecar) — wins over doll
 }
 
 const DOLL_SCALE = 1.75 // 56px box — between the login strip (64) and inline row sizes
@@ -68,7 +70,10 @@ export function renderCharCard(
   card.className = `char-card char-card-k-${model.result.kind}`
   if (opts.compact) card.classList.add('char-card-compact')
 
-  if (model.doll) {
+  if (model.dollUrl) {
+    const box = line(card, 'char-card-doll', '')
+    box.append(bakedImg(model.dollUrl, DOLL_SCALE))
+  } else if (model.doll) {
     const box = line(card, 'char-card-doll', '')
     void paintAvatars(box, [model.doll], DOLL_SCALE, 'char-card-doll-img')
   }
@@ -271,7 +276,14 @@ const KTYP_KIND: Record<string, CardResult['kind']> = {
 
 const cap = (s: string): string => (s ? s[0].toUpperCase() + s.slice(1) : s)
 
-export function xlogToCard(e: XlogRecord, doll?: DollRecipe | null): CharCardModel {
+// `doll` is the fallback the caller can supply for a record whose sidecar is
+// missing (never materialized, or a write that failed): renderCharCard
+// prefers dollUrl and falls back to painting the recipe live.
+export function xlogToCard(
+  e: XlogRecord,
+  dollUrl?: string | null,
+  doll?: DollRecipe | null,
+): CharCardModel {
   const num = (k: string): number | undefined => {
     const v = e[k]
     if (v === undefined) return undefined
@@ -328,6 +340,7 @@ export function xlogToCard(e: XlogRecord, doll?: DollRecipe | null): CharCardMod
     // run of short facts.
     origin: 'Local',
     dump: morgue ? { kind: 'idbfs', path: `/crawl/morgue/${morgue}` } : undefined,
+    dollUrl,
     doll,
   }
 }
