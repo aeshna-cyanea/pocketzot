@@ -4,7 +4,7 @@ PocketZot is an unofficial [DCSS](https://crawl.develz.org) [WebTiles](https://c
 
 ## DCSS on iOS and Android
 
-DCSS has no app on the iOS App Store — but you don't need one. PocketZot is a web app: open it in Safari or Chrome, log in to a WebTiles server, and play. Use "Add to Home Screen" to install it like an app on your iPhone or Android phone. iPads and Android tablets work too.
+DCSS has no app on the App Store, but you don't need one. PocketZot is a web app: open it in Safari or Chrome, log in to a WebTiles server, and play. Use "Add to Home Screen" to install it like an app on your iPhone or Android phone. iPads and Android tablets work too.
 
 ## Features
 
