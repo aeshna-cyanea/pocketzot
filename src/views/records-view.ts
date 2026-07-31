@@ -52,11 +52,13 @@ export function openGameRecords(
     .catch(() => new Map<XlogRecord, string>())
     .then((dolls) => {
       if (!view.isConnected) return
-      // Only read the store when something actually needs the fallback.
-      const avatars = records.some((rec) => !dolls.has(rec)) ? listAllAvatars() : []
+      const avatars = records.length > 0 ? listAllAvatars() : []
       cards = new Map(records.map((rec): [XlogRecord, HTMLElement] => {
         const url = dolls.get(rec)
-        const model = xlogToCard(rec, url, url ? null : joinDollRecipe(rec, avatars))
+        // The join rides along even when a sidecar exists: it's the card's
+        // repaint fallback if the sidecar PNG turns out undecodable
+        // (char-card's <img> error path).
+        const model = xlogToCard(rec, url, joinDollRecipe(rec, avatars))
         return [rec, renderCharCard(model, {
           onOpen: () => openMorgue(model, rec, () => {
             live = live.filter((r) => r !== rec)

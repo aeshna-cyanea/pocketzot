@@ -72,7 +72,17 @@ export function renderCharCard(
 
   if (model.dollUrl) {
     const box = line(card, 'char-card-doll', '')
-    box.append(bakedImg(model.dollUrl, DOLL_SCALE))
+    const img = bakedImg(model.dollUrl, DOLL_SCALE)
+    // An undecodable sidecar (a corrupt PNG in an imported pack) must not
+    // sit as a permanent broken-image box — fall back to painting the
+    // recipe when one came along, else drop the doll box and render the
+    // card doll-less. (paintAvatars' baked path self-heals the same way.)
+    img.addEventListener('error', () => {
+      img.remove()
+      if (model.doll) void paintAvatars(box, [model.doll], DOLL_SCALE, 'char-card-doll-img')
+      else box.remove()
+    })
+    box.append(img)
   } else if (model.doll) {
     const box = line(card, 'char-card-doll', '')
     void paintAvatars(box, [model.doll], DOLL_SCALE, 'char-card-doll-img')
@@ -276,9 +286,9 @@ const KTYP_KIND: Record<string, CardResult['kind']> = {
 
 const cap = (s: string): string => (s ? s[0].toUpperCase() + s.slice(1) : s)
 
-// `doll` is the fallback the caller can supply for a record whose sidecar is
-// missing (never materialized, or a write that failed): renderCharCard
-// prefers dollUrl and falls back to painting the recipe live.
+// `doll` is the fallback the caller can supply alongside (or instead of) the
+// sidecar URL: renderCharCard prefers dollUrl and paints the recipe live when
+// the sidecar is missing — or when its image fails to decode.
 export function xlogToCard(
   e: XlogRecord,
   dollUrl?: string | null,

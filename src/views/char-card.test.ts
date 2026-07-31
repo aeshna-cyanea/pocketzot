@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { Avatar } from '../avatars'
 import { parseXlogLine } from '../offline/xlog'
 import { PROBE_LINE } from '../test/xlog-probe'
+import { paintAvatars } from './avatar-tiles'
 import {
   agoLabel,
   avatarToCard,
@@ -145,6 +146,20 @@ describe('xlogToCard', () => {
     const m = xlogToCard(rec, undefined, a)
     expect(m.doll).toBe(a)
     expect(renderCharCard(m).querySelector('.char-card-doll')).not.toBeNull()
+  })
+
+  it('repaints the recipe when the sidecar image fails to decode', () => {
+    const a = makeAvatar()
+    const card = renderCharCard(xlogToCard(rec, 'data:image/png;base64,BAD', a))
+    card.querySelector('.char-card-doll img')!.dispatchEvent(new Event('error'))
+    expect(card.querySelector('.char-card-doll img')).toBeNull()
+    expect(paintAvatars).toHaveBeenCalledWith(expect.anything(), [a], expect.any(Number), 'char-card-doll-img')
+    expect(card.querySelector('.char-card-doll')).not.toBeNull()
+
+    // No recipe to fall back to → the doll box goes away entirely.
+    const bare = renderCharCard(xlogToCard(rec, 'data:image/png;base64,BAD'))
+    bare.querySelector('.char-card-doll img')!.dispatchEvent(new Event('error'))
+    expect(bare.querySelector('.char-card-doll')).toBeNull()
   })
 })
 

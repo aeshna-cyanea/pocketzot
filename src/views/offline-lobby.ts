@@ -321,10 +321,12 @@ export function buildOfflineLobbyView(
     if (recs === null || !view.isConnected) return
     // Freeze newly-finished (or newly-imported) games' dolls into their
     // morgue sidecars (game-records.ts) while the avatar store still holds
-    // them — engine-stopped here by construction, like every mutation on
-    // this surface. Before the row appears, so the records browser can't
+    // them. The engine is stopped while this view is up, but a slot tap can
+    // boot it mid-materialize — the predicate makes a write that would land
+    // after the engine's IDBFS mount yield instead of getting clobbered by
+    // its next syncfs. Before the row appears, so the records browser can't
     // open ahead of its dolls.
-    await materializeDollSidecars(recs, listAllAvatars()).catch(() => {})
+    await materializeDollSidecars(recs, listAllAvatars(), () => !launched).catch(() => {})
     if (!view.isConnected) return
     setRecords(recs)
   }

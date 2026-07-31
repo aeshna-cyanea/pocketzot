@@ -74,10 +74,11 @@ export async function deleteGameRecord(rec: XlogRecord): Promise<void> {
   }
   const morgue = rec['name'] ? morgueFileName(rec['name'], rec['end']) : null
   if (morgue) {
+    const sidecar = dollSidecarPath(rec)
     await deleteOfflineFiles([
       MORGUE_DIR + morgue,
       MORGUE_DIR + morgue.replace(/\.txt$/, '.lst'),
-      MORGUE_DIR + morgue.replace(/\.txt$/, '.doll.png'),
+      ...(sidecar ? [sidecar] : []),
     ])
   }
 }
@@ -96,10 +97,13 @@ export function dollSidecarPath(rec: XlogRecord): string | null {
 // (avatar-bake.ts — offline captures eager-bake, so one nearly always
 // exists) beside the morgue. Idempotent — existing sidecars are skipped, and
 // a miss (nothing joins, bake not present yet) just retries on the next
-// call. Engine-stopped-only, like every mutation on this surface.
+// call. Engine-stopped-only, like every mutation on this surface — and
+// because the caller typically fires this without awaiting it, `stillStopped`
+// lets it re-assert that right before the write (see below).
 export async function materializeDollSidecars(
   recs: readonly XlogRecord[],
   avatars: readonly Avatar[],
+  stillStopped?: () => boolean,
 ): Promise<void> {
   const wanted = recs
     .map((rec) => ({ rec, path: dollSidecarPath(rec) }))
@@ -116,7 +120,13 @@ export async function materializeDollSidecars(
     const data = url === null ? null : pngDataUrlToBytes(url)
     if (data !== null) writes.push({ path, mode: 0o100664, mtimeMs: Date.now(), data })
   }
-  if (writes.length > 0) await writeOfflineFiles(writes)
+  if (writes.length === 0) return
+  // The existence read above takes real time — long enough for a lobby tap
+  // to boot the engine, whose next syncfs reconcile would silently delete a
+  // sidecar written after its IDBFS mount populated (the same clobber
+  // boot.ts documents for __pzSave.import). Re-check before committing.
+  if (stillStopped && !stillStopped()) return
+  await writeOfflineFiles(writes)
 }
 
 // The sidecar dolls for a set of records, as PNG data URLs keyed by record —
@@ -149,9 +159,11 @@ function sidecarBytes(files: Map<string, Uint8Array>, path: string): Uint8Array 
 
 // data:image/png;base64 ↔ bytes, for moving a bake between the localStorage
 // cache (data URLs) and its IDBFS sidecar (raw PNG). Null on anything that
-// isn't a base64 PNG data URL — an unexpected bake shape just skips.
+// isn't a base64 PNG data URL — an unexpected bake shape just skips. The
+// payload must be non-empty: an empty one would decode to the exact 0-byte
+// file sidecarBytes treats as absent, re-written on every materialize pass.
 function pngDataUrlToBytes(url: string): Uint8Array | null {
-  const m = /^data:image\/png;base64,([A-Za-z0-9+/=]*)$/.exec(url)
+  const m = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(url)
   if (!m) return null
   try {
     const bin = atob(m[1])
