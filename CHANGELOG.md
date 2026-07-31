@@ -9,6 +9,12 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-07-31
+
+- Tiles mode supports trunk's new item-stack markers, added yesterday:
+  the marker on a pile of items now comes in three styles, indicating the
+  presence of artefacts, special items, or only mundane ones.
+
 ## 2026-07-23
 
 - New size settings: the D-pad and the message log (number of lines shown

@@ -46,6 +46,11 @@ export interface FgFlags {
   // attitude (exclusive)
   PET: boolean; GD_NEUTRAL: boolean; NEUTRAL: boolean
   S_UNDER: boolean; FLYING: boolean
+  // Stack-content markers (trunk item-stack rework, post-0.35-a0). Exclusive
+  // with each other and with S_UNDER — the engine sets exactly one of the
+  // three (artefact > good > plain). Server backend only, like INVIS below;
+  // the bundled 0.34 fallback predates them.
+  S_UNDER_GOOD?: boolean; S_UNDER_ARTEFACT?: boolean
   // behaviour (exclusive)
   STAB: boolean; MAY_STAB: boolean; FLEEING: boolean; PARALYSED: boolean
   NET: boolean; WEB: boolean

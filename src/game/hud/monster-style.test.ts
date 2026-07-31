@@ -3,6 +3,7 @@ import { setEnumsModule } from '../map/flag-decode'
 import {
   decodeMdam, decodeFgStatuses, decodeFgThreatTier,
   buildStatusOverlays, mayHaveStatusOverlays, mdamIconName, fgTileIndex,
+  resolveOverlayId,
   nameColor, threatColor, isExcluded, monsterSort,
   mdamTier, MDAM_COLORS, THREAT_COLORS, FRIENDLY_COLOR, NEUTRAL_COLOR,
   filterAndSortMonsters,
@@ -195,7 +196,7 @@ describe('buildStatusOverlays', () => {
 
   it('single-word fg has no poison (hi implicit 0)', () => {
     expect(buildStatusOverlays(FG_S_UNDER, [], noSizes).overlays).toEqual([
-      { name: 'SOMETHING_UNDER', xofs: 0, yofs: 0 },
+      { name: 'ITEM_STACK_1', altName: 'SOMETHING_UNDER', xofs: 0, yofs: 0 },
     ])
   })
 
@@ -391,6 +392,74 @@ describe('buildStatusOverlays — bg REMEMBERED_INVIS', () => {
     // No server module installed → fallback backend, which never sets
     // REMEMBERED_INVIS (trunk's hi 0x080 means nothing in the 0.34 layout).
     expect(buildStatusOverlays(0, [], noSizes, { bg: [0, 0x080] }).overlays).toEqual([])
+  })
+})
+
+// ─── buildStatusOverlays — item-stack markers (trunk fg flags) ─────────────
+// The trunk item-stack rework (2985acfa17) split the S_UNDER marker into
+// three styles: plain (ITEM_STACK_1), branded/special beneath (S_UNDER_GOOD →
+// ITEM_STACK_2, fg hi 0x1000000), artefact beneath (S_UNDER_ARTEFACT →
+// ITEM_STACK_3, fg hi 0x2000000). The engine sets exactly one of the three.
+// The new flags need the server enums backend; the plain-S_UNDER overlay
+// carries SOMETHING_UNDER as altName for pre-rework icons modules.
+
+describe('buildStatusOverlays — item-stack flags', () => {
+  const noSizes = new Map<number, number>()
+  // Synthetic trunk-alike module: S_UNDER in the real lo position, the new
+  // stack flags at their real hi-word positions.
+  const trunkishEnums = {
+    prepare_fg_flags(raw: number | number[]) {
+      const lo = ((Array.isArray(raw) ? raw[0] : raw) ?? 0) >>> 0
+      const hi = Array.isArray(raw) ? (raw[1] ?? 0) : 0
+      return {
+        value: lo & 0xFFFF,
+        S_UNDER: (lo & 0x00040000) !== 0,
+        S_UNDER_GOOD: (hi & 0x1000000) !== 0,
+        S_UNDER_ARTEFACT: (hi & 0x2000000) !== 0,
+      }
+    },
+    prepare_bg_flags(raw: number | number[]) {
+      const lo = ((Array.isArray(raw) ? raw[0] : raw) ?? 0) >>> 0
+      return { value: lo & 0xFFFF }
+    },
+  }
+
+  afterEach(() => setEnumsModule(null))
+
+  it('picks the stack style from the flag (predicate included)', () => {
+    setEnumsModule(trunkishEnums)
+    expect(mayHaveStatusOverlays([0, 0x1000000], [])).toBe(true)
+    expect(mayHaveStatusOverlays([0, 0x2000000], [])).toBe(true)
+    expect(buildStatusOverlays([0, 0x1000000], [], noSizes).overlays).toEqual([
+      { name: 'ITEM_STACK_2', xofs: 0, yofs: 0 },
+    ])
+    expect(buildStatusOverlays([0, 0x2000000], [], noSizes).overlays).toEqual([
+      { name: 'ITEM_STACK_3', xofs: 0, yofs: 0 },
+    ])
+    expect(buildStatusOverlays([0x00040000, 0], [], noSizes).overlays).toEqual([
+      { name: 'ITEM_STACK_1', altName: 'SOMETHING_UNDER', xofs: 0, yofs: 0 },
+    ])
+  })
+
+  it('is off on versions predating the flags (bundled 0.34 fallback)', () => {
+    // No server module → fallback backend, which never sets the new flags
+    // (trunk's hi bits mean nothing in the 0.34 layout).
+    expect(buildStatusOverlays([0, 0x1000000], [], noSizes).overlays).toEqual([])
+  })
+})
+
+// ─── resolveOverlayId — altName era fallback ───────────────────────────────
+
+describe('resolveOverlayId', () => {
+  it('prefers name, falls back to altName, else undefined', () => {
+    const o = { name: 'ITEM_STACK_1', altName: 'SOMETHING_UNDER', xofs: 0, yofs: 0 }
+    expect(resolveOverlayId(o, { ITEM_STACK_1: 7, SOMETHING_UNDER: 3 })).toBe(7)
+    expect(resolveOverlayId(o, { SOMETHING_UNDER: 3 })).toBe(3)
+    expect(resolveOverlayId(o, {})).toBeUndefined()
+  })
+
+  it('raw ids pass through unchanged', () => {
+    expect(resolveOverlayId({ id: 42, xofs: 0, yofs: 0 }, {})).toBe(42)
   })
 })
 
