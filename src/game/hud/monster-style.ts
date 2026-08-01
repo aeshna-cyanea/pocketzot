@@ -88,7 +88,10 @@ export function decodeFgStatuses(fg: number | number[] | undefined): string[] {
 // A status icon to overlay on a monster sprite: either a named tile-constant
 // (resolved against tileinfo-icons by the caller) or a raw numeric id from
 // cell.icons, plus the cell-space pixel offset draw_foreground would place it at.
-export interface IconOverlay { name?: string; id?: number; xofs: number; yofs: number }
+// altName is an era fallback tried when name is absent from the version's
+// icons module (upstream renames icons across releases — e.g. the trunk
+// item-stack rework replaced SOMETHING_UNDER with ITEM_STACK_1/2/3).
+export interface IconOverlay { name?: string; altName?: string; id?: number; xofs: number; yofs: number }
 export interface StatusOverlays { overlays: IconOverlay[]; statusShift: number }
 
 const EMPTY_STATUS_OVERLAYS: StatusOverlays = { overlays: [], statusShift: 0 }
@@ -116,7 +119,7 @@ export function mayHaveStatusOverlays(
   if (icons.length > 0) return true
   if (opts.bg !== undefined && bgFlags(opts.bg).REMEMBERED_INVIS) return true
   const f = fgFlags(fg)
-  return !!(f.NET || f.WEB || f.S_UNDER
+  return !!(f.NET || f.WEB || f.S_UNDER || f.S_UNDER_GOOD || f.S_UNDER_ARTEFACT
     || f.PET || f.GD_NEUTRAL || f.NEUTRAL
     || f.STAB || f.MAY_STAB || f.FLEEING || f.PARALYSED
     || f.POISON || f.MORE_POISON || f.MAX_POISON)
@@ -168,7 +171,12 @@ export function buildStatusOverlays(
   // Trap / item-underneath markers and attitude gem: fixed authored positions.
   if (f.NET) overlays.push({ name: 'TRAP_NET', xofs: 0, yofs: 0 })
   if (f.WEB) overlays.push({ name: 'TRAP_WEB', xofs: 0, yofs: 0 })
-  if (f.S_UNDER) overlays.push({ name: 'SOMETHING_UNDER', xofs: 0, yofs: 0 })
+  // Item-stack marker, three styles by pile contents (tiledgnbuf.cc priority:
+  // artefact > good > plain; the engine sets exactly one flag). Pre-rework
+  // servers only have plain S_UNDER, whose icon there is named SOMETHING_UNDER.
+  if (f.S_UNDER_ARTEFACT) overlays.push({ name: 'ITEM_STACK_3', xofs: 0, yofs: 0 })
+  else if (f.S_UNDER_GOOD) overlays.push({ name: 'ITEM_STACK_2', xofs: 0, yofs: 0 })
+  else if (f.S_UNDER) overlays.push({ name: 'ITEM_STACK_1', altName: 'SOMETHING_UNDER', xofs: 0, yofs: 0 })
 
   if (f.PET) overlays.push({ name: 'FRIENDLY', xofs: 0, yofs: 0 })
   else if (f.GD_NEUTRAL) overlays.push({ name: 'GOOD_NEUTRAL', xofs: 0, yofs: 0 })
@@ -214,11 +222,13 @@ export function buildStatusOverlays(
 }
 
 // Resolve an IconOverlay to its numeric icons-atlas tile id: a named overlay
-// looks the tile-constant up in the icons module; a raw-id overlay passes
-// through. Returns undefined for an unknown name or a non-positive id. The one
-// place the canvas map and the DOM tile path agree on overlay→id dispatch.
+// looks the tile-constant up in the icons module (altName as the era
+// fallback); a raw-id overlay passes through. Returns undefined for an
+// unknown name or a non-positive id. The one place the canvas map and the
+// DOM tile path agree on overlay→id dispatch.
 export function resolveOverlayId(o: IconOverlay, icons: { [k: string]: unknown }): number | undefined {
-  const id = o.name !== undefined ? icons[o.name] : o.id
+  let id = o.name !== undefined ? icons[o.name] : o.id
+  if (!(typeof id === 'number' && id > 0) && o.altName !== undefined) id = icons[o.altName]
   return typeof id === 'number' && id > 0 ? id : undefined
 }
 
