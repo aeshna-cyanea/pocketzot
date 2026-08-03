@@ -4,9 +4,9 @@
 // GPL-2.0-or-later. Reused under the "or later" option as part of this
 // AGPL-3.0-or-later work. See ATTRIBUTION.md and LICENSE.
 
-import { TEX, type TileinfoModule, type TileLoader } from './tile-loader'
+import { TEX, type TileLoader } from './tile-loader'
 import { buildStatusOverlays, mayHaveStatusOverlays, resolveOverlayId, type StatusOverlayOpts } from '../hud/monster-style'
-import { buildStatusIconSizeMap } from '../map/icon-sizes'
+import { getStatusIconSizer } from '../map/icon-sizes'
 
 // Native cell size used by all DCSS sprite atlases. Each tile occupies a
 // 32x32 logical cell; the actual sprite within is positioned via per-tile
@@ -136,11 +136,6 @@ export function dollTileSpec(opts: {
   return dollLayers(opts.doll, opts.mcache, { mask: true, keepYmax: true })
 }
 
-// Memoized id→width table for cell.icons stacking, rebuilt only when the
-// resolved icons module identity changes (configure() swaps it on reconnect).
-let iconSizeMapCache: ReadonlyMap<number, number> | null = null
-let iconSizeMapSource: TileinfoModule | null = null
-
 // Decodes a monster's t.fg (+ cell.icons) into ordered status overlays via the
 // shared buildStatusOverlays decision, resolves names→ids against the icons
 // tileinfo module, and appends them — with draw_foreground's status_shift
@@ -162,12 +157,10 @@ export function appendIconOverlays(
   // crowded list) — the same fast-path predicate buildStatusOverlays gates on,
   // checked here before paying a Promise + microtask per row.
   if (!mayHaveStatusOverlays(fg, icons, opts)) return
-  loader.getModule('icons').then((mod) => {
-    if (iconSizeMapSource !== mod) {
-      iconSizeMapCache = buildStatusIconSizeMap(mod)
-      iconSizeMapSource = mod
-    }
-    const { overlays } = buildStatusOverlays(fg, icons, iconSizeMapCache!, opts)
+  // The sizer is memoized per loader inside getStatusIconSizer, so this pair
+  // of awaits is two cache hits after the first monster of a version.
+  Promise.all([loader.getModule('icons'), getStatusIconSizer(loader)]).then(([mod, iconSize]) => {
+    const { overlays } = buildStatusOverlays(fg, icons, iconSize, opts)
     if (overlays.length === 0) return
     const tiles: TileRef[] = []
     for (const o of overlays) {

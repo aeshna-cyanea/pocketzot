@@ -10,7 +10,7 @@ import { parseCellKey } from './map-store'
 import { decodeColor, DEFAULT_FG, flashColor } from './colors'
 import { TEX, type TileLoader, type TileSprite } from '../tiles/tile-loader'
 import { fgFlags, bgFlags } from './flag-decode'
-import { buildStatusIconSizeMap } from './icon-sizes'
+import { getStatusIconSizer, type StatusIconSizer } from './icon-sizes'
 import { buildStatusOverlays, fgHaloDngnName, fgThreatDngnName, resolveOverlayId } from '../hud/monster-style'
 
 // Tile-mode minimum viewport. Square because tile cells are square; 21×21
@@ -137,9 +137,11 @@ export class TileMapView {
   // few KB and keeps us robust against renamed constants between versions.
   private dngn: Record<string, number> = {}
   private icons: Record<string, number> = {}
-  // id→width table for cell.icons stacking, built once from the icons module
-  // (see icon-sizes.ts). Shared with the DOM overlay path via buildStatusOverlays.
-  private iconSizes: ReadonlyMap<number, number> = new Map()
+  // id→width lookup for cell.icons stacking, resolved once per loader in
+  // preloadAtlases (server's status-icon-sizes.js first, bundled table as
+  // fallback — see icon-sizes.ts). Shared with the DOM overlay path via
+  // buildStatusOverlays. Default skips everything until preload resolves.
+  private iconSize: StatusIconSizer = () => -1
   // Per-tile-run variant count from tileinfo-dngn. Used to pick an animation
   // frame for blood/mold/liquefaction via `cell.flv.s % tileCount(id)`.
   private tileCount: ((id: number) => number) | null = null
@@ -184,7 +186,7 @@ export class TileMapView {
     this.preloadStarted = true
     this.ready = false
     try {
-      const [, , , , , , dngnMod, iconsMod, mainMod] = await Promise.all([
+      const [, , , , , , dngnMod, iconsMod, mainMod, iconSize] = await Promise.all([
         ...PRELOAD_TEX.map((t) => loader.ensureLoaded(t)),
         // tileinfo-dngn is the floor/wall/feat dispatch meta-module; it
         // re-exports every floor/wall/feat name (SANCTUARY, KRAKEN_OVERLAY_NW,
@@ -192,6 +194,7 @@ export class TileMapView {
         loader.getModule('dngn'),
         loader.getModule('icons'),
         loader.getModule('main'),
+        getStatusIconSizer(loader),
       ])
       // A newer preload (different loader) superseded us while we awaited —
       // don't clobber its state or flip ready over the wrong version.
@@ -202,7 +205,7 @@ export class TileMapView {
       for (const [k, v] of Object.entries(iconsMod as Record<string, unknown>)) {
         if (typeof v === 'number') this.icons[k] = v
       }
-      this.iconSizes = buildStatusIconSizeMap(iconsMod as Record<string, unknown>)
+      this.iconSize = iconSize as StatusIconSizer
       const tc = (dngnMod as Record<string, unknown>).tile_count
       if (typeof tc === 'function') this.tileCount = tc as (id: number) => number
       this.dngnUnseen = this.dngn.DNGN_UNSEEN ?? 0
@@ -748,7 +751,7 @@ export class TileMapView {
     // bg was already decoded at the top of this cell paint; reuse its
     // REMEMBERED_INVIS to gate the opt so the common (flag-clear) cell doesn't
     // re-decode t_bg inside buildStatusOverlays' per-cell fast path.
-    const status = buildStatusOverlays(cell.fg, cell.icons ?? [], this.iconSizes, bg.REMEMBERED_INVIS ? { bg: cell.t_bg } : undefined)
+    const status = buildStatusOverlays(cell.fg, cell.icons ?? [], this.iconSize, bg.REMEMBERED_INVIS ? { bg: cell.t_bg } : undefined)
     for (const o of status.overlays) {
       const id = resolveOverlayId(o, this.icons)
       if (id !== undefined) this.paintTile(TEX.ICONS, id, px, py, o.xofs, o.yofs)
