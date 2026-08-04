@@ -1,7 +1,7 @@
 // The offline records browser ("Past games"): every finished game off the
 // engine's logfile as full character cards, sortable by recency or score;
-// tapping a card opens its morgue verbatim (fit-terminal keeps the 80-col
-// dump aligned on a phone). Rides the crypt-view full-screen shell and is
+// tapping a card opens its morgue verbatim (readable size, panned like a
+// terminal — see openMorgue). Rides the crypt-view full-screen shell and is
 // opened from the offline lobby only — so no engine owns IDBFS while the
 // morgue reads (and record deletes) run. The caller passes the records it
 // already read for its row label; nothing else can touch the logfile while
@@ -25,7 +25,6 @@ import type { XlogRecord } from '../offline/xlog'
 import { cardHeadline, renderCharCard, xlogToCard, type CharCardModel } from './char-card'
 import { mountCryptShell } from './crypt-view'
 import { deleteCountdownButtons } from './delete-countdown'
-import { fitToWidth } from './fit-terminal'
 
 export function openGameRecords(
   records: readonly XlogRecord[],
@@ -92,9 +91,13 @@ export function openGameRecords(
   render()
 }
 
-// The morgue drill-down: the dump verbatim in a pre, font-fit to the screen
-// width so the 80-column tables stay aligned (same treatment as server
-// morgues). Stacks over the list via the shared shell — Escape/Back unwind
+// The morgue drill-down: the dump verbatim in a pre at the app's normal
+// reading size (--fs-overlay, same as the % / inventory overlays), panning
+// both axes — fit-to-width was tried and reads far too small on a phone
+// (~7px for 80 cols), and pinch zoom over it felt fiddly. The dump's prose
+// and stat block live in the left ~55 columns, so the resting view reads
+// immediately; you pan right only for the wide tables. white-space:pre keeps
+// the 80-col alignment. Stacks over the list via the shared shell — Escape/Back unwind
 // one layer at a time. Also owns the record's one destructive action: the ✕
 // swaps the header's right side for the delete-countdown confirm
 // (delete-countdown.ts) — the detail view scopes the delete to exactly the
@@ -111,7 +114,6 @@ function openMorgue(model: CharCardModel, rec: XlogRecord, onDeleted: () => void
   void readMorgueText(dump.path).then((text) => {
     if (!view.isConnected) return
     pre.textContent = text ?? 'No morgue file for this game.'
-    fitToWidth(pre)
   }).catch(() => {
     pre.textContent = 'Could not read the morgue file.'
   })

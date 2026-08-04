@@ -4807,11 +4807,13 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   gap: 0.5rem;
   min-width: 0;
 }
-/* fitToWidth scales the font so the 80-col dump fits without wrapping. */
+/* Normal reading size (same as the % / inventory overlays); the 80-col dump
+   overflows sideways and .crypt-scroll pans both axes (overflow-y:auto forces
+   overflow-x to auto). pre keeps the column alignment. */
 .records-morgue-pre {
   font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.25;
+  font-size: var(--fs-overlay);
+  line-height: 1.3;
   white-space: pre;
   color: var(--text);
 }
