@@ -4,7 +4,6 @@ import { listSessions, saveSession, type StoredSession } from '../auth/session'
 import { SESSION_EXPIRED_NOTICE, tokenLogin } from '../auth/token-login'
 import { findServer, KNOWN_SERVERS, SPECTATE_SERVERS, labelFor } from '../servers'
 import { getLastSpectateServer, getPref, setLastSpectateServer, LOGIN_SPRITES_CHANGED_EVENT } from '../prefs'
-import { flavorLabel, SPECTATE_LABELS } from './flavor'
 import { openAboutDoc, openChangelogDoc, unreadDotHtml } from './docs'
 import { openSettings } from './settings-view'
 import { decorateLogo } from '../logo'
@@ -120,11 +119,7 @@ export function buildLoginView(
           <div class="login-sub-label">Spectate as guest</div>
           <div class="login-spectate-row">
             <select id="spectate-select" class="login-spectate-select" aria-label="Server"></select>
-            <!-- Flavor word rolled inline: this markup is written once per
-                 mount and nothing rewrites the label afterwards (the busy
-                 state pulses instead of relabelling), so it can't reroll
-                 under the user's thumb. -->
-            <button id="spectate-btn" type="button" class="login-btn login-btn-spectate">${flavorLabel(SPECTATE_LABELS)} →</button>
+            <button id="spectate-btn" type="button" class="login-btn login-btn-spectate">Spectate →</button>
           </div>
           <div id="spectate-error" class="login-error" style="display:none" role="alert"></div>
         </div>
