@@ -9,6 +9,11 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-08-04
+
+- Fixed a tiles-mode bug where standing on a square an invisible creature
+  had died on could draw you translucent.
+
 ## 2026-07-31
 
 - Tiles mode supports trunk's new item-stack markers, added yesterday:
