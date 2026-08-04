@@ -115,7 +115,7 @@ function dollLayers(
 // or only fg_idx (small natural).
 export function monsterTileSpec(opts: {
   fg_idx?: number
-  doll?: Array<[number, number]>
+  doll?: Array<[number, number]> | null
   mcache?: Array<[number, number, number]> | null
 }): TileRef[] {
   const out = dollLayers(opts.doll, opts.mcache)

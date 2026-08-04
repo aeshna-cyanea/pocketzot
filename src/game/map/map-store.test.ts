@@ -88,6 +88,26 @@ describe('MapStore.merge — tile field carry-forward', () => {
     store.merge([{ x: 1, y: 1, t: { sanctuary: false, halo: 0 } }])
     expect(store.get(1, 1)).toMatchObject({ sanctuary: false, halo: 0 })
   })
+
+  it('a new doll without trans resets trans (invisible-actor cell handoff)', () => {
+    // Scenario: invisible monster dies, player steps onto the drop square.
+    const store = new MapStore()
+    store.merge([{ x: 1, y: 1, t: { fg: 500, doll: [[500, 32]], trans: 1 } }])
+    expect(store.get(1, 1)?.trans).toBe(1)
+    store.merge([{ x: 1, y: 1, t: { fg: 3302, doll: [[3302, 32]] } }])
+    expect(store.get(1, 1)?.trans).toBe(false)
+  })
+
+  it('a doll-less update leaves trans alone; explicit trans wins', () => {
+    const store = new MapStore()
+    store.merge([{ x: 1, y: 1, t: { fg: 500, doll: [[500, 32]], trans: 1 } }])
+    // fg-only update (e.g. an item stack: doll:null) — trans carries forward
+    store.merge([{ x: 1, y: 1, t: { fg: 40, doll: null } }])
+    expect(store.get(1, 1)?.trans).toBe(1)
+    // doll + explicit trans keeps the explicit value
+    store.merge([{ x: 1, y: 1, t: { fg: 501, doll: [[501, 32]], trans: 1 } }])
+    expect(store.get(1, 1)?.trans).toBe(1)
+  })
 })
 
 describe('MapStore — monster tracking', () => {

@@ -729,7 +729,10 @@ export class TileMapView {
     }
     if (inWater) {
       this.withWaterSplit(true, py, cell.trans ? 0.5 : 1.0, cell.trans ? 0.1 : 0.3, drawActor)
-    } else if (cell.trans) {
+    } else if (cell.trans && (hasDoll || hasMcache)) {
+      // The dry-land trans dim applies to dolls/mcache only — a plain
+      // main-atlas fg (an item stack on an invisible monster's old cell)
+      // draws opaque in the reference (draw_foreground vs draw_dolls).
       this.withAlpha(0.55, drawActor)
     } else {
       drawActor()
