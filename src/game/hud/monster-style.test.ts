@@ -158,7 +158,9 @@ describe('mdamIconName', () => {
 // (DOM). Mirrors cell_renderer.js draw_foreground ordering + status_shift.
 
 describe('buildStatusOverlays', () => {
-  const noSizes = new Map<number, number>()
+  // Sizer shape matches the server module's status_icon_size: id → width, -1 = skip.
+  const sizerOf = (m: Record<number, number>) => (id: number) => m[id] ?? -1
+  const noSizes = sizerOf({})
 
   it('empty for no flags / no icons', () => {
     expect(buildStatusOverlays(undefined, [], noSizes)).toEqual({ overlays: [], statusShift: 0 })
@@ -201,7 +203,7 @@ describe('buildStatusOverlays', () => {
   })
 
   it('cell.icons: skip width<0, pin width 0, fan width>0', () => {
-    const sizes = new Map<number, number>([[100, 6], [200, 0]])
+    const sizes = sizerOf({ 100: 6, 200: 0 })
     // No behaviour → shift starts at 0. 100 (w6) pins at 0 then advances to 6;
     // 200 (w0) stays fixed and does not advance; 999 (absent → -1) is dropped.
     const { overlays, statusShift } = buildStatusOverlays(0, [100, 200, 999], sizes)
@@ -213,7 +215,7 @@ describe('buildStatusOverlays', () => {
   })
 
   it('behaviour shift carries into cell.icons fan-out', () => {
-    const sizes = new Map<number, number>([[100, 6]])
+    const sizes = sizerOf({ 100: 6 })
     // STAB shift 12 → icon 100 at -12, then shift 18.
     const { overlays, statusShift } = buildStatusOverlays(FG_STAB, [100], sizes)
     expect(overlays).toEqual([
@@ -353,7 +355,7 @@ describe('monsterSort', () => {
 // backend — the bundled 0.34 fallback predates the flag.
 
 describe('buildStatusOverlays — bg REMEMBERED_INVIS', () => {
-  const noSizes = new Map<number, number>()
+  const noSizes = (_id: number) => -1
   // Synthetic trunk-alike module (fg flags in lo bits like the flag-decode
   // test fake; bg REMEMBERED_INVIS at the trunk hi-word position).
   const trunkishEnums = {
@@ -404,7 +406,7 @@ describe('buildStatusOverlays — bg REMEMBERED_INVIS', () => {
 // carries SOMETHING_UNDER as altName for pre-rework icons modules.
 
 describe('buildStatusOverlays — item-stack flags', () => {
-  const noSizes = new Map<number, number>()
+  const noSizes = (_id: number) => -1
   // Synthetic trunk-alike module: S_UNDER in the real lo position, the new
   // stack flags at their real hi-word positions.
   const trunkishEnums = {

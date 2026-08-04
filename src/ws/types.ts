@@ -42,7 +42,8 @@ export interface TileInfo {
   icons?: number[]
   // Player-atlas composition for humanoids: doll = body parts, mcache = body+equipment.
   // Same shape as the describe-monster popup's msg.doll / msg.mcache.
-  doll?: Array<[number, number]>
+  // null when the fg changes to a non-actor tile ("doll":null in tileweb.cc).
+  doll?: Array<[number, number]> | null
   mcache?: Array<[number, number, number]> | null
   // Render-layer flags / extras.
   sanctuary?: boolean     // TSO sanctuary halo
@@ -70,9 +71,10 @@ export interface TileInfo {
   // Flavour for tile variants: f = floor tile under transparent features,
   // s = seed used to rotate blood/mold/liquefaction frames.
   flv?: { f?: number; s?: number }
-  // Translucent actor (e.g. spectral). Halves the actor alpha in water and
-  // dims it slightly on land.
-  trans?: boolean
+  // Translucent actor (invisible, spectral): halves the actor alpha in water;
+  // on land dims dolls/mcache only. The engine writes it as int 1 and never
+  // clears it — a new doll without trans means "opaque" (see MapStore.merge).
+  trans?: number
   // Base tile to underdraw before fg (e.g. carried item beneath a player).
   base?: number
   // Parchment overlays for two-sided spell scrolls / etc.

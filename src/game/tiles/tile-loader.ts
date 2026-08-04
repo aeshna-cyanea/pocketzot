@@ -164,6 +164,18 @@ export class TileLoader {
     return this.loadModule('enums', 'enums.js')
   }
 
+  // Loads this version's status-icon-sizes.js — the server's own generated
+  // per-icon width table for cell.icons stacking (`status_icon_size(id)` →
+  // width, -1 = skip), compiled from rltiles/icon-sizes.txt at crawl build
+  // time. Same AMD mechanism as tileinfo; its one dependency,
+  // ./tileinfo-icons, resolves through loadDep. Servers predating the module
+  // (upstream added it May 2026; 0.34.1+ serve it) fail the script load —
+  // callers fall back to the bundled table via icon-sizes.ts
+  // getStatusIconSizer, which owns the server-first/fallback choice.
+  loadStatusIconSizes(): Promise<{ [k: string]: unknown }> {
+    return this.loadModule('status-icon-sizes', 'status-icon-sizes.js')
+  }
+
   async getAsync(tex: number, tileId: number): Promise<TileSprite> {
     const name = TEXTURE_NAMES[tex]
     if (!name) throw new Error(`unknown texture: ${tex}`)
@@ -326,10 +338,12 @@ function installShim(): void {
     const deps = typeof depsOrFactory === 'function' ? [] : depsOrFactory
     const factory = typeof depsOrFactory === 'function' ? depsOrFactory : maybeFactory
     if (!factory) return
-    // `${base}/tileinfo-<name>.js` or `${base}/enums.js` — base identifies
-    // the instance, name the module (enums.js registers as 'enums').
+    // `${base}/tileinfo-<name>.js`, `${base}/enums.js`, or
+    // `${base}/status-icon-sizes.js` — base identifies the instance, name the
+    // module (the non-tileinfo files register under their bare filenames).
     const src = (document.currentScript as HTMLScriptElement | null)?.src ?? ''
-    const m = src.match(/^(.*)\/tileinfo-([a-z]+)\.js/) ?? src.match(/^(.*)\/(enums)\.js/)
+    const m = src.match(/^(.*)\/tileinfo-([a-z]+)\.js/)
+      ?? src.match(/^(.*)\/(enums|status-icon-sizes)\.js/)
     if (!m) return
     const base = m[1]
     const name = m[2]

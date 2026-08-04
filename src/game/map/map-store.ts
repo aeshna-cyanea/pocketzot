@@ -17,7 +17,7 @@ export interface Cell {
   fg?: number | number[]
   cloud?: number
   icons?: number[]
-  doll?: Array<[number, number]>
+  doll?: Array<[number, number]> | null
   mcache?: Array<[number, number, number]> | null
   flc?: number // flash colour index; 0 = no flash
   fla?: number // flash alpha override (0 = use palette default)
@@ -42,7 +42,7 @@ export interface Cell {
   travel_trail?: number
   ov?: number[]
   flv?: { f?: number; s?: number }
-  trans?: boolean
+  trans?: boolean | number
   base?: number
   overlay1?: number
   overlay2?: number
@@ -173,6 +173,12 @@ export class MapStore {
         overlay1: t && 'overlay1' in t ? t.overlay1 : existing?.overlay1,
         overlay2: t && 'overlay2' in t ? t.overlay2 : existing?.overlay2,
       }
+
+      // The transparency flag is linked to the doll: a new doll without trans
+      // resets it, since the engine only ever *sets* trans:1 (reference
+      // map_knowledge.js merge does the same fixup after its shallow copy).
+      if (t?.doll && !('trans' in t)) cell.trans = false
+
       this.cells.set(key, cell)
       dirty.add(key)
 

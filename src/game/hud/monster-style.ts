@@ -9,6 +9,7 @@ import type { MonsterInfo } from '../../ws/types'
 import type { MonsterCell } from '../map/map-store'
 import { DCSS_COLOR_MAP } from '../dcss-colors'
 import { bgFlags, fgFlags } from '../map/flag-decode'
+import type { StatusIconSizer } from '../map/icon-sizes'
 
 // attitude index → class label (mirrors reference monster_list.js)
 export const ATTITUDE_CLASSES = ['hostile', 'neutral', 'good_neutral', 'good_neutral', 'friendly'] as const
@@ -147,15 +148,16 @@ export function mdamIconName(fg: number | number[] | undefined): string | undefi
 //
 // `fg` may be a single word (msg.flag — hi == 0, so no poison and no
 // severe-or-worse MDAM, exactly as the reference's single-word desc.flag) or
-// the [lo, hi] cell form. `sizeMap` is the id→width table from
-// buildStatusIconSizeMap (icon-sizes.ts): cell.icons with width < 0 (absent)
-// are skipped, width 0 pins the icon at its authored spot, width > 0 fans the
-// stack left by that much. Returns the trailing statusShift so the map can gate
+// the [lo, hi] cell form. `iconSize` is the id→width lookup from
+// getStatusIconSizer (icon-sizes.ts — the server's own status_icon_size when
+// available, else the bundled table): cell.icons with width < 0 are skipped,
+// width 0 pins the icon at its authored spot, width > 0 fans the stack left
+// by that much. Returns the trailing statusShift so the map can gate
 // NEW_STAIR / NEW_TRANSPORTER (drawn only when no status icon occupies the corner).
 export function buildStatusOverlays(
   fg: number | number[] | undefined,
   icons: readonly number[],
-  sizeMap: ReadonlyMap<number, number>,
+  iconSize: StatusIconSizer,
   opts: StatusOverlayOpts = {},
 ): StatusOverlays {
   // Fast path: most map cells carry no status bits and no server icons. The
@@ -206,7 +208,7 @@ export function buildStatusOverlays(
   // (draw_icon_type): width < 0 → skip, 0 → fixed position, > 0 → fan then advance.
   for (const id of icons) {
     if (id <= 0) continue
-    const w = sizeMap.get(id) ?? -1
+    const w = iconSize(id)
     if (w < 0) continue
     if (w === 0) { overlays.push({ id, xofs: 0, yofs: 0 }); continue }
     overlays.push({ id, xofs: -shift || 0, yofs: 0 })
