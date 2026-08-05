@@ -24,7 +24,6 @@ Progressive Web App.
   <img src="https://pocketzot.app/shot-shoals.png" alt="Tiles dungeon map, spectating player" height="420">
   <img src="https://pocketzot.app/shot-offline.png" alt="Offline lobby with a saved game and installed game data" height="420">
 </p>
-<p>More screenshots at <a href="https://pocketzot.app/about">pocketzot.app/about</a>.</p>
 
 ## Features
 
