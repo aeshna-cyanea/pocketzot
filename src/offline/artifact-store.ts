@@ -333,8 +333,12 @@ export type Readiness =
   // this deploy has nothing to download, ever). version labels the CACHED
   // set ("0.34.1", from the __version stamp); updateVersion labels what an
   // update would install — both display-only and absent when the install
-  // predates the stamp.
-  | { state: 'ready'; tiles: boolean; update: boolean; deploy: 'ok' | 'undeployed' | 'unreachable'; version?: string; updateVersion?: string }
+  // predates the stamp. build is the cached set's engine build id (the
+  // __build stamp — the content hash version.json carries and the public
+  // source repo tags releases by), display-only, for bug reports: it names
+  // what this device actually runs, which a pending update makes different
+  // from the deploy's.
+  | { state: 'ready'; tiles: boolean; update: boolean; deploy: 'ok' | 'undeployed' | 'unreachable'; version?: string; updateVersion?: string; build?: string }
   // Online, deploy confirmed, nothing (complete) cached — downloadable.
   // version labels the downloadable pack when the deploy declares it.
   | { state: 'not-cached'; version?: string }
@@ -395,8 +399,9 @@ export async function probeReadiness(): Promise<Readiness> {
       const cache = await caches.open(ARTIFACT_CACHE)
       const storedVersion = await (await cache.match(VERSION_KEYS[ARTIFACT_CACHE]))?.text()
       if (storedVersion) r.version = storedVersion
+      const stored = await cachedEngineBuild(cache)
+      if (stored !== undefined) r.build = stored
       if (version.state === 'ok') {
-        const stored = await cachedEngineBuild(cache)
         r.update = stored !== undefined && stored !== version.build
         if (r.update && version.version !== undefined) r.updateVersion = version.version
       }

@@ -411,11 +411,11 @@ export function buildOfflineLobbyView(
   // Appended rather than rendered with the state so the row is complete
   // before the measurement resolves — it's fast (header sums, no body
   // reads), but it is not synchronous.
-  function appendMeasuredSize(base: string): void {
+  function appendMeasuredSize(base: string, suffix = ''): void {
     const token = sizeToken
     void measureOfflineData().then(({ total }) => {
       if (!view.isConnected || token !== sizeToken || total === 0) return
-      readySubEl.textContent = `${base} · ${formatBytes(total)}`
+      readySubEl.textContent = `${base} · ${formatBytes(total)}${suffix}`
     })
   }
 
@@ -496,8 +496,14 @@ export function buildOfflineLobbyView(
               : `Update to DCSS ${r.updateVersion} available`,
           'Update')
       } else {
-        setReadiness('ok', packName(r), 'Installed')
-        appendMeasuredSize('Installed')
+        // The cached build id tails the quiet state only — it's the one line
+        // a bug report can quote that names what this device actually runs
+        // (and prefix-matches a build-<id> tag in the public source repo).
+        // 8 of the 12 chars: ample uniqueness, less line noise. The
+        // update/partial sublines already carry their own message.
+        const build = r.build ? ` · ${r.build.slice(0, 8)}` : ''
+        setReadiness('ok', packName(r), `Installed${build}`)
+        appendMeasuredSize('Installed', build)
       }
     } else if (r.state === 'not-cached') {
       setReadiness('dim', packName(r), `Not installed · ${INSTALL_SIZE_LABEL}`, 'Install')

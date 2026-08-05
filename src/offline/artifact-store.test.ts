@@ -185,7 +185,7 @@ describe('probeReadiness', () => {
     await markEngineSetComplete(c as unknown as Cache)
     await c.put('/offline/__build', new Response('abc123'))
     stubFetch(VERSION_OK)
-    expect(await probeReadiness()).toEqual({ state: 'ready', tiles: false, update: false, deploy: 'ok' })
+    expect(await probeReadiness()).toEqual({ state: 'ready', tiles: false, update: false, deploy: 'ok', build: 'abc123' })
   })
 
   it('is ready offline once marked, and flags a newer deploy as update', async () => {
@@ -193,10 +193,10 @@ describe('probeReadiness', () => {
     await markEngineSetComplete(c as unknown as Cache)
     await c.put('/offline/__build', new Response('abc123'))
     stubFetch({ '/offline/version.json': null })
-    expect(await probeReadiness()).toEqual({ state: 'ready', tiles: false, update: false, deploy: 'unreachable' })
+    expect(await probeReadiness()).toEqual({ state: 'ready', tiles: false, update: false, deploy: 'unreachable', build: 'abc123' })
 
     stubFetch({ '/offline/version.json': { body: '{"build":"NEWER"}', type: 'application/json' } })
-    expect(await probeReadiness()).toEqual({ state: 'ready', tiles: false, update: true, deploy: 'ok' })
+    expect(await probeReadiness()).toEqual({ state: 'ready', tiles: false, update: true, deploy: 'ok', build: 'abc123' })
   })
 
   it('labels the downloadable and cached sets with their game versions', async () => {
@@ -210,12 +210,12 @@ describe('probeReadiness', () => {
     await c.put('/offline/__version', new Response('0.34.1'))
     stubFetch({ '/offline/version.json': null })
     expect(await probeReadiness()).toEqual(
-      { state: 'ready', tiles: false, update: false, deploy: 'unreachable', version: '0.34.1' })
+      { state: 'ready', tiles: false, update: false, deploy: 'unreachable', build: 'abc123', version: '0.34.1' })
 
     // A newer labeled deploy names the update target too.
     stubFetch({ '/offline/version.json': { body: '{"build":"NEWER","version":"0.35-a0"}', type: 'application/json' } })
     expect(await probeReadiness()).toEqual(
-      { state: 'ready', tiles: false, update: true, deploy: 'ok', version: '0.34.1', updateVersion: '0.35-a0' })
+      { state: 'ready', tiles: false, update: true, deploy: 'ok', build: 'abc123', version: '0.34.1', updateVersion: '0.35-a0' })
   })
 
   // CacheStorage is secure-context-only, so a phone pointed at a plain-http
@@ -294,7 +294,7 @@ describe('downloadOfflineData', () => {
     expect(await engine.match('/offline/__complete')).toBeTruthy()
     expect(await tiles.match('/gamedata/local/__complete')).toBeTruthy()
     expect(await probeReadiness()).toEqual(
-      { state: 'ready', tiles: true, update: false, deploy: 'ok', version: '0.34.1' })
+      { state: 'ready', tiles: true, update: false, deploy: 'ok', build: 'abc123', version: '0.34.1' })
   })
 
   it('converges to ready on a deploy that ships no tiles at all', async () => {
@@ -308,7 +308,7 @@ describe('downloadOfflineData', () => {
     })
     await downloadOfflineData(() => {})
     expect(await probeReadiness()).toEqual(
-      { state: 'ready', tiles: true, update: false, deploy: 'ok' })
+      { state: 'ready', tiles: true, update: false, deploy: 'ok', build: 'abc123' })
   })
 
   it('does not mark the tiles set complete when the file list is unreachable', async () => {
@@ -326,7 +326,7 @@ describe('downloadOfflineData', () => {
     const tiles = store.caches.get(GAMEDATA_CACHE)!
     expect(await tiles.match('/gamedata/local/__complete')).toBeUndefined()
     expect(await probeReadiness()).toEqual(
-      { state: 'ready', tiles: false, update: false, deploy: 'ok' })
+      { state: 'ready', tiles: false, update: false, deploy: 'ok', build: 'abc123' })
   })
 
   it('refuses to run without a reachable deploy', async () => {
