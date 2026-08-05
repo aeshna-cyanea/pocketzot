@@ -9,7 +9,7 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
-## 2026-08-XX
+## 2026-08-05
 
 - Offline play: PocketZot can now run DCSS entirely on your device. Tap "Play
   offline" on the login screen. The first launch installs the engine and tile
@@ -17,9 +17,10 @@ Notable changes to PocketZot, newest first.
   including in airplane mode.
 - Offline characters get named save slots, a past-games browser with scores
   and full morgues, an editable options (RC) file, and one-file backup
-  export and import.
-- The app itself now also opens without a connection, so you can launch
-  straight into an offline game in airplane mode.
+  export/import.
+- While spectating as a guest, the Guest chip at the top of the lobby now
+  opens a server menu, so you can switch to another server's spectate lobby
+  without going back to the home screen.
 
 ## 2026-08-04
 
