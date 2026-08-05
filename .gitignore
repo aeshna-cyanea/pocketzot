@@ -31,3 +31,7 @@ public/sitemap.xml
 # never committed here).
 public/offline/
 public/gamedata/local/
+functions/
+.playwright/
+scratchpad/
+shots/
