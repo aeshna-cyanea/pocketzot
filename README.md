@@ -20,10 +20,11 @@ Progressive Web App.
      of the hosted site, not this repository. -->
 <p>
   <img src="https://pocketzot.app/shot-spriggan.png" alt="ASCII dungeon map with touch controls" height="420">
-  <img src="https://pocketzot.app/shot-monsters.png" alt="Full-screen monster description" height="420">
+  <img src="https://pocketzot.app/shot-login.png" alt="PocketZot account picker with online accounts and an offline game" height="420">
   <img src="https://pocketzot.app/shot-shoals.png" alt="Tiles dungeon map, spectating player" height="420">
-  <img src="https://pocketzot.app/shot-login.png" alt="PocketZot account picker" height="420">
+  <img src="https://pocketzot.app/shot-offline.png" alt="Offline lobby with a saved game and installed game data" height="420">
 </p>
+<p>More screenshots at <a href="https://pocketzot.app/about">pocketzot.app/about</a>.</p>
 
 ## Features
 
