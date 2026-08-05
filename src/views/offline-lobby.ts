@@ -251,7 +251,7 @@ export function buildOfflineLobbyView(
     // comes from milestone snapshots, everything else from live player deltas
     // (offline-state.ts).
     const parts: string[] = []
-    if (rec?.xl != null) parts.push(`XL${rec.xl}`)
+    if (rec?.xl != null) parts.push(`XL:${rec.xl}`)
     if (rec?.char) parts.push(rec.god ? `${rec.char}^${rec.god}` : rec.char)
     else if (rec?.god) parts.push(rec.god)
     if (rec?.place) parts.push(compactPlace(rec.place, rec.depth))

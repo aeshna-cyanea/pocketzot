@@ -313,7 +313,7 @@ export function buildLoginView(
       } else {
         title.textContent = nameTitle(rec.name, rec.title)
         const parts: string[] = []
-        if (rec.xl != null) parts.push(`XL${rec.xl}`)
+        if (rec.xl != null) parts.push(`XL:${rec.xl}`)
         if (rec.place) parts.push(compactPlace(rec.place, rec.depth))
         sub.textContent = parts.join(' ') || 'On this device'
         // Own span so the count survives when a long sub truncates.

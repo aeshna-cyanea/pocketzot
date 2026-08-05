@@ -501,7 +501,7 @@ export function buildLobbyView(
     const parts: string[] = []
     const hasMeta = g.char || g.xl != null || g.place
     if (g.char) parts.push(escHtml(g.char))
-    if (g.xl != null) parts.push(`XL${g.xl}`)
+    if (g.xl != null) parts.push(`XL:${g.xl}`)
     if (g.place) parts.push(escHtml(g.place))
     if (!hasMeta && g.milestone) parts.push(`<i>${escHtml(g.milestone.replace(/^started /, ''))}</i>`)
     const ver = versionLabel(g.game_id)
