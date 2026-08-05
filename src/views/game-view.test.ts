@@ -496,6 +496,25 @@ describe('ui-push / ui-pop overlay stack', () => {
     expect(isHidden(overlay(h))).toBe(false)
     expect(overlay(h).querySelector('.overlay-title span')?.textContent).toBe('SNAP')
   })
+
+  it('ui-stack REPLACES a live-pushed stack instead of duplicating it (offline attach)', () => {
+    // Offline, the mini-server's attach handshake forces _send_everything
+    // while the newgame screen is already up live: the snapshot re-sends the
+    // same push. Appending would leave a phantom copy that one ui-pop later
+    // uncovers (species screen stuck over the running game).
+    const h = setup()
+    h.dispatch({ msg: 'ui-push', type: 'newgame-choice', title: 'SPECIES' })
+    h.dispatch({ msg: 'ui-stack', items: [{ msg: 'ui-push', type: 'newgame-choice', title: 'SPECIES' }] })
+    h.dispatch({ msg: 'ui-pop' })
+    expect(isHidden(overlay(h))).toBe(true)
+  })
+
+  it('an empty ui-stack snapshot clears a stale overlay', () => {
+    const h = setup()
+    h.dispatch({ msg: 'ui-push', type: 'describe-item', title: 'STALE', body: 'b' })
+    h.dispatch({ msg: 'ui-stack', items: [] })
+    expect(isHidden(overlay(h))).toBe(true)
+  })
 })
 
 describe('menu handler', () => {

@@ -2,6 +2,7 @@ import './style.css'
 import { initApp } from './app'
 import { initUiScale } from './ui-scale'
 import { maybeMountSafeAreaProbe } from './safe-area-probe'
+import { registerServiceWorker } from './sw/register'
 
 const appEl = document.getElementById('app')
 if (!appEl) throw new Error('#app element not found')
@@ -10,3 +11,4 @@ if (!appEl) throw new Error('#app element not found')
 initUiScale()
 initApp(appEl)
 maybeMountSafeAreaProbe()
+registerServiceWorker()

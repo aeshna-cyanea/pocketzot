@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fakeStorage } from '../../test/fake-storage'
+import { cachedGamedataBuild } from '../../offline/artifact-store'
 import {
   cachedFingerprint,
   playerAtlasFingerprint,
+  primeFingerprint,
   resetAtlasGroups,
   resolvePlayerLoader,
+  seedLocalPlayerAtlas,
   storeFingerprint,
 } from './atlas-dedup'
 import { getTileLoader, type TileLoader } from './tile-loader'
@@ -15,7 +18,13 @@ vi.mock('./tile-loader', () => ({
   TEX: { PLAYER: 3 },
   getTileLoader: vi.fn(),
 }))
+// seedLocalPlayerAtlas' only reach into the offline stack — mocked so tests
+// control whether a "complete local pack" exists without a Cache API.
+vi.mock('../../offline/artifact-store', () => ({
+  cachedGamedataBuild: vi.fn(async () => null),
+}))
 const getTileLoaderMock = vi.mocked(getTileLoader)
+const buildMock = vi.mocked(cachedGamedataBuild)
 
 interface Rect { w: number; h: number; ox: number; oy: number; sx: number; sy: number; ex: number; ey: number }
 
@@ -64,6 +73,7 @@ beforeEach(() => {
   vi.stubGlobal('localStorage', fakeStorage())
   resetAtlasGroups()
   getTileLoaderMock.mockReset()
+  buildMock.mockReset().mockResolvedValue(null)
 })
 afterEach(() => { vi.unstubAllGlobals() })
 
@@ -216,5 +226,94 @@ describe('resolvePlayerLoader', () => {
     // The re-claim now serves the rest of the group.
     expect(await resolvePlayerLoader('https://a', 'v3')).toBe(live)
     expect(third.ensureLoaded).not.toHaveBeenCalled()
+  })
+})
+
+describe('seedLocalPlayerAtlas', () => {
+  it('is a no-op without a verified-complete local pack', async () => {
+    registry({})
+    await seedLocalPlayerAtlas()
+    expect(getTileLoaderMock).not.toHaveBeenCalled()
+  })
+
+  it('claims the pack group so matching recipes adopt the local atlas', async () => {
+    buildMock.mockResolvedValue('b1')
+    const table = [rect(1), rect(2)]
+    const local = fakeLoader({ table })
+    const remote = fakeLoader({ table })
+    registry({ '|local': local, 'https://x|v1': remote })
+    await seedLocalPlayerAtlas()
+    expect(await resolvePlayerLoader('https://x', 'v1')).toBe(local)
+    expect(remote.ensureLoaded).not.toHaveBeenCalled()
+  })
+
+  it('overwrites an earlier cross-origin claim', async () => {
+    buildMock.mockResolvedValue('b1')
+    const table = [rect(1)]
+    const local = fakeLoader({ table })
+    const remote = fakeLoader({ table })
+    registry({ '|local': local, 'https://x|v1': remote })
+    // The remote resolves (and claims the group) before the seed runs — e.g.
+    // a paint that raced the pack download finishing.
+    expect(await resolvePlayerLoader('https://x', 'v1')).toBe(remote)
+    await seedLocalPlayerAtlas()
+    expect(await resolvePlayerLoader('https://x', 'v1')).toBe(local)
+  })
+
+  it('caches the fingerprint per build and recomputes on a build change', async () => {
+    buildMock.mockResolvedValue('b1')
+    const local1 = fakeLoader({ table: [rect(1)] })
+    registry({ '|local': local1 })
+    await seedLocalPlayerAtlas()
+    expect(cachedFingerprint('', 'local#b1')).not.toBeNull()
+    const walks = vi.mocked(local1.getModule).mock.calls.length
+    // Same build: served from the cached fingerprint, no re-walk.
+    await seedLocalPlayerAtlas()
+    expect(vi.mocked(local1.getModule).mock.calls.length).toBe(walks)
+
+    // Engine update: same URL, new content. The b1 fingerprint must not be
+    // reused — the new pack's own layout claims (and serves) its group.
+    buildMock.mockResolvedValue('b2')
+    const table2 = [rect(7), rect(8)]
+    const local2 = fakeLoader({ table: table2 })
+    const remote2 = fakeLoader({ table: table2 })
+    registry({ '|local': local2, 'https://x|v2': remote2 })
+    await seedLocalPlayerAtlas()
+    expect(cachedFingerprint('', 'local#b2')).not.toBeNull()
+    expect(cachedFingerprint('', 'local#b2')).not.toBe(cachedFingerprint('', 'local#b1'))
+    expect(await resolvePlayerLoader('https://x', 'v2')).toBe(local2)
+  })
+
+  it('primeFingerprint fills the cache, and force recomputes over it', async () => {
+    const l1 = fakeLoader({ table: [rect(1)] })
+    registry({ '|local': l1 })
+    await primeFingerprint('', 'local')
+    const first = cachedFingerprint('', 'local')
+    expect(first).not.toBeNull()
+    // Unforced: cached value short-circuits, no re-walk.
+    await primeFingerprint('', 'local')
+    expect(vi.mocked(l1.getModule).mock.calls.length).toBe(2) // player+main, once
+
+    // Pack content changed under the same coords (engine update): force
+    // recomputes and replaces the stale value.
+    registry({ '|local': fakeLoader({ table: [rect(9), rect(10)] }) })
+    await primeFingerprint('', 'local', true)
+    expect(cachedFingerprint('', 'local')).not.toBe(first)
+  })
+
+  it('primeFingerprint swallows unfingerprintable versions', async () => {
+    registry({ '|local': fakeLoader({ moduleFails: true }) })
+    await expect(primeFingerprint('', 'local', true)).resolves.toBeUndefined()
+    expect(cachedFingerprint('', 'local')).toBeNull()
+  })
+
+  it('claims nothing when the pack is unfingerprintable', async () => {
+    buildMock.mockResolvedValue('b1')
+    const table = [rect(1)]
+    registry({ '|local': fakeLoader({ moduleFails: true }), 'https://x|v1': fakeLoader({ table }) })
+    await seedLocalPlayerAtlas()
+    // The recipe falls back to its own (cross-origin) atlas as before.
+    const own = getTileLoaderMock('https://x', 'v1')
+    expect(await resolvePlayerLoader('https://x', 'v1')).toBe(own)
   })
 })

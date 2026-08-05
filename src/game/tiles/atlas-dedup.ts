@@ -19,6 +19,7 @@
 // GC'd version dir render through a live equivalent without touching the
 // dead dir at all.
 
+import { cachedGamedataBuild } from '../../offline/artifact-store'
 import { TEX, getTileLoader, type TileLoader } from './tile-loader'
 
 const FP_KEY = 'pocketzot:atlas-fp'
@@ -103,6 +104,48 @@ const groupRep = new Map<string, { httpBase: string; version: string }>()
 // Test-only: clear the session group claims between cases.
 export function resetAtlasGroups(): void {
   groupRep.clear()
+}
+
+// Seed the offline tiles pack (/gamedata/local/, downloaded via the offline
+// lobby's Storage card) as its fingerprint group's representative, ahead of a
+// paint resolving recipes. Matching recipes then adopt the local atlas over
+// their servers' cross-origin ones — it serves in airplane mode (the service
+// worker's cache-first route), and being same-origin it leaves canvases
+// untainted, which is what lets avatar-bake.ts persist PNG thumbnails.
+// No-op unless a verified-complete pack is on device (read-only probe — never
+// triggers a download). The pack's fingerprint is cached per engine *build*:
+// its URLs are stable across engine updates while the content changes, so the
+// plain (httpBase, version) key would go stale and mis-claim a group.
+export async function seedLocalPlayerAtlas(): Promise<void> {
+  try {
+    const build = await cachedGamedataBuild()
+    if (!build) return
+    let fp = cachedFingerprint('', `local#${build}`)
+    if (fp == null) {
+      fp = await playerAtlasFingerprint(getTileLoader('', 'local'))
+      storeFingerprint('', `local#${build}`, fp)
+    }
+    // Overwrite any existing claim: adopters re-verify the representative's
+    // atlas (atlasOk) and drop the claim on failure, so preferring local is
+    // safe even if its atlas were to turn out unreadable.
+    groupRep.set(fp, { httpBase: '', version: 'local' })
+  } catch { /* pack unreadable or unfingerprintable — paint proceeds without it */ }
+}
+
+// Ensure a version's fingerprint is in the persistent cache, computing it
+// from the version's own tileinfo when missing. The offline game view calls
+// this (with `force`) as its loader seeds, so avatar captures can read the
+// fingerprint synchronously and stamp it onto the entry (avatars.ts `fp`).
+// `force` recomputes even over a cached value: the offline pack's content
+// changes under the constant ('', 'local') coords across engine updates, so
+// a cached fingerprint for those coords is only trustworthy while the pack
+// it was computed from is the one actually mounted — which is exactly what
+// an offline game boot knows. Immutable server version dirs never need it.
+export async function primeFingerprint(httpBase: string, version: string, force = false): Promise<void> {
+  if (!force && cachedFingerprint(httpBase, version) != null) return
+  try {
+    storeFingerprint(httpBase, version, await playerAtlasFingerprint(getTileLoader(httpBase, version)))
+  } catch { /* unfingerprintable — captures fall back to fp-less entries */ }
 }
 
 function atlasOk(l: TileLoader): Promise<boolean> {

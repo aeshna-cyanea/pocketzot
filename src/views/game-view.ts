@@ -1,4 +1,4 @@
-import type { WsConnection } from '../ws/connection'
+import type { GameConnection } from '../ws/connection'
 import type { ClientMsg, ServerMsg, GameExit } from '../ws/types'
 import { fitToWidth } from './fit-terminal'
 import { MapStore } from '../game/map/map-store'
@@ -24,8 +24,11 @@ import { reflowSkillCrt, plainText } from './skill-reflow'
 import { TEX, getTileLoader, type TileLoader } from '../game/tiles/tile-loader'
 import { activeEnumsModule, setEnumsModule } from '../game/map/flag-decode'
 import { formatDcssVersion, isBelowSupportCutoff, parseDcssVersion } from '../util/dcss-version'
-import { renderTiles, appendIconOverlays, monsterTileSpec, prependDngnLayer, type TileRef } from '../game/tiles/tile-view'
+import { renderTiles, appendIconOverlays, dollTileSpec, monsterTileSpec, prependDngnLayer, type TileRef } from '../game/tiles/tile-view'
+import { cachedFingerprint, primeFingerprint } from '../game/tiles/atlas-dedup'
+import { ensureDollBaked, isBakeableLoader } from '../game/tiles/avatar-bake'
 import { recordAvatarOutcome, saveAvatar, type AvatarMeta } from '../avatars'
+import { looksLikeWelcome, welcomeBackground } from '../game/char-label'
 import { getPref, setPref, MONSTER_LIST_MODE_CHANGED_EVENT, RENDER_MODE_CHANGED_EVENT } from '../prefs'
 import {
   renderBodyLines, propagateDarkgreyColor, unwrapHangingIndents, joinIndentedRuns,
@@ -110,7 +113,7 @@ export interface SpectateTarget {
 }
 
 export function buildGameView(
-  conn: WsConnection,
+  conn: GameConnection,
   onLobby: (exit?: GameExit) => void,
   spectating?: SpectateTarget,
   initialLoader?: TileLoader,
@@ -202,6 +205,23 @@ export function buildGameView(
   // from the same character continuing (the turn count resets for a new char — see
   // ../avatars). Delta-encoded after the game-start snapshot, so hold the last seen.
   let lastTurn: number | undefined
+  // The game-start "Welcome[ back], <name> the <Species> <Job>." line — the
+  // wire's only statement of the background (no player-message job field).
+  // Held raw until name AND species are known (msgs-vs-player order varies),
+  // then parsed ONCE: name and species never change after that point, so a
+  // failed parse can never succeed later. The settled latch ends both the
+  // per-line welcome scan and the per-player-message resolve work — without
+  // it a failed parse would recompile the regex every frame forever.
+  let welcomeLine: string | null = null
+  let welcomeSettled = false
+  function tryResolveBackground(): void {
+    if (welcomeSettled || welcomeLine == null) return
+    if (!charName || !charMeta.species) return
+    const bg = welcomeBackground(welcomeLine, charName, charMeta.species)
+    if (bg !== undefined) charMeta.background = bg
+    welcomeSettled = true
+    welcomeLine = null
+  }
   const inventoryStore = new InventoryStore()
   const statsView = new StatsView(inventoryStore)
   const statusView = new StatusView()
@@ -294,6 +314,14 @@ export function buildGameView(
   const uiStack: UiPushMsg[] = []
   const crtLines = new Map<number, string>()
   let crtActive = false
+  // Latched when the engine pushes the "game-over" screen (end.cc end_game:
+  // Goodbye + hiscores). From that point the game never returns to the map —
+  // only game_ended remains — so overlay teardowns keep the last screen up
+  // instead of revealing the map. Without this, dismissing the final screen
+  // flashes the dead character's map for the gap until the process exits
+  // (offline that gap is the engine's final IDBFS persist, several frames).
+  // Never reset: exitToLobby discards the whole view.
+  let gameOverSeen = false
   // True while a server `show_dialog` HTML overlay is up (e.g. trunk's
   // save-transfer prompt on resume). Tracked like crtActive so it can't be
   // orphaned if the server proceeds without an explicit hide_dialog.
@@ -948,21 +976,38 @@ export function buildGameView(
     const doll = cell.doll ?? null
     const mcache = cell.mcache ?? null
     if (!doll?.length && !mcache?.length) return
+    // The layout fingerprint, when already cached (offline games prime it on
+    // game_client; servers fill it lazily on shelf paints): stamped on the
+    // entry so the baked-thumbnail identity survives the offline pack
+    // changing content under its constant coords, and used to eager-bake
+    // right here where the loader is warm and same-origin. ensureDollBaked
+    // no-ops for cross-origin (server) loaders and already-baked specs, so
+    // this is a couple of cache reads per appearance change in the common
+    // case.
+    const fp = cachedFingerprint(conn.httpBase, loader.version) ?? undefined
     // The sig includes charMeta so progress changes (level-up, floor change,
     // conversion) refresh the stored entry too, not just appearance changes —
     // still a handful of writes per game, vs one per move without the gate.
     // (charMeta is one object mutated in place, so its key order — and thus
-    // the sig — is stable within this game's closure.)
-    const sig = JSON.stringify([doll, mcache, charMeta])
+    // the sig — is stable within this game's closure.) It also includes fp:
+    // the game_client prime is fire-and-forget, so an offline resume's first
+    // map can beat it and capture fp-less — folding fp into the sig makes
+    // the first map after the prime lands re-save once with the stamp,
+    // instead of the gate pinning the entry fp-less until the next
+    // appearance change.
+    const sig = JSON.stringify([doll, mcache, charMeta, fp])
     if (sig === lastAvatarSig) return
     lastAvatarSig = sig
     // The turn count is the new-character signal: ../avatars appends when it drops
     // below the slot's current entry (a fresh char reset it to 0), else upserts.
     saveAvatar({
       wsUrl: conn.wsUrl, username, gameId, charName,
-      httpBase: conn.httpBase, version: loader.version, doll, mcache,
+      httpBase: conn.httpBase, version: loader.version, fp, doll, mcache,
       ...charMeta,
     }, { turn: lastTurn })
+    if (fp !== undefined && isBakeableLoader(loader)) {
+      void ensureDollBaked(loader, fp, dollTileSpec({ doll, mcache }))
+    }
   }
 
   // Dev-only console hook so the tile mode (otherwise only a hidden
@@ -1182,6 +1227,15 @@ export function buildGameView(
           // tile-mode view (built before game_client) or a pre-game_client
           // gesture toggle gets its loader and starts painting.
           loader = getTileLoader(conn.httpBase, msg.version)
+          // Offline games only (httpBase '' → the same-origin pack): refresh
+          // the pack's layout fingerprint so maybeSaveAvatar can stamp it on
+          // captures synchronously and eager-bake against it. Forced because
+          // the pack's content shifts under constant coords across engine
+          // updates — and right now the mounted pack is what we'd bake from,
+          // so recompute-from-source is exactly the fresh value. Server
+          // version dirs are immutable and never need this (their fingerprint
+          // fills lazily on the first login-shelf resolve).
+          if (conn.httpBase === '') void primeFingerprint('', msg.version, true)
           // Dev hook — see the initialLoader assignment near the top.
           if (import.meta.env.DEV) (window as unknown as { __dcssLoader: TileLoader }).__dcssLoader = loader
           monsterListView.setLoader(loader)
@@ -1229,6 +1283,7 @@ export function buildGameView(
         if (msg.xl !== undefined) charMeta.xl = msg.xl
         if (msg.place !== undefined) charMeta.place = msg.place
         if (msg.depth !== undefined) charMeta.depth = msg.depth
+        tryResolveBackground() // name/species may have just arrived; see welcomeLine
         if (msg.pos) {
           store.playerPos = { x: msg.pos.x, y: msg.pos.y }
           // setViewCenter reports whether the center actually moved; reuse that
@@ -1294,6 +1349,7 @@ export function buildGameView(
       case 'ui-push': {
         disarmCreationGuard()  // an overlay rendered — see the 'txt' case
         const pushMsg = msg as unknown as UiPushMsg
+        if (pushMsg.type === 'game-over') gameOverSeen = true
         // A server overlay supersedes our client-side monster panel and
         // minimap lens; clear/close so subsequent map updates don't rewrite
         // the overlay body or repaint a stale lens.
@@ -1312,11 +1368,27 @@ export function buildGameView(
       }
 
       case 'ui-stack': {
-        // Sent on spectator join: a snapshot of the watched game's UI stack.
-        // Each item carries its own `msg` field (ui-push, ui-state, ...),
-        // so we re-dispatch through the same handler.
+        // _send_everything()'s snapshot of the engine-side UI stack, sent on
+        // attach (spectator join; offline, the mini-server's boot handshake).
+        // Each item carries its own `msg` field (ui-push, menu, ...), so we
+        // re-dispatch through this handler — but the snapshot can duplicate
+        // pushes that already arrived live (offline the newgame screen is
+        // always up before the forced snapshot lands), so it REPLACES the
+        // client stack rather than appending. The reference client instead
+        // drops the message unless watching (ui-layouts.js recv_ui_stack);
+        // replacing is equivalent on a fresh spectate view and also
+        // self-heals a desynced stack.
         const items = (msg as unknown as { items?: ServerMsg[] }).items
-        if (Array.isArray(items)) for (const item of items) handleMsg(item)
+        if (!Array.isArray(items)) break
+        uiStack.length = 0
+        for (const item of items) handleMsg(item)
+        // An empty snapshot must also clear a stale overlay — mirror
+        // ui-pop's restore chain (dialogs live outside the engine stack).
+        if (uiStack.length === 0) {
+          if (crtActive) restoreCrt()
+          else if (activeMenu) showMenu(activeMenu)
+          else if (!dialogActive) hideOverlay()
+        }
         break
       }
 
@@ -1325,7 +1397,7 @@ export function buildGameView(
         if (uiStack.length > 0) showUiPush(uiStack[uiStack.length - 1])
         else if (crtActive) restoreCrt()
         else if (activeMenu) showMenu(activeMenu)
-        else hideOverlay()
+        else if (!gameOverSeen) hideOverlay()
         break
 
       case 'ui-state': {
@@ -1627,6 +1699,12 @@ export function buildGameView(
           // assigned to…" / "Your memory of … unravels") and flags the rail
           // stale; reharvestIfDirty after this loop resolves it.
           if (harvester.onMsgLine(m.text)) continue
+          // Hold the game-start welcome line for the background parse (see
+          // welcomeLine decl); resolves now if name+species already arrived.
+          if (!welcomeSettled && looksLikeWelcome(m.text)) {
+            welcomeLine = m.text
+            tryResolveBackground()
+          }
           // Mirror into the X-mode describe strip; the line ALSO takes the
           // normal path below into the (hidden) real log, which is what
           // keeps the server's rollback counts consistent on X-mode exit.
@@ -1699,7 +1777,7 @@ export function buildGameView(
           activeMenu = null
           if (uiStack.length > 0) showUiPush(uiStack[uiStack.length - 1])
           else if (crtActive) restoreCrt()
-          else hideOverlay()
+          else if (!gameOverSeen) hideOverlay()
         }
         break
       }
@@ -1715,7 +1793,7 @@ export function buildGameView(
         closeClientOverlays()
         titlePromptInput = null
         harvester.reset()
-        hideOverlay()
+        if (!gameOverSeen) hideOverlay()
         break
 
       case 'go_lobby':

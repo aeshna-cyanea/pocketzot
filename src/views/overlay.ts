@@ -35,6 +35,19 @@ export function mountOverlay(el: HTMLElement): () => void {
   return close
 }
 
+// The bare modal-backdrop layer (the .doc-backdrop dim tier): body-mounted
+// via mountOverlay, dismissed by Escape or a direct backdrop tap. Callers
+// append their own dialog content and own its ARIA roles — this is the
+// shared bottom half of mountCardOverlay, split out for dialogs that ARE
+// their own card (the crypt's character-card modal).
+export function mountBackdrop(cls?: string): { backdrop: HTMLElement; close: () => void } {
+  const backdrop = document.createElement('div')
+  backdrop.className = cls ? `doc-backdrop ${cls}` : 'doc-backdrop'
+  const close = mountOverlay(backdrop)
+  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close() })
+  return { backdrop, close }
+}
+
 // Shared card-dialog shell (dimmed backdrop + centered card + titled header
 // with ✕), used by the doc viewer and the settings page. Returns the empty
 // body element for the caller to fill, plus close(); Escape (via
@@ -44,8 +57,7 @@ export function mountCardOverlay(
   title: string,
   cls: { backdrop?: string; card?: string; body?: string } = {},
 ): { body: HTMLElement; close: () => void } {
-  const backdrop = document.createElement('div')
-  backdrop.className = 'doc-backdrop' + (cls.backdrop ? ` ${cls.backdrop}` : '')
+  const { backdrop, close } = mountBackdrop(cls.backdrop)
   const card = document.createElement('div')
   card.className = 'doc-card' + (cls.card ? ` ${cls.card}` : '')
   card.setAttribute('role', 'dialog')
@@ -68,8 +80,6 @@ export function mountCardOverlay(
   card.appendChild(header)
   card.appendChild(body)
   backdrop.appendChild(card)
-  const close = mountOverlay(backdrop)
   closeBtn.addEventListener('click', close)
-  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close() })
   return { body, close }
 }

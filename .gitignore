@@ -26,3 +26,8 @@ public/social-card.png
 public/shot-*.png
 public/robots.txt
 public/sitemap.xml
+# Offline-play engine artifacts (Phase A build outputs from the sibling
+# pocketzot-engine repo — GPL crawl build products, fetched at deploy time,
+# never committed here).
+public/offline/
+public/gamedata/local/

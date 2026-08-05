@@ -9,6 +9,7 @@ import { buildLobbyView, selectPrimaryGameIds } from './lobby'
 import type { WsConnection } from '../ws/connection'
 import type { ServerMsg } from '../ws/types'
 import { getTileLoader } from '../game/tiles/tile-loader'
+import { getLastSpectateServer } from '../prefs'
 
 // Regression coverage for the tile loader hand-off across the lobby→game
 // boundary. `game_client` (which carries the gamedata version) can arrive while
@@ -28,21 +29,25 @@ import { getTileLoader } from '../game/tiles/tile-loader'
 const WS_URL = 'wss://test.example/socket'
 const HTTP_BASE = 'https://test.example'
 
-function setupLobby(): {
-  onGameStart: ReturnType<typeof vi.fn>
-  dispatch: (msg: ServerMsg) => void
-  view: HTMLElement
-  conn: WsConnection
-} {
-  const conn = {
-    wsUrl: WS_URL,
-    httpBase: HTTP_BASE,
+function fakeConn(wsUrl: string, httpBase: string): WsConnection {
+  return {
+    wsUrl,
+    httpBase,
     onMessage: (() => {}) as (msg: ServerMsg) => void,
     onClose: () => {},
     onOpen: () => {},
     send: vi.fn(),
     close: vi.fn(),
   } as unknown as WsConnection
+}
+
+function setupLobby(): {
+  onGameStart: ReturnType<typeof vi.fn>
+  dispatch: (msg: ServerMsg) => void
+  view: HTMLElement
+  conn: WsConnection
+} {
+  const conn = fakeConn(WS_URL, HTTP_BASE)
   const onGameStart = vi.fn()
   const onDisconnect = vi.fn()
   // buildLobbyView assigns conn.onMessage = its internal handler.
@@ -312,5 +317,62 @@ describe('lobby account menu', () => {
     // A rebuilt view (fresh navigation) stays dotless via the stored pref.
     const { view: view2 } = setupLobby()
     expect(view2.querySelector('.unread-dot')).toBeNull()
+  })
+})
+
+// The guest header's chip is a server switcher (the only way to change servers
+// without going back to the login home). It hands the pick to the app, which
+// opens the new socket before dropping the current one — so a rejected switch
+// must leave this lobby usable rather than stranded.
+const CDI_WS = 'wss://crawl.dcss.io/socket'
+const CBR_WS = 'wss://cbro.berotato.org:8443/socket'
+
+function setupGuestLobby(onSwitchServer?: (wsUrl: string) => Promise<void>): HTMLElement {
+  const conn = fakeConn(CDI_WS, 'https://crawl.dcss.io')
+  return buildLobbyView(conn, '', true, vi.fn(), vi.fn(), undefined, onSwitchServer)
+}
+
+describe('guest server switcher', () => {
+  it('marks the server being watched and switches to another on tap', () => {
+    const onSwitch = vi.fn().mockResolvedValue(undefined)
+    const view = setupGuestLobby(onSwitch)
+
+    expect(view.querySelector('#lobby-server-chip .lobby-chip-tag')!.textContent).toBe('CDI')
+    const current = view.querySelectorAll('.lobby-server-item.is-current')
+    expect(current).toHaveLength(1)
+    expect(current[0]!.getAttribute('data-ws')).toBe(CDI_WS)
+
+    view.querySelector<HTMLButtonElement>(`.lobby-server-item[data-ws="${CBR_WS}"]`)!.click()
+    expect(onSwitch).toHaveBeenCalledWith(CBR_WS)
+    // Remembered on the ask, so the home screen's dropdown follows the pick.
+    expect(getLastSpectateServer()).toBe(CBR_WS)
+  })
+
+  it('ignores a tap on the server already being watched', () => {
+    const onSwitch = vi.fn()
+    const view = setupGuestLobby(onSwitch)
+    view.querySelector<HTMLButtonElement>(`.lobby-server-item[data-ws="${CDI_WS}"]`)!.click()
+    expect(onSwitch).not.toHaveBeenCalled()
+  })
+
+  it('keeps the lobby usable when the new server will not answer', async () => {
+    const onSwitch = vi.fn().mockRejectedValue(new Error('refused'))
+    const view = setupGuestLobby(onSwitch)
+    const chip = view.querySelector<HTMLButtonElement>('#lobby-server-chip')!
+    const notice = view.querySelector<HTMLElement>('#lobby-notice')!
+
+    view.querySelector<HTMLButtonElement>(`.lobby-server-item[data-ws="${CBR_WS}"]`)!.click()
+    expect(chip.disabled).toBe(true) // no second attempt while one is in flight
+    await vi.waitFor(() => expect(chip.disabled).toBe(false))
+    expect(notice.hidden).toBe(false)
+    expect(notice.textContent).toContain('cbro.berotato.org')
+    // Still this lobby, still on the server we were watching.
+    expect(view.querySelector('#lobby-server-chip .lobby-chip-tag')!.textContent).toBe('CDI')
+  })
+
+  it('falls back to a plain chip when the app offers no switch handler', () => {
+    const view = setupGuestLobby()
+    expect(view.querySelector('#lobby-server-chip')).toBeNull()
+    expect(view.querySelector('.lobby-account-chip.is-guest')).not.toBeNull()
   })
 })

@@ -10,6 +10,13 @@ import { decorateLogo } from '../logo'
 import { listAvatars } from '../avatars'
 import { paintAvatars } from './avatar-tiles'
 import { openCrypt } from './crypt-view'
+import { getOfflineChars, loadOfflineSlots, type OfflineChar } from '../offline/offline-state'
+import {
+  canPlayOffline, INSTALL_SIZE_LABEL, probeReadiness, TILES_SIZE_LABEL,
+  type Readiness,
+} from '../offline/artifact-store'
+import { compactPlace, nameTitle } from '../game/char-label'
+import { escHtml } from '../game/dcss-colors'
 
 export interface LoginResult {
   conn: WsConnection
@@ -22,6 +29,9 @@ export function buildLoginView(
   // Shown in the error slot on mount — how the app explains an involuntary
   // trip back here (connection lost, auto-resume gave up).
   notice?: string,
+  // Opens the offline lobby (save slots for the on-device WASM engine). When
+  // absent the offline card is not rendered.
+  onOffline?: () => void,
 ): HTMLElement {
   const view = document.createElement('div')
   view.id = 'login-view'
@@ -66,7 +76,7 @@ export function buildLoginView(
 
   const addAccountSection = hasSessions
     ? `
-      <details id="add-account" class="login-section login-add-section">
+      <details id="add-account" class="login-subsection login-add-section">
         <summary class="login-add-toggle">Add another account</summary>
         <form id="login-form" autocomplete="on" novalidate class="login-add-form">
           ${formInnerHtml}
@@ -74,36 +84,62 @@ export function buildLoginView(
       </details>
     `
     : `
-      <section class="login-section login-signin-section">
-        <div class="login-section-label">Sign in</div>
+      <div class="login-subsection login-signin-section">
+        <div class="login-sub-label">Sign in</div>
         <form id="login-form" autocomplete="on" novalidate>
           ${formInnerHtml}
         </form>
-      </section>
+      </div>
     `
 
+  // The card is organized as two top-level mode groups — "Play online"
+  // (accounts, sign-in, spectate: everything that talks to a WebTiles server)
+  // and "Play offline" (the offline WASM engine) — so the two ways to play
+  // read at a glance. Everything online-only must live inside the first
+  // group; keep the offline group last and lean.
   view.innerHTML = `
     <div class="login-card">
       <h1 class="login-title">PocketZot</h1>
       <div id="login-avatars" class="login-avatars"></div>
 
-      ${hasSessions ? `
-      <section id="resume-section" class="login-section">
-        <div class="login-section-label">Your accounts</div>
-        <div id="resume-list" class="login-account-list"></div>
+      <section class="login-group">
+        <div class="login-group-label">Play online</div>
+
+        ${hasSessions ? `
+        <div id="resume-section" class="login-subsection">
+          <div id="resume-list" class="login-account-list"></div>
+        </div>
+        ` : ''}
+
+        <div id="login-error" class="login-error" style="display:none" role="alert"></div>
+
+        ${addAccountSection}
+
+        <div class="login-subsection login-spectate-section">
+          <div class="login-sub-label">Spectate as guest</div>
+          <div class="login-spectate-row">
+            <select id="spectate-select" class="login-spectate-select" aria-label="Server"></select>
+            <button id="spectate-btn" type="button" class="login-btn login-btn-spectate">Spectate →</button>
+          </div>
+          <div id="spectate-error" class="login-error" style="display:none" role="alert"></div>
+        </div>
+      </section>
+
+      ${onOffline ? `
+      <section id="offline-section" class="login-group">
+        <div class="login-group-label">Play offline</div>
+        <button type="button" id="offline-card" class="login-account-card login-offline-card">
+          <span class="login-account-tag">⌂</span>
+          <span class="login-offline-lines">
+            <span id="offline-title" class="login-account-username"></span>
+            <span class="login-offline-subrow">
+              <span id="offline-sub" class="login-offline-sub"></span>
+              <span id="offline-count" class="login-offline-count"></span>
+            </span>
+          </span>
+        </button>
       </section>
       ` : ''}
-
-      <div id="login-error" class="login-error" style="display:none" role="alert"></div>
-
-      ${addAccountSection}
-
-      <section class="login-section login-spectate-section">
-        <div class="login-section-label">Spectate as guest</div>
-        <select id="spectate-select" class="login-spectate-select" aria-label="Server"></select>
-        <div id="spectate-error" class="login-error" style="display:none" role="alert"></div>
-        <button id="spectate-btn" type="button" class="login-btn login-btn-spectate">Spectate →</button>
-      </section>
 
       ${siteFooterHtml}
     </div>
@@ -147,6 +183,10 @@ export function buildLoginView(
     o1.value = s.wsUrl; o1.textContent = s.label
     formSelect.appendChild(o1)
   }
+  // Hostnames, not the server tags: this is the home screen, where a visitor
+  // without an account is the likeliest person to use it, and "CDI" means
+  // nothing to them. The compressed row has the width for a hostname anyway
+  // (measured) — the tag belongs in the lobby chip, which genuinely doesn't.
   for (const s of SPECTATE_SERVERS) {
     const o2 = document.createElement('option')
     o2.value = s.wsUrl; o2.textContent = s.label
@@ -180,6 +220,7 @@ export function buildLoginView(
   view.querySelector('#login-settings')!.addEventListener('click', () => openSettings())
 
   renderResumeButtons()
+  renderOfflineCard()
   renderAvatars()
 
   // Shelf of your recently-played character dolls (see ../avatars + ./avatar-tiles),
@@ -235,6 +276,118 @@ export function buildLoginView(
       paint()
     }
     window.addEventListener(LOGIN_SPRITES_CHANGED_EVENT, onSpritesPref)
+  }
+
+  // Offline card: one tap opens the offline lobby (save slots, backup
+  // management — views/offline-lobby.ts). With the group label naming the
+  // action ("Play offline"), the card is titled like the online account
+  // cards — by what you'll resume: the most recently played character, or
+  // "New game" when no saves exist. The subline shows that character's
+  // XL/place plus "+N more" when other saves exist, or the fixed
+  // "On this device" when there's no character to describe. Slot presence
+  // is guessed synchronously from the offline-state records, then corrected
+  // by the IDB probe when the browser supports probing without side effects
+  // (covers a wiped IDB under stale records, and an imported save with no
+  // record). The card is always exactly two lines, so state swaps never
+  // change its height.
+  function renderOfflineCard(): void {
+    const card = view.querySelector<HTMLButtonElement>('#offline-card')
+    const title = view.querySelector<HTMLElement>('#offline-title')
+    const sub = view.querySelector<HTMLElement>('#offline-sub')
+    const count = view.querySelector<HTMLElement>('#offline-count')
+    if (!card || !title || !sub || !count || !onOffline) return
+    const setCard = (slots: string[], chars: Record<string, OfflineChar>): void => {
+      count.textContent = ''
+      // Records are keyed by live slots (reconciled, or slots came from the
+      // records themselves), so the newest is just the newest value.
+      const rec = slots.length > 0
+        ? Object.values(chars).sort((a, b) => b.when - a.when)[0]
+        : undefined
+      hasChar = rec !== undefined
+      if (!rec) {
+        // No saves, or saves the browser knows nothing about (imported
+        // pack, wiped localStorage) — the lobby labels the latter by stem.
+        title.textContent = slots.length === 0 ? 'New game'
+          : slots.length === 1 ? 'Saved game' : `${slots.length} saved games`
+        sub.textContent = 'On this device'
+      } else {
+        title.textContent = nameTitle(rec.name, rec.title)
+        const parts: string[] = []
+        if (rec.xl != null) parts.push(`XL:${rec.xl}`)
+        if (rec.place) parts.push(compactPlace(rec.place, rec.depth))
+        sub.textContent = parts.join(' ') || 'On this device'
+        // Own span so the count survives when a long sub truncates.
+        if (slots.length > 1) count.textContent = `+${slots.length - 1} more`
+      }
+      applyReadiness()
+    }
+    // Readiness, in the subline. A character to resume outranks it — that's
+    // the card's whole point, and the pack is necessarily installed if
+    // there's a character to name — so this speaks in two cases: nothing
+    // installed yet (what it costs, so "installed the app for the flight but
+    // never downloaded" is visible from the home screen), and installed with
+    // nothing saved (what's on the device, so the first tap is informed).
+    // Never a verdict about the device ("Not ready to play offline"): what's
+    // installed, or what it would cost — the benefit is already on the group
+    // label above it, and the lobby is one tap away for the longer sentence.
+    // The lobby's fuller install-state wording doesn't fit here anyway: this
+    // subline ellipsizes past ~27 characters (212px of room beside the
+    // card's tag and chevron), and a truncated state is worse than a terse
+    // one. It takes the whole line; squeezing flavor next to it truncates
+    // both. Applied after every setCard repaint. A deploy that ships no
+    // engine hides the whole section instead.
+    let hasChar = false
+    let readiness: Readiness | null = null
+    const applyReadiness = (): void => {
+      const r = readiness
+      if (r === null) return
+      const line = canPlayOffline(r)
+        // Installed and playable: only worth a line when there's no
+        // character to name, and only when the pack knows its own version
+        // (older installs predate the stamp — "On this device" stands).
+        ? (hasChar || r.state !== 'ready' || !r.version ? null : `DCSS ${r.version} installed`)
+        // The price, not the state: the card's title is an action ("New
+        // game", a character), so the line under it reads as what that tap
+        // costs. The lobby row is about the pack itself and says "Not
+        // installed · 22 MB" there.
+        : r.state === 'not-cached' ? `${INSTALL_SIZE_LABEL} download`
+          // Same size, and the tap can't spend it yet — so the blocker
+          // replaces the price rather than qualifying it.
+          : r.state === 'offline-not-cached' ? 'Needs a connection once'
+            // Cache-less browser: no download fixes this, so don't price one.
+            // The whole reason ("games need a connection") is a lobby-width
+            // sentence; here the fact has to stand alone.
+            : r.state === 'no-store' ? "Can't be installed here"
+              // Engine cached, tiles half missing — finishable, and cheaper,
+              // but only while the deploy can actually serve the rest: an
+              // unreachable one gets the blocker (same as above), any other
+              // non-ok answer no false advice.
+              : r.state === 'ready'
+                ? (r.deploy === 'ok' ? `${TILES_SIZE_LABEL} download left`
+                  : r.deploy === 'unreachable' ? 'Needs a connection once' : null)
+                : null
+      if (line === null) return
+      sub.textContent = line
+      count.textContent = ''
+    }
+    const guess = getOfflineChars()
+    setCard(Object.keys(guess), guess)
+    void loadOfflineSlots().then(({ stems, chars }) => {
+      if (view.isConnected) setCard(stems, chars)
+    })
+    void probeReadiness().then((r) => {
+      if (!view.isConnected) return
+      if (r.state === 'undeployed') {
+        view.querySelector('#offline-section')?.remove()
+        return
+      }
+      readiness = r
+      applyReadiness()
+    })
+    card.addEventListener('click', () => {
+      card.disabled = true
+      onOffline()
+    })
   }
 
   function renderResumeButtons(): void {
@@ -335,8 +488,12 @@ export function buildLoginView(
     clearErrors()
     const wsUrl = spectateSelect.value
     setLastSpectateServer(wsUrl)
+    // The busy state pulses (login-busy) rather than relabelling: the
+    // button's contents never change, so it can't resize and shove the
+    // server picker's edge around mid-tap the way a "Connecting…" swap did.
     spectateBtn.disabled = true
-    spectateBtn.textContent = 'Connecting…'
+    spectateBtn.classList.add('login-busy')
+    spectateBtn.setAttribute('aria-busy', 'true')
 
     const conn = new WsConnection(wsUrl)
     try {
@@ -344,7 +501,8 @@ export function buildLoginView(
     } catch {
       showSpectateError(`Could not connect to ${labelFor(wsUrl)}`)
       spectateBtn.disabled = false
-      spectateBtn.textContent = 'Spectate →'
+      spectateBtn.classList.remove('login-busy')
+      spectateBtn.removeAttribute('aria-busy')
       return
     }
 
@@ -369,10 +527,6 @@ export function buildLoginView(
   }
 
   return view
-}
-
-function escHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
 // Install a one-shot handler that fires on the first login_success / login_fail.

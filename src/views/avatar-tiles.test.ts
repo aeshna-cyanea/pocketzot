@@ -2,17 +2,25 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Avatar } from '../avatars'
 import { cachedFingerprint, resolvePlayerLoader } from '../game/tiles/atlas-dedup'
+import { bakedDollUrl, dropBakedDoll, ensureDollBaked } from '../game/tiles/avatar-bake'
 import type { TileLoader } from '../game/tiles/tile-loader'
 import { paintAvatars } from './avatar-tiles'
 
 // paintAvatars' own job is orchestration: resolve order, list-order insertion,
-// and the dead-version retry pass. Mock the resolution and sprite layers so
-// the test drives exactly those.
+// the baked-thumbnail short-circuit, and the dead-version retry pass. Mock the
+// resolution, bake cache, and sprite layers so the test drives exactly those.
 vi.mock('../game/tiles/atlas-dedup', () => ({
   resolvePlayerLoader: vi.fn(),
   cachedFingerprint: vi.fn(() => null),
+  seedLocalPlayerAtlas: vi.fn(async () => {}),
+}))
+vi.mock('../game/tiles/avatar-bake', () => ({
+  bakedDollUrl: vi.fn(() => null),
+  dropBakedDoll: vi.fn(),
+  ensureDollBaked: vi.fn(async () => {}),
 }))
 vi.mock('../game/tiles/tile-view', () => ({
+  CELL: 32,
   dollTileSpec: (cell: { doll: unknown }) => (cell.doll ? [cell.doll] : []),
   renderTiles: (_loader: unknown, spec: string[][]) => {
     const el = document.createElement('div')
@@ -22,6 +30,9 @@ vi.mock('../game/tiles/tile-view', () => ({
 }))
 const resolveMock = vi.mocked(resolvePlayerLoader)
 const cachedFpMock = vi.mocked(cachedFingerprint)
+const bakedUrlMock = vi.mocked(bakedDollUrl)
+const dropBakeMock = vi.mocked(dropBakedDoll)
+const ensureBakedMock = vi.mocked(ensureDollBaked)
 
 const LOADER = { live: true } as unknown as TileLoader
 
@@ -39,6 +50,9 @@ function dolls(container: HTMLElement): string[] {
 beforeEach(() => {
   resolveMock.mockReset()
   cachedFpMock.mockReset().mockReturnValue(null)
+  bakedUrlMock.mockReset().mockReturnValue(null)
+  dropBakeMock.mockReset()
+  ensureBakedMock.mockReset().mockResolvedValue(undefined)
 })
 
 describe('paintAvatars', () => {
@@ -78,6 +92,9 @@ describe('paintAvatars', () => {
     const container = document.createElement('div')
     const ctl = new AbortController()
     const done = paintAvatars(container, [avatar('a', 'v1')], 1, 'x', ctl.signal)
+    // The local-pack seed is awaited before any resolve starts — wait for the
+    // resolver to be reached so `release` exists.
+    await vi.waitFor(() => expect(resolveMock).toHaveBeenCalled())
     ctl.abort()
     release(LOADER)
     await done
@@ -90,5 +107,92 @@ describe('paintAvatars', () => {
     await paintAvatars(container, [avatar('a', 'v1')], 1, 'x')
     expect(resolveMock).toHaveBeenCalledTimes(1) // no second attempt
     expect(container.children).toHaveLength(0)
+  })
+
+  it('renders a baked thumbnail without touching the resolver', async () => {
+    cachedFpMock.mockReturnValue('fp1')
+    bakedUrlMock.mockReturnValue('data:image/png;base64,x')
+    const container = document.createElement('div')
+    await paintAvatars(container, [avatar('a', 'v1')], 2, 'x')
+    expect(resolveMock).not.toHaveBeenCalled()
+    const img = container.children[0] as HTMLImageElement
+    expect(img.tagName).toBe('IMG')
+    expect(img.src).toBe('data:image/png;base64,x')
+    expect(img.classList.contains('x')).toBe(true)
+    expect(img.style.width).toBe('64px') // CELL * scale
+  })
+
+  it('keeps list order when a baked doll lands before a slow live one', async () => {
+    // Entry 0 resolves live and slowly; entry 1 is baked and places
+    // synchronously — the live doll must still end up first.
+    cachedFpMock.mockImplementation((_h, version) => (version === 'v2' ? 'fp2' : null))
+    bakedUrlMock.mockImplementation((fp) => (fp === 'fp2' ? 'data:2' : null))
+    resolveMock.mockImplementation(async () => {
+      await new Promise((r) => setTimeout(r, 10))
+      return LOADER
+    })
+    const container = document.createElement('div')
+    await paintAvatars(container, [avatar('a', 'v1'), avatar('b', 'v2')], 1, 'x')
+    expect(resolveMock).toHaveBeenCalledTimes(1)
+    expect(container.children[0].tagName).toBe('DIV') // a: live tile-stack
+    expect(container.children[1].tagName).toBe('IMG') // b: baked
+  })
+
+  it('requests a bake after a live resolve mints the fingerprint', async () => {
+    cachedFpMock
+      .mockReturnValueOnce(null)        // pre-resolve lookup: no fp yet → live path
+      .mockReturnValue('fp1')           // post-resolve: stored by the resolver
+    resolveMock.mockResolvedValue(LOADER)
+    const container = document.createElement('div')
+    await paintAvatars(container, [avatar('a', 'v1')], 1, 'x')
+    // spec per the dollTileSpec mock: [cell.doll] = [[['a']]]
+    expect(ensureBakedMock).toHaveBeenCalledWith(LOADER, 'fp1', [[['a']]])
+    expect(container.children[0].tagName).toBe('DIV') // this paint still shows the live render
+  })
+
+  it('never requests a bake without a fingerprint', async () => {
+    resolveMock.mockResolvedValue(LOADER)
+    const container = document.createElement('div')
+    await paintAvatars(container, [avatar('a', 'v1')], 1, 'x')
+    expect(ensureBakedMock).not.toHaveBeenCalled()
+  })
+
+  it("prefers the entry's own fp stamp over the fingerprint cache", async () => {
+    // An offline capture carries fp on the entry; the cache may have moved on
+    // (engine update) — the stamp must win the bake lookup.
+    bakedUrlMock.mockImplementation((fp) => (fp === 'fp-stamped' ? 'data:s' : null))
+    const container = document.createElement('div')
+    const a = { ...avatar('a', 'local'), fp: 'fp-stamped' } as Avatar
+    await paintAvatars(container, [a], 1, 'x')
+    expect(cachedFpMock).not.toHaveBeenCalled()
+    expect(container.children[0].tagName).toBe('IMG')
+  })
+
+  it('decorates placed dolls with their original list index', async () => {
+    // Entry 1 has no doll recipe → filtered before painting. The decorate
+    // callback must still see the ORIGINAL list indexes (0 and 2), so callers
+    // can map a placed element back to its avatar.
+    resolveMock.mockResolvedValue(LOADER)
+    const container = document.createElement('div')
+    const noDoll = { ...avatar('b', 'v2'), doll: null } as Avatar
+    const seen: Array<[string, number]> = []
+    await paintAvatars(container, [avatar('a', 'v1'), noDoll, avatar('c', 'v3')], 1, 'x',
+      undefined, (el, i) => seen.push([el.dataset.doll!, i]))
+    expect(seen.sort((p, q) => p[1] - q[1])).toEqual([['a', 0], ['c', 2]])
+  })
+
+  it('self-heals a broken baked image by dropping it and re-rendering live', async () => {
+    cachedFpMock.mockReturnValue('fp1')
+    bakedUrlMock.mockReturnValueOnce('data:corrupt')
+    resolveMock.mockResolvedValue(LOADER)
+    const container = document.createElement('div')
+    await paintAvatars(container, [avatar('a', 'v1')], 1, 'x')
+    const img = container.children[0]
+    expect(img.tagName).toBe('IMG')
+    expect(resolveMock).not.toHaveBeenCalled()
+    img.dispatchEvent(new Event('error'))
+    await vi.waitFor(() => expect(dolls(container)).toEqual(['a']))
+    expect(dropBakeMock).toHaveBeenCalledWith('fp1', [[['a']]])
+    expect(container.querySelector('img')).toBeNull() // broken bake removed
   })
 })

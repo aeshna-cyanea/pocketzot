@@ -1,16 +1,18 @@
-import type { WsConnection } from './ws/connection'
+import { WsConnection, type GameConnection } from './ws/connection'
 import type { GameExit } from './ws/types'
 import { buildLoginView } from './views/login'
 import { buildLobbyView } from './views/lobby'
+import { buildOfflineLobbyView } from './views/offline-lobby'
 import { buildGameView, type SpectateTarget } from './views/game-view'
 import type { TileLoader } from './game/tiles/tile-loader'
+import { OFFLINE_GAME_ID } from './offline/offline-state'
 import { attemptResume, clearGameStart, loadPersistedResume, markProactiveClose } from './reconnect'
 import { loadSession } from './auth/session'
 
 type AppState = 'login' | 'lobby' | 'game'
 
 let state: AppState = 'login'
-let conn: WsConnection | null = null
+let conn: GameConnection | null = null
 let root: HTMLElement
 let currentUsername = ''
 let currentIsGuest = false
@@ -39,6 +41,19 @@ export function initApp(appEl: HTMLElement): void {
       connLost()
     }
   })
+  // Offline play: ?offline=1 opens the offline lobby (save slots, backup
+  // management) with no server or login. Checked before the resume path so a
+  // stale online-resume record can't hijack the boot. The URL flag is a
+  // dev/debug convenience — the real entry point is the login view's offline
+  // card (onOffline below). ?engine=fake (a golden-fixture replay) skips the
+  // lobby and mounts the game view directly: fixtures have no save slot, and
+  // the replay flows drive rendering, not slot management.
+  const params = new URLSearchParams(location.search)
+  if (params.has('offline')) {
+    if (params.get('engine') === 'fake') void showOfflineGame('local')
+    else showOfflineLobby()
+    return
+  }
   // A context in sessionStorage means iOS evicted the page mid-game (swap
   // back after memory pressure reloads the app from scratch) — resume the
   // game instead of booting to the login screen.
@@ -52,17 +67,87 @@ export function initApp(appEl: HTMLElement): void {
   }
 }
 
+// The offline "server" lobby: the on-device analog of showLobby — save-slot
+// list, new-character flow, backup export/import (views/offline-lobby.ts).
+// No connection exists here; back returns to the login home.
+function showOfflineLobby(exit?: GameExit): void {
+  conn?.close()
+  conn = null
+  state = 'lobby'
+  clearGameStart()
+  setView(buildOfflineLobbyView(
+    (name) => { void showOfflineGame(name) },
+    () => showLogin(),
+    exit,
+  ))
+}
+
+// Offline (WASM engine) game for one save slot — `name` is the character
+// name, which the engine also uses as the save file identity (-name argv).
+// Deliberate parameter choices: gameId 'offline' enables avatar/crypt writes
+// (both gate on a truthy id), so offline characters join the login doll shelf
+// and crypt — wsUrl 'local://offline' + username=name keep their slot keys
+// disjoint from every server's, and captures eager-bake PNG thumbnails off
+// the same-origin pack (game-view maybeSaveAvatar). guest=false keeps
+// canResumeAfterClose() false, so the visibilitychange handler never
+// proactively closes the "socket" (LocalConnection never reconnects — see its
+// header). Exit returns to the offline lobby, which shows the same
+// end-of-game dialog as the online one.
+async function showOfflineGame(name: string): Promise<void> {
+  const { bootOffline } = await import('./offline/boot')
+  const params = new URLSearchParams(location.search)
+  const boot = bootOffline(params, name)
+  // Fixture replays get no gameId, keeping avatar/crypt writes disabled —
+  // same reason boot.ts excludes them from the slot-record tracker: a golden
+  // capture's character isn't yours and must not mint a phantom shelf entry.
+  const gameId = params.get('engine') === 'fake' ? '' : OFFLINE_GAME_ID
+  state = 'game'
+  conn = boot.conn
+  currentUsername = name
+  currentIsGuest = false
+  setView(buildGameView(
+    boot.conn,
+    (exit) => {
+      boot.dispose()
+      conn = null
+      // Drop the ?offline flag with the session: a later reload (e.g. the
+      // iOS eviction path mid-online-game) must not boot back into offline.
+      // Only that flag — the dev params (?engine=fake, ?fixture, ?perf) must
+      // survive, or the next game this session boots a different engine
+      // than the one under test.
+      const p = new URLSearchParams(location.search)
+      p.delete('offline')
+      const qs = p.toString()
+      history.replaceState(null, '', location.pathname + (qs ? `?${qs}` : ''))
+      showOfflineLobby(exit)
+    },
+    undefined,
+    undefined,
+    currentUsername,
+    gameId,
+    currentIsGuest,
+  ))
+  boot.start()
+}
+
 function showLogin(notice?: string): void {
   conn?.close()
   conn = null
   state = 'login'
   clearGameStart()
   setView(buildLoginView((result) => {
-    adoptConn(result.conn)
-    currentUsername = result.username
-    currentIsGuest = result.guest ?? false
-    showLobby(currentUsername, currentIsGuest)
-  }, notice))
+    enterLobby(result.conn, result.username, result.guest ?? false)
+  }, notice, () => showOfflineLobby()))
+}
+
+// Every route onto a server ends the same way: take the connection, record who
+// we are on it, show that server's lobby. The identity pair and the mounted
+// view have to move together — showGame and connLost both read it back.
+function enterLobby(c: GameConnection, username: string, guest: boolean, exit?: GameExit): void {
+  adoptConn(c)
+  currentUsername = username
+  currentIsGuest = guest
+  showLobby(username, guest, exit)
 }
 
 function showLobby(username: string, guest: boolean, exit?: GameExit): void {
@@ -75,7 +160,30 @@ function showLobby(username: string, guest: boolean, exit?: GameExit): void {
     (spectating, loader, gameId) => showGame(spectating, loader, gameId),
     () => showLogin(),
     exit,
+    guest ? switchSpectateServer : undefined,
   ))
+}
+
+// Guest-only server hop, from the lobby's header chip. The new socket is
+// opened before the old one is dropped, so a server that won't answer leaves
+// the user on the lobby they were already watching rather than stranded on
+// the login screen. A guest connection needs no login handshake — the server
+// pushes its lobby snapshot on open (see login.ts's spectate path).
+async function switchSpectateServer(wsUrl: string): Promise<void> {
+  const prev = conn
+  const next = new WsConnection(wsUrl)
+  await next.connect()
+  // The lobby stays live while we connect, so the user may have moved on — into
+  // a game they tapped (still this connection, so `state` is what catches it),
+  // or onto some other connection entirely: back to login, into the offline
+  // lobby, signed in. Whatever is on screen now wins; drop the unasked-for
+  // socket rather than closing one that something is already reading.
+  if (state !== 'lobby' || conn !== prev) {
+    next.close()
+    return
+  }
+  conn?.close()
+  enterLobby(next, '', true)
 }
 
 function showGame(spectating?: SpectateTarget, loader?: TileLoader, gameId?: string): void {
@@ -91,7 +199,7 @@ function showGame(spectating?: SpectateTarget, loader?: TileLoader, gameId?: str
   ))
 }
 
-function adoptConn(c: WsConnection): void {
+function adoptConn(c: GameConnection): void {
   conn = c
   c.onClose = connLost
 }
@@ -135,8 +243,7 @@ function startResume(wsUrl: string): void {
     },
     onLobby: (newConn, exit) => {
       resumeActive = false
-      adoptConn(newConn)
-      showLobby(currentUsername, currentIsGuest, exit)
+      enterLobby(newConn, currentUsername, currentIsGuest, exit)
     },
     onGiveUp: (notice) => {
       resumeActive = false

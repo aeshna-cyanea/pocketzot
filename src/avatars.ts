@@ -3,9 +3,12 @@
 //
 // We store the doll's tile-id recipe (the doll/mcache layer ids from the player's
 // map cell), not a baked image: the DCSS atlases are cross-origin with no CORS, so
-// compositing them taints the canvas and toDataURL() throws (memory
-// project_doll_png_bake_blocked). The login strip re-renders the recipe as CSS
-// sprite tiles, loading the ~1 MB atlas (HTTP-cached) only at display time.
+// compositing them taints the canvas and toDataURL() throws. The login strip
+// re-renders the recipe as CSS sprite tiles, loading the ~1 MB atlas
+// (HTTP-cached) only at display time. Exception: the same-origin offline tiles
+// pack is taint-free, so a recipe that renders off it gets a baked PNG
+// thumbnail cached alongside (src/game/tiles/avatar-bake.ts) — but that's a
+// render cache keyed by recipe content, not part of this store.
 //
 // The store is a HISTORY, not one slot per version line: a new character appends
 // (a reroll coexists with the character it replaced), the same character upserts in
@@ -40,6 +43,9 @@ export interface AvatarMeta {
   species?: string  // full species name ("Minotaur")
   title?: string    // XL-scaled job title ("Slayer") — the closest thing to a
                     // background the player message carries (no job field)
+  background?: string // full job name ("Berserker"), parsed from the game-start
+                      // welcome line (char-label.ts welcomeBackground) — the
+                      // wire's only statement of it
   god?: string      // empty string while godless
   xl?: number
   place?: string    // branch name as sent ("Dungeon"); depth is separate
@@ -63,6 +69,11 @@ export interface Avatar extends AvatarMeta {
   charName: string              // character name (player.name) — metadata only (usually = account name), never shown
   httpBase: string              // gamedata host (conn.httpBase), e.g. https://crawl.dcss.io
   version: string               // gamedata version dir (git hash) — with httpBase rebuilds the tile loader
+  fp?: string                   // player-atlas layout fingerprint at capture (atlas-dedup) — pins the
+                                // baked-thumbnail identity even where (httpBase, version) isn't an
+                                // immutable atlas (the offline pack's content shifts across engine
+                                // updates under constant coords). Absent on older entries and when
+                                // the fingerprint wasn't cached at capture time.
   doll: DollPart[] | null       // player-doll body-part layers
   mcache: McachePart[] | null   // worn-equipment / monster-tile layers
   turn: number | null           // DCSS turn count at capture — a reset below the slot's current entry = new character
@@ -72,7 +83,11 @@ export interface Avatar extends AvatarMeta {
 
 export type AvatarKey = Pick<Avatar, 'wsUrl' | 'username' | 'gameId'>
 
-function keyOf(a: AvatarKey): string {
+// The slot an entry belongs to (server + account + version line). Exported so
+// callers scanning a list they already hold match slots by the store's own
+// identity rule instead of re-deriving one from the fields they happen to
+// care about.
+export function avatarSlotKey(a: AvatarKey): string {
   return a.wsUrl + SEP + a.username.toLowerCase() + SEP + a.gameId.toLowerCase()
 }
 
@@ -103,9 +118,9 @@ export function saveAvatar(
   const list = load()
   const turn = opts.turn ?? null
   const entry: Avatar = { ...a, turn, seenAt: Date.now() }
-  const k = keyOf(a)
+  const k = avatarSlotKey(a)
   // Slot's current entry = first match (the list is newest-first).
-  const idx = list.findIndex((x) => keyOf(x) === k)
+  const idx = list.findIndex((x) => avatarSlotKey(x) === k)
   const cur = idx >= 0 ? list[idx] : null
   const turnReset = cur != null && turn != null && cur.turn != null && turn < cur.turn
   // An outcome-stamped entry is closed — it cannot be the live save, so a new
@@ -148,7 +163,7 @@ export function recordAvatarOutcome(
   meta: AvatarMeta = {},
 ): void {
   const list = load()
-  const idx = list.findIndex((x) => keyOf(x) === keyOf(key))
+  const idx = list.findIndex((x) => avatarSlotKey(x) === avatarSlotKey(key))
   if (idx < 0) return
   const cur = list[idx]
   if (cur.outcome != null) return
@@ -159,7 +174,7 @@ export function recordAvatarOutcome(
     const v = meta[k]
     if (v !== undefined) target[k] = v
   }
-  ;(['species', 'title', 'god', 'xl', 'place', 'depth'] as const).forEach(merge)
+  ;(['species', 'title', 'background', 'god', 'xl', 'place', 'depth'] as const).forEach(merge)
   cur.outcome = { ...outcome, endedAt: Date.now() }
   persist(list)
 }

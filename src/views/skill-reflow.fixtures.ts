@@ -1,6 +1,6 @@
-// Skill-menu CRT lines captured verbatim off the wire from a real crawl binary,
-// so the tests measure the real fixed-width grid rather than a hand-drawn
-// approximation of it.
+// Skill-menu CRT lines captured verbatim off the wire (from the offline engine —
+// the same crawl binary the servers run), so the tests measure the real
+// fixed-width grid rather than a hand-drawn approximation of it.
 //
 // The grid's geometry is what the reflow is built on: each cell is 39 columns
 // wide, the left one starts at column 1 and the right one at column 40, and the

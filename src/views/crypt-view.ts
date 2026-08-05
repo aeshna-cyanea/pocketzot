@@ -1,7 +1,9 @@
-import { listAllAvatars } from '../avatars'
+import { listAllAvatars, type Avatar } from '../avatars'
+import { nameTitle } from '../game/char-label'
 import { paintAvatars } from './avatar-tiles'
+import { avatarToCard, cardHeadline, renderCharCard } from './char-card'
 import { pickCryptLine } from './crypt-flavor'
-import { mountOverlay } from './overlay'
+import { mountBackdrop, mountOverlay } from './overlay'
 import { attachScrollCue } from '../util/scroll-cue'
 
 // Full-screen "crypt": the complete retained character history (../avatars),
@@ -16,35 +18,89 @@ import { attachScrollCue } from '../util/scroll-cue'
 // smaller flavor style (it's prose, not a wordmark).
 export function openCrypt(): void {
   if (document.querySelector('.crypt-view')) return // already open — ignore re-taps
+  const { view } = mountCryptShell('', '', `
+      <p class="crypt-flavor"></p>
+      <div class="crypt-grid"></div>
+  `)
+  // Set via textContent (the flavor lines are author-written plain text).
+  view.querySelector<HTMLElement>('.crypt-flavor')!.textContent = pickCryptLine()
+  // Scale 2.5 (80px): bigger than the login strip's 64px teaser, but small enough
+  // that four fit per row on a phone (the .crypt-grid wraps at 4-ish, centered).
+  // Each doll is a tap target: dolls are otherwise unlabeled, so the card modal
+  // (openAvatarCard) is what answers "who was this?".
+  const avatars = listAllAvatars()
+  void paintAvatars(view.querySelector<HTMLElement>('.crypt-grid')!, avatars, 2.5, 'crypt-doll',
+    undefined, (el, i) => {
+      const a = avatars[i]
+      el.setAttribute('role', 'button')
+      el.tabIndex = 0
+      // The headline cardHeadline(avatarToCard(a)) reduces to, without
+      // building a throwaway card model per doll.
+      el.setAttribute('aria-label', nameTitle(a.charName || a.username, a.title))
+      el.addEventListener('click', () => openAvatarCard(a))
+      el.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          openAvatarCard(a)
+        }
+      })
+    })
+}
+
+// Tap-a-doll drill-down: the character's full card (shared renderer, online
+// adapter) floated as a centered modal over the crypt — a full-screen layer
+// would look empty around the online store's ~5 short lines, so the card
+// itself is the dialog. Backdrop tap and Escape (mountOverlay) dismiss.
+// Entries whose outcome carries a morgue URL keep the card's tap-to-open
+// affordance (↗), opening the server dump in a new tab — in-app rendering
+// would need a cross-origin fetch the morgue hosts don't CORS-allow.
+export function openAvatarCard(a: Avatar): void {
+  const model = avatarToCard(a)
+  const { backdrop } = mountBackdrop('crypt-card-backdrop')
+  backdrop.setAttribute('role', 'dialog')
+  backdrop.setAttribute('aria-modal', 'true')
+  backdrop.setAttribute('aria-label', cardHeadline(model))
+  const dump = model.dump
+  const card = renderCharCard(model, dump?.kind === 'url'
+    ? { onOpen: () => window.open(dump.href, '_blank', 'noopener') }
+    : {})
+  backdrop.append(card)
+  // Move focus off the tapped doll into the dialog (same reasoning as the
+  // shell's back-button focus): an Esc dismiss must not leave a focus ring
+  // on the grid. Non-tappable cards aren't focusable by default.
+  if (card.tabIndex < 0) card.tabIndex = -1
+  card.focus({ preventScroll: true })
+}
+
+// The full-screen shell shared by the crypt, the records browser, and its
+// morgue drill-down: pinned header with the "← Back" ghost button (the same
+// chrome as the lobby), scrollable body, scroll-edge cue (hairline under the
+// pinned bar while content is scrolled beneath it), Escape dismissal.
+// Callers fill the header's right side and the body — static markup only,
+// this goes through innerHTML.
+export function mountCryptShell(
+  extraClass: string,
+  headerHtml: string,
+  bodyHtml: string,
+): { view: HTMLElement; close: () => void } {
   const view = document.createElement('div')
-  view.className = 'crypt-view'
+  view.className = extraClass ? `crypt-view ${extraClass}` : 'crypt-view'
   view.innerHTML = `
     <header class="crypt-header">
       <button type="button" class="crypt-back lobby-btn-ghost" aria-label="Back">← Back</button>
+      ${headerHtml}
     </header>
-    <div class="crypt-scroll">
-      <p class="crypt-flavor"></p>
-      <div class="crypt-grid"></div>
-    </div>
+    <div class="crypt-scroll">${bodyHtml}</div>
   `
-  // Set via textContent (the flavor lines are author-written plain text).
-  view.querySelector<HTMLElement>('.crypt-flavor')!.textContent = pickCryptLine()
-
-  // Same scroll-edge cue as the lobby: hairline under the pinned bar while
-  // the grid is scrolled beneath it.
   attachScrollCue(
     view.querySelector<HTMLElement>('.crypt-header')!,
     view.querySelector<HTMLElement>('.crypt-scroll')!,
   )
-
   const close = mountOverlay(view) // body-mount + Escape-to-close
-  // Scale 2.5 (80px): bigger than the login strip's 64px teaser, but small enough
-  // that four fit per row on a phone (the .crypt-grid wraps at 4-ish, centered).
-  void paintAvatars(view.querySelector<HTMLElement>('.crypt-grid')!, listAllAvatars(), 2.5, 'crypt-doll')
-
   const backBtn = view.querySelector<HTMLElement>('.crypt-back')!
   backBtn.addEventListener('click', close)
-  // Move focus off the trigger (the doll strip) into the dialog, so an Esc dismiss
-  // doesn't flip the strip into :focus-visible and leave a focus ring on it.
+  // Move focus off the trigger into the dialog, so an Esc dismiss doesn't
+  // flip the trigger into :focus-visible and leave a focus ring on it.
   backBtn.focus({ preventScroll: true })
+  return { view, close }
 }
