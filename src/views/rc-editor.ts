@@ -34,10 +34,10 @@ export async function openRcEditor(onSaved: (notice: string) => void): Promise<v
   el.className = 'rc-editor'
   el.setAttribute('role', 'dialog')
   el.setAttribute('aria-modal', 'true')
-  el.setAttribute('aria-label', 'Editing options file')
+  el.setAttribute('aria-label', 'Options file')
   el.innerHTML = `
     <div class="rc-editor-header">
-      <span class="rc-editor-title">Editing options file</span>
+      <span class="rc-editor-title">Options file</span>
       <span class="rc-editor-path">init.txt</span>
     </div>
     <textarea class="rc-editor-text" spellcheck="false" autocapitalize="off"
@@ -71,7 +71,7 @@ export async function openRcEditor(onSaved: (notice: string) => void): Promise<v
     }).catch((e: unknown) => {
       saveBtn.disabled = false
       errEl.hidden = false
-      errEl.textContent = `Could not save: ${String(e)}`
+      errEl.textContent = `Could not save: ${e instanceof Error ? e.message : String(e)}`
     })
   })
 

@@ -1,17 +1,20 @@
 # PocketZot
 
-**Dungeon Crawl Stone Soup (DCSS) WebTiles in your pocket.**
+**Dungeon Crawl Stone Soup (DCSS) in your pocket.**
 
 **[Play now: pocketzot.app](https://pocketzot.app)**
 
-PocketZot is an unofficial, mobile-first [WebTiles](https://crawl.develz.org/wordpress/howto)
-client for [DCSS](https://crawl.develz.org) — play Dungeon Crawl Stone Soup on your
-iPhone or Android phone. It connects to standard DCSS WebTiles servers
-and speaks the same WebSocket protocol as the official client, but replaces the rendering
-and UI entirely with an ASCII-first map, a custom touch HUD, and on-screen
-controls designed for a phone in portrait mode. There's no App Store or Play
-Store install: it runs in the browser (iOS Safari, Android Chrome, or desktop)
-and installs to the home screen as a Progressive Web App.
+PocketZot is an unofficial, mobile-first app for playing
+[DCSS](https://crawl.develz.org) on an iPhone or Android phone. It's a
+[WebTiles](https://crawl.develz.org/wordpress/howto) client. It connects to
+standard DCSS servers over the same WebSocket protocol as the official client,
+but replaces the rendering and UI entirely: an ASCII-first map, a custom touch
+HUD, and on-screen controls designed for portrait mode.
+
+It's also a WebTiles *server*. A full build of DCSS runs on the device itself,
+so you can play local games with no network at all. And there's no App Store or
+Play Store: it runs in the browser and installs to your home screen as a
+Progressive Web App.
 
 <!-- Screenshots are served from the live deployment; the image files are part
      of the hosted site, not this repository. -->
@@ -24,9 +27,10 @@ and installs to the home screen as a Progressive Web App.
 
 ## Features
 
+- Play online (WebTiles) or offline (local).
 - ASCII-first design that fits the full standard console map onto a phone in
   portrait mode, with a font still large enough to read.
-- Graphical tiles are also supported.
+- Graphical tiles support.
 - Chat support.
 - Customizable controls.
 - Log in with multiple WebTiles server accounts and switch between them.
@@ -43,15 +47,14 @@ details (credential handling, session cookies).
 
 ## Tech
 
-TypeScript + [Vite](https://vitejs.dev), no UI framework. The client
-holds no game logic, and gameplay runs entirely on DCSS servers.
+TypeScript + [Vite](https://vitejs.dev).
 
 ## License
 
 [AGPL-3.0-or-later](LICENSE). Copyright © 2026 the PocketZot developer.
 PocketZot is an independent project, not affiliated with or endorsed by the
 DCSS development team. See [ATTRIBUTION.md](ATTRIBUTION.md) for the
-relationship to DCSS and third-party provenance.
+relationship to DCSS.
 
 ## Feedback
 

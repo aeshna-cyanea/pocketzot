@@ -12,7 +12,7 @@ const WIRE_META =
   "<span class='chat_msg'>rakuen is now watching</span>"
 const WIRE_NAMES_LINKIFIED =
   "<a href='http://crawl.akrasiac.org/scoring/players/roinerr.html' target='_blank' class='player'>RoinerR</a>, " +
-  "<a href='http://crawl.akrasiac.org/scoring/players/tdpma.html' target='_blank' class='watcher'>tdpma</a>"
+  "<a href='http://crawl.akrasiac.org/scoring/players/bram.html' target='_blank' class='watcher'>bram</a>"
 
 function make(opts: Omit<ChatViewOpts, 'onSend'> = {}) {
   const sent: string[] = []
@@ -69,7 +69,7 @@ describe('wire parsing and rendering', () => {
   it('extracts plain names from the linkified spectator list', () => {
     const { view } = make()
     view.handleSpectators(1, WIRE_NAMES_LINKIFIED)
-    expect(view.sheet.querySelector('.chat-names')!.textContent).toBe('◉ RoinerR, tdpma')
+    expect(view.sheet.querySelector('.chat-names')!.textContent).toBe('◉ RoinerR, bram')
     expect(view.chip.textContent).toContain('◉1')
   })
 

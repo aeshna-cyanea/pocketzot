@@ -1,15 +1,15 @@
 # About PocketZot
 
-PocketZot is an unofficial [DCSS](https://crawl.develz.org) [WebTiles](https://crawl.develz.org/wordpress/howto) client designed for iOS and Android phones in portrait mode.
+PocketZot is an unofficial [DCSS](https://crawl.develz.org) app designed for iOS and Android phones in portrait mode. Play online on public [WebTiles](https://crawl.develz.org/wordpress/howto) servers, or offline with a full build of DCSS that runs entirely on your device.
 
 ## DCSS on iOS and Android
 
-DCSS has no app on the App Store, but you don't need one. PocketZot is a web app: open it in Safari or Chrome, log in to a WebTiles server, and play. Use "Add to Home Screen" to install it like an app on your iPhone or Android phone. iPads and Android tablets work too.
+DCSS has no app on the App Store, but you don't need one. PocketZot is a web app: open it in Safari or Chrome, then log in to a WebTiles server. Or play offline, right on the device. Use "Add to Home Screen" to install it like an app on your iPhone or Android phone. iPads and Android tablets work too.
 
 ## Features
 
-- Custom ASCII-first design that fits the full standard console map onto a phone in
-  portrait mode, with a font still large enough to read
+- Custom ASCII-first design that fits the full standard console map onto a phone in portrait mode, with a font still large enough to read
+- Offline play support
 - Tiles support
 - Chat support
 - Customizable controls
@@ -40,17 +40,21 @@ Obligatory virtual keyboard also available.
 - Tap floating monster list for full view, then tap monster to inspect
 - Tap chevron at top-right of monster list to collapse to single-line view
 
+## Offline play
+
+Tap the "Play offline" card on the login screen to run DCSS directly on your device: no server, no account, no connection. The first launch installs the engine and tile data as a one-time download. After that, games start and play with no network at all, including in airplane mode.
+
+Offline characters get named save slots, a past-games list with scores and full morgues, an editable options (RC) file, and a Backup feature that exports everything to a single file you can keep or move to another device. Saves live in your browser's storage, which the OS can evict under storage pressure: if a character matters to you, export a backup now and then.
+
 ## Version support
 
-Current stable and trunk DCSS are supported. Versions back to 0.24 generally work; older versions and forks may or may not. In particular, starting a new character on versions before 0.24 doesn't work.
+Current stable and trunk DCSS are supported. Versions back to 0.24 generally work; older versions and forks may or may not. In particular, starting a new character on versions before 0.24 doesn't work. Offline play ships its own DCSS build.
 
 ## Security
 
-PocketZot is a static web app with no backend of its own. Your browser connects directly to your chosen DCSS server over an encrypted WebSocket (`wss://`). Your account is a WebTiles account between you and that server — PocketZot has no accounts of its own. Credentials are sent only in the login message and never stored.
+PocketZot is a static web app with no backend of its own. Your browser connects directly to your chosen DCSS server over an encrypted WebSocket (`wss://`). Credentials are sent only in the login message and never stored.
 
-### "Resume as …" — what is stored
-
-If the server issues a session cookie, it's stored in `localStorage` under a per-{server, username} key so you can reconnect without re-entering your credentials, until the token expires or is revoked. Logging out invalidates the token on both ends: the server is told to forget it, and the local entry is removed.
+Offline games make no network connections: the engine runs inside your browser, and saves, morgues, and scores are stored on the device. Nothing about an offline game is sent anywhere.
 
 ## How it was built
 

@@ -9,6 +9,23 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-08-XX
+
+- Offline play: PocketZot can now run DCSS entirely on your device. Tap "Play
+  offline" on the login screen. The first launch installs the engine and tile
+  data as a one-time download. After that, games play with no network at all,
+  including in airplane mode.
+- Offline characters get named save slots, a past-games browser with scores
+  and full morgues, an editable options (RC) file, and one-file backup
+  export and import.
+- The app itself now also opens without a connection, so you can launch
+  straight into an offline game in airplane mode.
+
+## 2026-08-04
+
+- Fixed a tiles-mode bug where you could be drawn as translucent while
+  standing on a square where an invisible creature had died.
+
 ## 2026-07-31
 
 - Tiles mode supports trunk's new item-stack markers, added yesterday:

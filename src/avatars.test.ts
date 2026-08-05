@@ -30,9 +30,9 @@ type AvatarInput = Omit<Avatar, 'turn' | 'seenAt' | 'outcome'>
 function rec(over: Partial<AvatarInput> = {}): AvatarInput {
   return {
     wsUrl: 'wss://crawl.dcss.io/socket',
-    username: 'tdpma',
+    username: 'bram',
     gameId: 'dcss-0.34',
-    charName: 'tdpma',
+    charName: 'bram',
     httpBase: 'https://crawl.dcss.io',
     version: 'hashA',
     doll: [[100, 32]],
@@ -152,7 +152,7 @@ describe('avatars store', () => {
 // The slot key of rec()'s defaults, for stamping outcomes.
 const SLOT = {
   wsUrl: 'wss://crawl.dcss.io/socket',
-  username: 'tdpma',
+  username: 'bram',
   gameId: 'dcss-0.34',
 }
 
@@ -180,12 +180,12 @@ describe('avatar metadata and outcomes', () => {
     saveAvatar(rec({ xl: 3, place: 'Dungeon' }), { turn: 100 })
     recordAvatarOutcome(
       SLOT,
-      { reason: 'dead', message: 'Slain by an orc', dump: 'https://crawl.dcss.io/morgue/tdpma/x' },
+      { reason: 'dead', message: 'Slain by an orc', dump: 'https://crawl.dcss.io/morgue/bram/x' },
       { xl: 7, place: 'Orc' }, // death-turn snapshot, fresher than the last capture
     )
     const a = listAllAvatars()[0]
     expect(a.outcome?.reason).toBe('dead')
-    expect(a.outcome?.dump).toBe('https://crawl.dcss.io/morgue/tdpma/x')
+    expect(a.outcome?.dump).toBe('https://crawl.dcss.io/morgue/bram/x')
     expect(typeof a.outcome?.endedAt).toBe('number')
     expect(a.xl).toBe(7)
     expect(a.place).toBe('Orc')

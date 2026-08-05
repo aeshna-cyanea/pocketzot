@@ -331,7 +331,7 @@ describe('downloadOfflineData', () => {
 
   it('refuses to run without a reachable deploy', async () => {
     stubFetch({ '/offline/version.json': null })
-    await expect(downloadOfflineData(() => {})).rejects.toThrow('offline')
+    await expect(downloadOfflineData(() => {})).rejects.toThrow('offline — connect')
     stubFetch({})
     await expect(downloadOfflineData(() => {})).rejects.toThrow('no offline engine')
   })

@@ -574,7 +574,7 @@ const NORMAL_EXIT = new Set(['quit', 'won', 'bailed out', 'dead', 'saved', 'canc
 // has no title — just body content: an optional reason sentence on top, then
 // the summary blurb. The reason sentence appears only for abnormal (crash/
 // error/disconnect) or spectated exits ("Unfortunately your game crashed." /
-// "tdpma stopped playing (saved)."); a first-person normal exit (died/won/quit)
+// "bram stopped playing (saved)."); a first-person normal exit (died/won/quit)
 // lets the summary speak for itself. The summary is always shown when present,
 // even when it repeats the game-over screen just seen, so the recap lives in
 // one place. Suppressed only when there's nothing to say (a first-person normal

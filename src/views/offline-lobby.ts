@@ -39,6 +39,9 @@ import { attachScrollCue } from '../util/scroll-cue'
 // the two-line row it sits beside. Mirrored by .offline-slot-doll in the CSS.
 const SLOT_DOLL_SCALE = 1.5
 
+// Failure notices show the message alone, not "Error: message".
+const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+
 export function buildOfflineLobbyView(
   onPlay: (name: string) => void,
   onBack: () => void,
@@ -83,7 +86,7 @@ export function buildOfflineLobbyView(
           <span class="lobby-game-info" id="offline-records-sub"></span>
         </div>
       </div>
-      <h2 class="lobby-section-title" id="offline-data-title" hidden>Game data</h2>
+      <h2 class="lobby-section-title" id="offline-data-title" hidden>Game Data</h2>
       <div class="offline-device" id="offline-data-card" hidden>
         <div id="offline-readiness" class="offline-device-row">
           <span id="offline-ready-glyph" class="offline-device-glyph is-dot">●</span>
@@ -94,7 +97,7 @@ export function buildOfflineLobbyView(
           <button type="button" id="offline-download" class="offline-device-btn is-accent" hidden></button>
         </div>
       </div>
-      <h2 class="lobby-section-title">Your data</h2>
+      <h2 class="lobby-section-title">Your Data</h2>
       <div class="offline-device">
         <div class="offline-device-row">
           <span class="offline-device-glyph">✎</span>
@@ -485,7 +488,7 @@ export function buildOfflineLobbyView(
               : migratesSaves(r)
                 ? `Partly installed · finishing installs DCSS ${r.updateVersion}, updating saved games`
                 : `Partly installed · ${TILES_SIZE_LABEL} left`,
-          r.deploy === 'ok' ? 'Acquire' : undefined)
+          r.deploy === 'ok' ? 'Install' : undefined)
       } else if (r.update) {
         setReadiness('ok', packName(r),
           r.updateVersion === undefined ? 'Installed · update available'
@@ -497,7 +500,7 @@ export function buildOfflineLobbyView(
         appendMeasuredSize('Installed')
       }
     } else if (r.state === 'not-cached') {
-      setReadiness('dim', packName(r), `Not installed · ${INSTALL_SIZE_LABEL}`, 'Acquire')
+      setReadiness('dim', packName(r), `Not installed · ${INSTALL_SIZE_LABEL}`, 'Install')
     } else if (r.state === 'offline-not-cached') {
       setReadiness('warn', packName(r), 'Not installed · connect once to download')
     } else if (r.state === 'no-store') {
@@ -505,7 +508,7 @@ export function buildOfflineLobbyView(
       // row states the condition and stops. Games still start (gateOpen),
       // they just fetch the engine every launch — which is what the sub-line
       // has to convey without a lecture about secure contexts.
-      setReadiness('warn', packName(r), "Can't be installed on this browser — games need a connection")
+      setReadiness('warn', packName(r), "Can't install in this browser — connection required")
     } else {
       // undeployed: this checkout/deploy ships no engine. The whole GAME DATA
       // section goes, heading included — there is no payload to have an
@@ -576,7 +579,7 @@ export function buildOfflineLobbyView(
       const name = readiness ? packName(readiness) : 'Game data'
       await downloadOfflineData((label) => setReadiness('dim', name, label))
     } catch (e) {
-      showNotice(`Download failed: ${String(e instanceof Error ? e.message : e)}`)
+      showNotice(`Download failed: ${errMsg(e)}`)
     }
     downloading = false
     downloadBtn.disabled = false
@@ -614,7 +617,7 @@ export function buildOfflineLobbyView(
           showNotice('Backup exported.')
         }
       } catch (e) {
-        showNotice(`Export failed: ${String(e)}`)
+        showNotice(`Export failed: ${errMsg(e)}`)
       }
     })()
   })
@@ -653,7 +656,7 @@ export function buildOfflineLobbyView(
   // lobby is mounted. The editor writes only on Save (rc-editor.ts).
 
   view.querySelector('#offline-rc')!.addEventListener('click', () => {
-    void openRcEditor(showNotice).catch((e: unknown) => showNotice(`Could not open the options file: ${String(e)}`))
+    void openRcEditor(showNotice).catch((e: unknown) => showNotice(`Could not open the options file: ${errMsg(e)}`))
   })
 
   view.querySelector('#offline-import')!.addEventListener('click', () => {
@@ -670,9 +673,9 @@ export function buildOfflineLobbyView(
           // The refreshed slot list below is what shows *what* landed; the
           // notice just dates the pack it came from.
           const when = meta.exportedAt ? ` from ${meta.exportedAt.slice(0, 10)}` : ''
-          showNotice(`Backup imported${when}.`)
+          showNotice(`Restored backup${when}.`)
         } catch (e) {
-          showNotice(`Import failed: ${String(e)}`)
+          showNotice(`Import failed: ${errMsg(e)}`)
         }
         // The pack can carry both save files and the logfile; refresh every
         // surface either lands on.

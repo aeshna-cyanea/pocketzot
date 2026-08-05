@@ -1,30 +1,45 @@
 # Attribution and licensing
 
-PocketZot is an independent, unofficial mobile client for Dungeon Crawl
-Stone Soup (DCSS) WebTiles servers. It is not affiliated with or endorsed
-by the DCSS development team.
+PocketZot is an independent, unofficial mobile app for playing Dungeon Crawl
+Stone Soup (DCSS) — online as a client for WebTiles servers, or offline
+against a build of the DCSS engine running on the device. It is not
+affiliated with or endorsed by the DCSS development team.
 
-Copyright (C) 2026 the PocketZot contributors.
+Copyright (C) 2026 the PocketZot developer.
+
 Licensed under the GNU Affero General Public License, version 3 or (at your
 option) any later version (AGPL-3.0-or-later). See `LICENSE` for the full text.
 
 ## Relationship to DCSS
 
 PocketZot connects to standard DCSS WebTiles servers and speaks the same
-WebSocket protocol as the official client. It contains none of the DCSS game
-engine; gameplay runs entirely on the server.
+WebSocket protocol as the official client. The client code in this repository
+contains none of the DCSS game engine; in online play, gameplay runs entirely
+on the server. Offline play uses the separately built engine described below.
 
 DCSS is Copyright 1997–2025 Linley Henzell, the dev team, and contributors,
 licensed under the GNU General Public License, version 2 or (at your option)
 any later version. PocketZot's AGPL-3.0-or-later license is compatible with
 this through that "or later" option.
 
+## The offline engine
+
+Offline play runs the DCSS engine itself, compiled to WebAssembly. The engine
+is a separate work from this client: it is DCSS (GPL-2.0-or-later, copyright
+as above) with a small WebAssembly/browser port layer, running in a web
+worker and communicating with the client over a message channel. The app
+fetches it as a separate download at first use; it is not contained in this
+repository.
+
+The engine's complete corresponding source is available at
+<https://github.com/pocketzot/pocketzot-engine>.
+
 ## Interoperability constants
 
 The items below carry numeric values that must match the DCSS server exactly,
 or the client mis-renders. They are fixed by the DCSS wire protocol and
 reproduced from the DCSS WebTiles client purely as a protocol-interoperability
-requirement; the colour palette is the standard Tango-derived terminal set:
+requirement. The colour palette is the standard Tango-derived terminal set:
 
 | File | Derived from (DCSS WebTiles) | What |
 |------|------------------------------|------|
@@ -51,13 +66,30 @@ to TypeScript, following its structure and draw order:
 | `src/game/map/colors.ts` | `cell_renderer.js` — `split_term_colour`, `term_colour_apply_attributes` | Console colour-attribute decode |
 | `src/game/hud/monster-list.ts` | `monster_list.js` — `group_monsters` / `can_combine` | Consecutive same-rank monster grouping |
 
-This DCSS code is "version 2 or, at your option, any later version";
-it is taken forward to GPLv3 and combined into this AGPL-3.0-or-later
-work as AGPLv3 section 13 permits.
+## Derived from the DCSS engine and server
+
+Offline support ports a few small pieces of DCSS itself (the C++ engine and
+the Python WebTiles server), where the client must reproduce their behavior
+exactly:
+
+| File | Ported from (DCSS) | What |
+|------|--------------------|------|
+| `src/offline/mini-server.ts` | `webserver/process_handler.py` — `handle_input` | Input routing (pty text vs control-socket keycodes) |
+| `src/offline/offline-state.ts` | `stringutil.cc` — `strip_filename_unsafe_chars` | Save-slot filename stem |
+| `src/offline/offline-state.ts` | `ng-input.cc` — `validate_player_name` | Character-name validation |
+
+The DCSS code in the two sections above is "version 2 or, at your option,
+any later version"; it is taken forward to GPLv3 and combined into this
+AGPL-3.0-or-later work as AGPLv3 section 13 permits.
 
 ## Independently implemented
 
 The remaining code — the WebSocket layer, the map and monster state
 model, the ASCII map renderer, markup-to-HTML conversion, the HUD,
 touch input, and UI — is an independent implementation written against
-the observed wire protocol.
+the observed wire protocol. The same goes for the offline stack: the
+in-page stand-in for the WebTiles server (beyond the routing port listed
+above), the engine worker and download plumbing, the save-backup format,
+the offline lobby and records UI, and the service worker are independent
+implementations written against the observed behavior of the DCSS engine
+and WebTiles server.

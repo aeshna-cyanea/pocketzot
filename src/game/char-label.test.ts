@@ -16,15 +16,15 @@ describe('looksLikeWelcome', () => {
 // species from the player message, leaving only the job to capture.
 describe('welcomeBackground', () => {
   it('parses new-game and resume forms', () => {
-    expect(welcomeBackground('Welcome, tdpma the Minotaur Berserker.', 'tdpma', 'Minotaur'))
+    expect(welcomeBackground('Welcome, bram the Minotaur Berserker.', 'bram', 'Minotaur'))
       .toBe('Berserker')
-    expect(welcomeBackground('Welcome back, tdpma the Minotaur Berserker.', 'tdpma', 'Minotaur'))
+    expect(welcomeBackground('Welcome back, bram the Minotaur Berserker.', 'bram', 'Minotaur'))
       .toBe('Berserker')
   })
 
   it('works through color markup and same-turn joined lines', () => {
-    const joined = '<yellow>Welcome back, tdpma the Minotaur Berserker.</yellow> Trog says: Kill them all!'
-    expect(welcomeBackground(joined, 'tdpma', 'Minotaur')).toBe('Berserker')
+    const joined = '<yellow>Welcome back, bram the Minotaur Berserker.</yellow> Trog says: Kill them all!'
+    expect(welcomeBackground(joined, 'bram', 'Minotaur')).toBe('Berserker')
   })
 
   it('handles multi-word species and jobs', () => {
@@ -40,9 +40,9 @@ describe('welcomeBackground', () => {
   })
 
   it('yields nothing on non-welcome lines or mismatched identity', () => {
-    expect(welcomeBackground('Welcome back to level 3!', 'tdpma', 'Minotaur')).toBeUndefined()
-    expect(welcomeBackground('Welcome, other the Minotaur Berserker.', 'tdpma', 'Minotaur')).toBeUndefined()
-    expect(welcomeBackground('Welcome, tdpma the Minotaur Berserker.', 'tdpma', 'Troll')).toBeUndefined()
-    expect(welcomeBackground('Welcome, tdpma the Minotaur Berserker.', '', 'Minotaur')).toBeUndefined()
+    expect(welcomeBackground('Welcome back to level 3!', 'bram', 'Minotaur')).toBeUndefined()
+    expect(welcomeBackground('Welcome, other the Minotaur Berserker.', 'bram', 'Minotaur')).toBeUndefined()
+    expect(welcomeBackground('Welcome, bram the Minotaur Berserker.', 'bram', 'Troll')).toBeUndefined()
+    expect(welcomeBackground('Welcome, bram the Minotaur Berserker.', '', 'Minotaur')).toBeUndefined()
   })
 })
