@@ -998,8 +998,7 @@ export function buildGameView(
     const sig = JSON.stringify([doll, mcache, charMeta, fp])
     if (sig === lastAvatarSig) return
     lastAvatarSig = sig
-    // The turn count is the new-character signal: ../avatars appends when it drops
-    // below the slot's current entry (a fresh char reset it to 0), else upserts.
+    // The turn count is the new-character signal (../avatars REROLL_TURN_MAX).
     saveAvatar({
       wsUrl: conn.wsUrl, username, gameId, charName,
       httpBase: conn.httpBase, version: loader.version, fp, doll, mcache,

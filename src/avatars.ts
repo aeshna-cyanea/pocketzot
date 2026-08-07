@@ -12,9 +12,9 @@
 //
 // The store is a HISTORY, not one slot per version line: a new character appends
 // (a reroll coexists with the character it replaced), the same character upserts in
-// place. New-vs-same is decided by the turn count — monotonic within one life and
-// reset to 0 for a new character, so a capture whose `turn` drops below the slot's
-// current entry is a reroll. (Name/species collide between a dead char and its
+// place. New-vs-same is decided by the outcome stamp (a closed entry always
+// appends) and the turn count — see REROLL_TURN_MAX for the exact rule.
+// (Name/species collide between a dead char and its
 // reroll, so they can't disambiguate; turn works even for combos started with no
 // UI.) Upsert targets the slot's current (most-recent) entry — always the live
 // save, since a (server, account, game_id) slot holds one at a time.
@@ -29,6 +29,12 @@ const SEP = '\x00'
 // Retained history vs shown on the login row.
 const STORE_CAP = 20
 const VISIBLE_CAP = 4
+// The reroll rule, in one place: a turn drop is a new character only when it
+// lands at game start (a fresh char's first capture is at ~turn 0; the margin
+// covers it slipping a few turns). A mid-game drop is a rollback of the same
+// character (offline force-quit, server crash restoring the save) and must
+// upsert, not append a phantom "past character".
+const REROLL_TURN_MAX = 10
 
 // Mirror the wire shapes: doll part = [tile_id, ymax], mcache part = [tile_id,
 // xofs, yofs]. Stored verbatim and handed to dollTileSpec at render time.
@@ -76,7 +82,7 @@ export interface Avatar extends AvatarMeta {
                                 // the fingerprint wasn't cached at capture time.
   doll: DollPart[] | null       // player-doll body-part layers
   mcache: McachePart[] | null   // worn-equipment / monster-tile layers
-  turn: number | null           // DCSS turn count at capture — a reset below the slot's current entry = new character
+  turn: number | null           // DCSS turn count at capture — drives new-vs-same (see REROLL_TURN_MAX)
   seenAt?: number               // ms epoch of the last capture refresh (set by saveAvatar)
   outcome?: AvatarOutcome       // terminal end, one-shot (see recordAvatarOutcome)
 }
@@ -108,9 +114,9 @@ function persist(list: Avatar[]): void {
   } catch {}
 }
 
-// Store a freshly-captured recipe: append a new character (turn below the slot's
-// current entry = a reroll), else upsert the slot's current entry. The slot key
-// omits `version`, so a post-rebuild replay of the same character updates in place.
+// Store a freshly-captured recipe: append a new character (see REROLL_TURN_MAX),
+// else upsert the slot's current entry. The slot key omits `version`, so a
+// post-rebuild replay of the same character updates in place.
 export function saveAvatar(
   a: Omit<Avatar, 'turn' | 'seenAt' | 'outcome'>,
   opts: { turn?: number } = {},
@@ -122,7 +128,8 @@ export function saveAvatar(
   // Slot's current entry = first match (the list is newest-first).
   const idx = list.findIndex((x) => avatarSlotKey(x) === k)
   const cur = idx >= 0 ? list[idx] : null
-  const turnReset = cur != null && turn != null && cur.turn != null && turn < cur.turn
+  const turnReset = cur != null && turn != null && cur.turn != null
+    && turn < cur.turn && turn <= REROLL_TURN_MAX
   // An outcome-stamped entry is closed — it cannot be the live save, so a new
   // capture in its slot is always a new character, even when turn info is
   // missing on either side (where the upsert fallback would otherwise replace
