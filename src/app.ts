@@ -7,6 +7,8 @@ import { buildGameView, type SpectateTarget } from './views/game-view'
 import type { TileLoader } from './game/tiles/tile-loader'
 import { OFFLINE_GAME_ID } from './offline/offline-state'
 import { attemptResume, clearGameStart, loadPersistedResume, markProactiveClose } from './reconnect'
+import { count } from './counter'
+import { getPref } from './prefs'
 import { loadSession } from './auth/session'
 
 type AppState = 'login' | 'lobby' | 'game'
@@ -101,6 +103,7 @@ async function showOfflineGame(name: string): Promise<void> {
   // same reason boot.ts excludes them from the slot-record tracker: a golden
   // capture's character isn't yours and must not mint a phantom shelf entry.
   const gameId = params.get('engine') === 'fake' ? '' : OFFLINE_GAME_ID
+  if (gameId) count('play-offline', { ascii: getPref('mapRenderMode') === 'ascii' })
   state = 'game'
   conn = boot.conn
   currentUsername = name
@@ -187,6 +190,7 @@ async function switchSpectateServer(wsUrl: string): Promise<void> {
 }
 
 function showGame(spectating?: SpectateTarget, loader?: TileLoader, gameId?: string): void {
+  count(spectating ? 'spectate' : 'play', { ascii: getPref('mapRenderMode') === 'ascii' })
   state = 'game'
   setView(buildGameView(
     conn!,
