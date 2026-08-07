@@ -54,8 +54,6 @@ Current stable and trunk DCSS are supported. Versions back to 0.24 generally wor
 
 PocketZot is a static web app with no backend of its own. Your browser connects directly to your chosen DCSS server over an encrypted WebSocket (`wss://`). Credentials are sent only in the login message and never stored.
 
-Offline games make no network connections: the engine runs inside your browser, and saves, morgues, and scores are stored on the device. Nothing about an offline game is sent anywhere.
-
 ## How it was built
 
 Most of the implementation was written with Claude Code, under my direction and review. All design and product decisions, testing, and QA were mine.
