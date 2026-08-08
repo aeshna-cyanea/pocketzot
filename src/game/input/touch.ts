@@ -33,7 +33,12 @@ type DpadDef =
   | { label: string; text: string }
 
 // Binds one control's engagement (see bindTap in buildTouchControls).
-type BindTap = (btn: HTMLElement, fire: () => void) => void
+// `repeat` opts a control into hold-to-repeat on the touch path.
+type BindTap = (btn: HTMLElement, fire: () => void, opts?: { repeat?: boolean }) => void
+
+// Hold-to-repeat pacing, roughly matching OS keyboard auto-repeat defaults.
+export const REPEAT_DELAY_MS = 400
+export const REPEAT_INTERVAL_MS = 100
 
 // game-view owns the spell data (and the tile loader / cast logic), so it
 // supplies the grid DOM for the z tab; touch.ts just hosts it in the panel's
@@ -243,20 +248,24 @@ function buildKeyboardOverlay(
     clearAllMods()
   }
 
-  function makeBtn(label: string, classes: string, onTap: () => void): HTMLButtonElement {
+  function makeBtn(
+    label: string, classes: string, onTap: () => void, opts?: { repeat?: boolean },
+  ): HTMLButtonElement {
     const b = document.createElement('button')
     b.className = 'kbd-key' + (classes ? ' ' + classes : '')
     b.textContent = label
-    bindTap(b, onTap)
+    bindTap(b, onTap, opts)
     return b
   }
 
+  // Character keys and backspace hold-to-repeat like hardware keys; control
+  // keys (Esc/Enter/Tab, mods, layer switch, close) stay single-fire.
   function makeCharBtn(label: string, ch: string, shifted?: string): HTMLButtonElement {
-    return makeBtn(label, '', () => dispatchChar(ch, shifted))
+    return makeBtn(label, '', () => dispatchChar(ch, shifted), { repeat: true })
   }
 
   function makeLetterBtn(ch: string): HTMLButtonElement {
-    return makeBtn(ch, 'letter', () => dispatchChar(ch))
+    return makeBtn(ch, 'letter', () => dispatchChar(ch), { repeat: true })
   }
 
   function makeLetterBtnWithCorner(ch: string, corner: string): HTMLButtonElement {
@@ -270,7 +279,7 @@ function buildKeyboardOverlay(
     main.textContent = ch
     b.appendChild(sup)
     b.appendChild(main)
-    bindTap(b, () => dispatchChar(ch))
+    bindTap(b, () => dispatchChar(ch), { repeat: true })
     return b
   }
 
@@ -285,7 +294,7 @@ function buildKeyboardOverlay(
     main.textContent = ch
     b.appendChild(sup)
     b.appendChild(main)
-    bindTap(b, () => dispatchChar(ch, shifted))
+    bindTap(b, () => dispatchChar(ch, shifted), { repeat: true })
     return b
   }
 
@@ -318,7 +327,8 @@ function buildKeyboardOverlay(
     ctrlBtns.push(cb)
     btns.push(cb)
     btns.push(makeBtn(switchLabel, 'wide flex', () => setLayer(nextLayer)))
-    btns.push(makeBtn('⇥', 'wide flex glyph', () => dispatchKey(9)))
+    // Tab repeats; the other control keys stay single-fire.
+    btns.push(makeBtn('⇥', 'wide flex glyph', () => dispatchKey(9), { repeat: true }))
     btns.push(makeBtn('⏎', 'wide flex glyph', () => dispatchKey(13)))
     btns.push(makeBtn('abc▾', 'wide flex', close))
     return btns
@@ -336,7 +346,7 @@ function buildKeyboardOverlay(
       const sb = makeBtn('⇧', 'mod wide flex glyph', toggleShift)
       shiftBtns.push(sb); r3.push(sb)
       for (const c of LETTER_ROW_3) r3.push(LETTER_DIRS[c] ? makeLetterBtnWithCorner(c, LETTER_DIRS[c]) : makeLetterBtn(c))
-      r3.push(makeBtn('⌫', 'wide flex glyph', () => dispatchKey(8, CK_CTRL_BKSP)))
+      r3.push(makeBtn('⌫', 'wide flex glyph', () => dispatchKey(8, CK_CTRL_BKSP), { repeat: true }))
       addRow(r3)
       addRow(buildBottomRow('123', 'symbols'))
     } else {
@@ -346,7 +356,7 @@ function buildKeyboardOverlay(
       const sb = makeBtn('⇧', 'mod wide flex glyph', toggleShift)
       shiftBtns.push(sb); r3.push(sb)
       for (const [ch, sh] of SYMBOL_ROW_3) r3.push(makeShiftedCharBtn(ch, sh))
-      r3.push(makeBtn('⌫', 'wide flex glyph', () => dispatchKey(8, CK_CTRL_BKSP)))
+      r3.push(makeBtn('⌫', 'wide flex glyph', () => dispatchKey(8, CK_CTRL_BKSP), { repeat: true }))
       addRow(r3)
       addRow(buildBottomRow('ABC', 'letters'))
     }
@@ -435,8 +445,36 @@ export function buildTouchControls(send: SendFn, opts: TouchControlsOpts = {}): 
     document.addEventListener(type, onDocTouch, { capture: true, passive: true })
   }
 
-  const bindTap: BindTap = (btn, fire) => {
-    btn.addEventListener('touchstart', (e) => { e.preventDefault(); fire() }, { passive: false })
+  const bindTap: BindTap = (btn, fire, opts) => {
+    if (opts?.repeat) {
+      // Hold-to-repeat, touch path only: touch events stay bound to their
+      // start element, so this button's own touchend/touchcancel always
+      // arrives to stop the timers — even if the finger drifts off the
+      // button (repeat continues while held, like a hardware key). Mouse
+      // clicks stay single-fire below. The isConnected check stops a hold
+      // that outlives the panel (game-view teardown mid-press).
+      let delayTimer = 0
+      let repeatTimer = 0
+      const stop = (): void => {
+        window.clearTimeout(delayTimer)
+        window.clearInterval(repeatTimer)
+      }
+      btn.addEventListener('touchstart', (e) => {
+        e.preventDefault()
+        fire()
+        stop()
+        delayTimer = window.setTimeout(() => {
+          repeatTimer = window.setInterval(() => {
+            if (!btn.isConnected) { stop(); return }
+            fire()
+          }, REPEAT_INTERVAL_MS)
+        }, REPEAT_DELAY_MS)
+      }, { passive: false })
+      btn.addEventListener('touchend', stop)
+      btn.addEventListener('touchcancel', stop)
+    } else {
+      btn.addEventListener('touchstart', (e) => { e.preventDefault(); fire() }, { passive: false })
+    }
     btn.addEventListener('click', (e) => {
       if (e.timeStamp - lastTouchTs < PHANTOM_CLICK_WINDOW_MS) return
       fire()
@@ -627,7 +665,7 @@ export function buildTouchControls(send: SendFn, opts: TouchControlsOpts = {}): 
         const btn = document.createElement('button')
         btn.className = 'tc-dpad-btn' + (r === 1 && c === 1 ? ' wait' : '')
         btn.textContent = def.label
-        bindTap(btn, () => sendDpad(def))
+        bindTap(btn, () => sendDpad(def), { repeat: true })
         dpadEl.appendChild(btn)
       }
     }
@@ -684,7 +722,9 @@ export function buildTouchControls(send: SendFn, opts: TouchControlsOpts = {}): 
         if (label.length >= 3) btn.classList.add('tri')  // 3-char macros get a smaller face
         btn.textContent = label
         if (title) { btn.title = title; btn.setAttribute('aria-label', title) }
-        bindTap(btn, () => sendTabKey(def))
+        // Tab slots repeat (held autofight); other slots — arbitrary macros,
+        // Esc/Enter — stay single-fire.
+        bindTap(btn, () => sendTabKey(def), { repeat: def.key === 9 })
         rowEl.appendChild(btn)
       }
       contentEl.appendChild(rowEl)

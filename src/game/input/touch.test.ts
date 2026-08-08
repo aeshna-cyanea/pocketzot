@@ -5,7 +5,7 @@ import { fakeStorage } from '../../test/fake-storage'
 
 vi.stubGlobal('localStorage', fakeStorage())
 
-import { buildTouchControls } from './touch'
+import { buildTouchControls, REPEAT_DELAY_MS, REPEAT_INTERVAL_MS } from './touch'
 import {
   cloneSet, newSetId, saveControlSet, setActiveControlSet, builtinSets,
 } from './control-sets'
@@ -167,6 +167,95 @@ describe('phantom-engagement guard', () => {
     document.body.dispatchEvent(touchEvent('touchstart'))
     dpadUp(tc.element).click()
     expect(sent).toHaveLength(1)
+  })
+})
+
+// Hold-to-repeat: d-pad and kbd character/backspace keys auto-repeat while
+// held (touch path only); everything else stays single-fire.
+describe('hold-to-repeat', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  const touchEvent = (type: string) =>
+    new Event(type, { bubbles: true, cancelable: true })
+
+  const dpadUp = (root: HTMLElement) =>
+    [...root.querySelectorAll<HTMLElement>('.tc-dpad-btn')].find(b => b.textContent === '↑')!
+
+  it('a quick tap fires exactly once', () => {
+    const { tc, sent } = setup()
+    const btn = dpadUp(tc.element)
+    btn.dispatchEvent(touchEvent('touchstart'))
+    vi.advanceTimersByTime(REPEAT_DELAY_MS / 2)
+    btn.dispatchEvent(touchEvent('touchend'))
+    vi.advanceTimersByTime(REPEAT_DELAY_MS * 4)
+    expect(sent).toHaveLength(1)
+  })
+
+  it('a held d-pad key repeats after the delay and stops on release', () => {
+    const { tc, sent } = setup()
+    const btn = dpadUp(tc.element)
+    btn.dispatchEvent(touchEvent('touchstart'))
+    expect(sent).toHaveLength(1)  // immediate fire
+    vi.advanceTimersByTime(REPEAT_DELAY_MS + REPEAT_INTERVAL_MS * 3)
+    expect(sent).toHaveLength(4)
+    expect(sent.every(m => 'keycode' in m && m.keycode === -254)).toBe(true)  // CK_UP
+    btn.dispatchEvent(touchEvent('touchend'))
+    vi.advanceTimersByTime(REPEAT_INTERVAL_MS * 5)
+    expect(sent).toHaveLength(4)
+  })
+
+  it('a held kbd letter repeats', () => {
+    const { tc, sent } = setup()
+    tc.openKbd()
+    const q = [...tc.element.querySelectorAll<HTMLElement>('.kbd-key.letter')]
+      .find(b => b.textContent === 'q')!
+    q.dispatchEvent(touchEvent('touchstart'))
+    vi.advanceTimersByTime(REPEAT_DELAY_MS + REPEAT_INTERVAL_MS * 2)
+    q.dispatchEvent(touchEvent('touchend'))
+    expect(sent).toHaveLength(3)
+    expect(sent[0]).toEqual({ msg: 'input', text: 'q' })
+  })
+
+  it('macro-grid and control keys stay single-fire when held', () => {
+    const { tc, sent } = setup()
+    const macro = tabButtons(tc.element).find(b => b.textContent === 'q')!
+    macro.dispatchEvent(touchEvent('touchstart'))
+    const esc = tc.element.querySelector<HTMLElement>('.tc-esc')!
+    esc.dispatchEvent(touchEvent('touchstart'))
+    vi.advanceTimersByTime(REPEAT_DELAY_MS + REPEAT_INTERVAL_MS * 5)
+    expect(sent).toHaveLength(2)
+  })
+
+  it('Tab repeats — grid slot and kbd control row alike (held autofight)', () => {
+    const { tc, sent } = setup()
+    const gridTab = tabButtons(tc.element).find(b => b.textContent === '⇥')!
+    gridTab.dispatchEvent(touchEvent('touchstart'))
+    vi.advanceTimersByTime(REPEAT_DELAY_MS + REPEAT_INTERVAL_MS * 2)
+    gridTab.dispatchEvent(touchEvent('touchend'))
+    expect(sent).toHaveLength(3)
+    expect(sent.every(m => 'keycode' in m && m.keycode === 9)).toBe(true)
+
+    sent.length = 0
+    tc.openKbd()
+    const kbdTab = [...tc.element.querySelectorAll<HTMLElement>('#kbd-overlay .kbd-key')]
+      .find(b => b.textContent === '⇥')!
+    kbdTab.dispatchEvent(touchEvent('touchstart'))
+    vi.advanceTimersByTime(REPEAT_DELAY_MS + REPEAT_INTERVAL_MS * 2)
+    kbdTab.dispatchEvent(touchEvent('touchend'))
+    expect(sent).toHaveLength(3)
+    expect(sent.every(m => 'keycode' in m && m.keycode === 9)).toBe(true)
+  })
+
+  it('repeat halts when the panel leaves the DOM mid-hold', () => {
+    const { tc, sent } = setup()
+    const btn = dpadUp(tc.element)
+    btn.dispatchEvent(touchEvent('touchstart'))
+    vi.advanceTimersByTime(REPEAT_DELAY_MS + REPEAT_INTERVAL_MS)
+    expect(sent).toHaveLength(2)
+    tc.element.remove()  // game-view teardown; no touchend will arrive
+    vi.advanceTimersByTime(REPEAT_INTERVAL_MS * 5)
+    expect(sent).toHaveLength(2)
   })
 })
 
