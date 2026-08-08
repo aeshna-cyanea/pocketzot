@@ -9,6 +9,17 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-08-08
+
+- Improved iPad/tablet layouts, including the portrait controls, landscape
+  sidebar and stats panel, and lobby.
+
+## 2026-08-07
+
+- Polished character cards for offline's active saves and ended games.
+- Some touch controls repeat on tap-hold: d-pad, virtual-keyboard characters,
+  backspace, and Tab.
+
 ## 2026-08-05
 
 - Offline play: PocketZot can now run DCSS entirely on your device. Tap "Play
