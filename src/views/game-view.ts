@@ -1144,8 +1144,12 @@ export function buildGameView(
   // for barely one monster row. So gate on HEIGHT — tall landscape (tablet)
   // shows the full expanding list; short landscape (phone) collapses it to the
   // single-line compact chip. 600px cleanly separates phones (≤~430px tall in
-  // landscape) from tablets (≥744px). Portrait floats the full list over the
-  // map and never matches this query. Re-sync on rotation/resize, self-removing
+  // landscape) from tablets (≥744px) — and style.css's tablet-sidebar widen
+  // (min-height: 601px, the --sidebar-w override) is this query's complement:
+  // change one bound and the other must move with it, or a height could get
+  // the compact chip inside the wide sidebar. Portrait floats the full list
+  // over the map and never matches this query. Re-sync on rotation/resize,
+  // self-removing
   // once the view is gone (mirrors docKeyHandler); set the initial state before
   // the first map message so the first render is already in the right mode.
   const compactMql = window.matchMedia('(orientation: landscape) and (max-height: 600px)')
@@ -1326,6 +1330,10 @@ export function buildGameView(
         }
         break
       }
+
+      case 'options':
+        statsView.setOptions(msg.options ?? {})
+        break
 
       case 'txt': {
         // Renders a CRT screen / txt page / message — visible content, so the

@@ -1,6 +1,6 @@
 import type { PlayerMsg } from '../../ws/types'
 import type { InventoryStore } from '../inventory-store'
-import { escHtml, dcssToHtml } from '../dcss-colors'
+import { escHtml, dcssToHtml, DCSS_COLOR_MAP } from '../dcss-colors'
 import { compactPlace, nameTitle } from '../char-label'
 
 const BAR_RES = 10000  // basis points; matches reference player.js precision
@@ -30,6 +30,11 @@ export class StatsView {
   private oldHp: number | undefined
   private oldMp: number | undefined
   private layout: 'compact' | 'square'
+  // stat_colour warning thresholds from the {msg:"options"} snapshot.
+  // Seeded with crawl's default ("3:red" — the stat-zero proximity warning)
+  // so a Spriggan's natural Str 3 reads red even if the options message
+  // predates this view (it's sent once at process start).
+  private statColour: Array<{ value: number; colour: string }> = [{ value: 3, colour: 'red' }]
   private mql: MediaQueryList | null
   private onPlaceTap: (() => void) | null = null
   private onSettingsTap: (() => void) | null = null
@@ -87,6 +92,17 @@ export class StatsView {
     this.layout = layout
     this.el.innerHTML = this.template()
     this.render()
+  }
+
+  // {msg:"options"} handler. An empty/absent stat_colour list is a real
+  // setting (stat_colour -= clears the warning), so any present array wins.
+  setOptions(opts: Record<string, unknown>): void {
+    const sc = opts['stat_colour']
+    if (Array.isArray(sc)) {
+      this.statColour = sc.filter((e): e is { value: number; colour: string } =>
+        e != null && typeof e.value === 'number' && typeof e.colour === 'string')
+      this.render()
+    }
   }
 
   update(p: Partial<PlayerMsg>): void {
@@ -392,15 +408,21 @@ export class StatsView {
     return `<span class="hg-caption">${letter})</span> <span${classAttr}>${escHtml(name)}</span>`
   }
 
-  // Mirrors stat_class() in player.js: lost (status) → boosted (status) →
-  // drained (current < max) → normal. Drained is the new case here.
-  private statClass(stat: 'str' | 'int' | 'dex', val: number, max: number): string {
+  // Mirrors stat_class() in player.js: lost (status) → stat_colour warning
+  // threshold (first entry the value is at or under; a colour, not a class)
+  // → boosted (status) → drained (current < max) → normal.
+  private statClass(stat: 'str' | 'int' | 'dex', val: number, max: number): { cls?: string; color?: string } {
     const statuses = this.state.status ?? []
     const lostRe = new RegExp(`lost ${stat}`, 'i')
-    if (statuses.some(st => st.text && lostRe.test(st.text))) return 'stat-zero'
-    if (statuses.some(st => st.text && /vitalised/i.test(st.text))) return 'stat-boosted'
-    if (val < max) return 'stat-degenerated'
-    return ''
+    if (statuses.some(st => st.text && lostRe.test(st.text))) return { cls: 'stat-zero' }
+    for (const t of this.statColour) {
+      // Unknown colour names fall through as-is: every DCSS colour name the
+      // option accepts is also a valid-enough CSS keyword to fail soft.
+      if (val <= t.value) return { color: DCSS_COLOR_MAP[t.colour] ?? t.colour }
+    }
+    if (statuses.some(st => st.text && /vitalised/i.test(st.text))) return { cls: 'stat-boosted' }
+    if (val < max) return { cls: 'stat-degenerated' }
+    return {}
   }
 
   // Mirrors update_stat() in player.js: append " (max)" when the stat is drained
@@ -415,8 +437,9 @@ export class StatsView {
     if (v < m) el.innerHTML = `${v}<span class="stat-max">(${m})</span>`
     else el.textContent = String(v)
     el.classList.remove('stat-boosted', 'stat-zero', 'stat-degenerated')
-    const cls = this.statClass(stat, v, m)
-    if (cls) el.classList.add(cls)
+    const st = this.statClass(stat, v, m)
+    if (st.cls) el.classList.add(st.cls)
+    el.style.color = st.color ?? ''
   }
 
   // Contamination and Doom, mirroring update_contam/update_doom in player.js.

@@ -151,6 +151,12 @@ export type ServerMsg =
   // '' clears. Shown as the monster list's first row.
   | { msg: 'map'; cells: CellUpdate[]; clear?: boolean; vgrdc?: { x: number; y: number }; invis_mon_desc?: string }
   | { msg: 'player' } & PlayerMsg
+  // Game-option snapshot from the binary (TilesFramework::send_options),
+  // sent at process start and again whenever options change (rc reload).
+  // We consume stat_colour ([{value, colour}] warning thresholds, default
+  // "3:red"); the rest (tile_* prefs, hp/mp_colour — unused even by the
+  // reference HUD) are ignored.
+  | { msg: 'options'; options?: Record<string, unknown> }
   | { msg: 'html'; id: string; content: string }
   | { msg: 'set_game_links'; content: string }
   | { msg: 'game_client'; version: string; content: string }

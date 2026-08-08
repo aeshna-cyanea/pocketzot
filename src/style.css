@@ -60,6 +60,10 @@
      four insets with a 1rem aesthetic floor. */
   --safe-frame-pad: max(1rem, var(--safe-top)) max(1rem, var(--safe-right))
                     max(1rem, var(--safe-bottom)) max(1rem, var(--safe-left));
+  /* Widest the touch panel's macro keys are allowed to spread: binds the
+     portrait panel cap AND the tablet-landscape sidebar width, so the keys
+     are one size across iPad rotations — one token, can't drift apart. */
+  --touch-panel-cap: 20rem;
   touch-action: manipulation;
 }
 
@@ -657,6 +661,17 @@ html, body {
      line (char^god beside a doll) and spectate-row fact runs. */
   padding: 0 max(0.5rem, var(--safe-right))
            max(1rem, var(--safe-bottom)) max(0.5rem, var(--safe-left));
+}
+
+/* Tablets: edge-to-edge rows read fine at phone widths but stretch into
+   screen-wide slabs on an iPad (both lobbies share this scroll column).
+   Cap the content column and center it; the pinned header bar stays
+   full-width — Back and the account chip anchor to the screen corners
+   like a nav bar. */
+.lobby-scroll > * {
+  width: 100%;
+  max-width: 42rem;
+  margin-inline: auto;
 }
 
 /* Pinned nav bar shared by the lobby and the crypt: a 36px centered row that
@@ -3246,6 +3261,17 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
 @media (orientation: portrait) {
   #menu-controls,
   #spectator-bar { padding-bottom: calc(var(--bar-pad) + var(--safe-bottom)); }
+
+  /* Tablets: flex:1 stretches the macro keys to ~200px slabs at iPad
+     widths. Cap the panel and pin it to the right edge (margin-left:auto
+     absorbs the slack) so the d-pad and keys sit under the two thumbs —
+     phone widths never reach the cap, so nothing moves there. Portrait-
+     scoped: in landscape the panel is a grid item in the 16rem sidebar,
+     where an auto margin would shrink it to fit-content. */
+  .tc-panel {
+    max-width: var(--touch-panel-cap);
+    margin-left: auto;
+  }
 }
 
 /* D-pad: 3×3 CSS grid of large buttons */
@@ -3684,6 +3710,12 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
      there vs the old fixed 1.25rem — while home-button devices and desktop
      drop to the small aesthetic floor. */
   :root { --sidebar-lift: max(0.35rem, var(--safe-bottom)); }
+  /* Sidebar width: 16rem is tuned for phone landscape, where every column
+     costs map. The tablet override below (the complement of the
+     compact-monster-list height line, plus a width floor) widens it to the
+     portrait panel cap, so the macro keys are the same size in both iPad
+     orientations. */
+  :root { --sidebar-w: 16rem; }
   #game-view {
     /* Keep the sidebar clear of the notch/Dynamic Island ear when it's on
        the right. iOS reports the two landscape side insets SYMMETRICALLY
@@ -3694,7 +3726,7 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
        edge under the ear is fine — it's background (the d-pad float below
        carries its own safe-left margin). */
     padding-right: var(--safe-right);
-    grid-template-columns: minmax(0, 1fr) 16rem;
+    grid-template-columns: minmax(0, 1fr) var(--sidebar-w);
     /* The 1fr spacer (3rd row) absorbs the sidebar's vertical slack, pinning
        HUD+monster list to the top and spell rail+panel to the bottom. The HUD
        row is minmax(0, auto): content-sized when there's room, but able to
@@ -3748,10 +3780,24 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   }
 
   /* The log floats over the map's TOP edge in landscape. Everything else —
-     grid-area, abspos, translucent scrim, z-index, height, column-reverse —
-     comes from the base #game-messages rule; only the anchor differs (the
-     portrait block sets bottom instead). */
-  #game-messages { top: 0; }
+     grid-area, abspos, translucent scrim, z-index, column-reverse — comes
+     from the base #game-messages rule; only the anchor differs (the
+     portrait block sets bottom instead). The iPad status bar (always
+     visible, ~24px, and the black-translucent viewport runs under it) is
+     cleared by GROWING the box by --safe-top rather than moving it down:
+     the scrim then backs the clock/battery instead of leaving raw map
+     glyphs under them, while the padding keeps the text below the bar.
+     The log's bottom edge stays at --safe-top + --msglog-h either way, so
+     the #more-btn / minimap offsets below hold. Scrollback can slide old
+     lines up into the band (padding scrolls with content), but they stay
+     on the scrim — no worse than any text under a translucent bar. Phones
+     report a 0 inset in landscape, collapsing all of this to the base
+     rule. */
+  #game-messages {
+    top: 0;
+    height: calc(var(--msglog-h) + var(--safe-top));
+    padding-top: calc(0.2rem + var(--safe-top));
+  }
 
   /* Monster list: in-flow sidebar card in the `mons` row, directly beneath the
      HUD and aligned to its horizontal padding. On a tablet-height sidebar this
@@ -3766,13 +3812,13 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   #monster-list {
     grid-area: mons;
     margin: 0.3rem 0.4rem 0;
-    max-width: calc(16rem - 0.8rem);
+    max-width: calc(var(--sidebar-w) - 0.8rem);
   }
 
   /* --more-- re-anchors directly below the floating log (the base rule
      already provides grid-area:map, absolute, left/right, z-index 4). */
   #more-btn {
-    top: var(--msglog-h);
+    top: calc(var(--safe-top) + var(--msglog-h));
     bottom: auto;
   }
 
@@ -3783,7 +3829,7 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
      clearance on either side. */
   .minimap-lens,
   #game-view.spell-row .minimap-lens {
-    padding-top: calc(var(--msglog-h) + 0.25rem);
+    padding-top: calc(var(--safe-top) + var(--msglog-h) + 0.25rem);
     /* The landscape map cell reaches the physical screen bottom (no touch
        controls below it), so keep the canvas out of the home-indicator zone. */
     padding-bottom: max(0.25rem, var(--safe-bottom));
@@ -3801,6 +3847,13 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
        scrollable too — clip it so the stats block can't wiggle sideways. */
     overflow-x: hidden;
     padding: 0.3rem 0.4rem;
+    /* Top edge clears the iPad status bar (see the #game-messages note):
+       the sidebar's first line is the player name + settings gear, exactly
+       where the clock and battery sit on a tablet. Margin, not padding —
+       this box scrolls when height-starved, and padding lives inside the
+       scrollport, so it would ride out from under the bar mid-scroll;
+       margin pins the scrollport's own top edge below it. */
+    margin-top: var(--safe-top);
   }
   /* When the sidebar is height-starved, the squeeze must land on this
      scroll container — not on its rows, which otherwise flex-shrink in
@@ -3896,9 +3949,9 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
 
   /* Spell rail: in-flow sidebar row directly above the touch panel. Base
      styling applies — including the fixed one-row height, so the rail
-     shows the first seven 36px buttons that fit the 16rem column (zero
-     horizontal padding) and the wrapped line beyond is clipped (same
-     clip behavior as portrait). */
+     shows the first row of 36px buttons that fit the --sidebar-w column
+     (zero horizontal padding; seven at the 16rem phone width) and the
+     wrapped line beyond is clipped (same clip behavior as portrait). */
   #spell-rail {
     grid-area: spells;
     padding: 0.25rem 0.0rem;
@@ -3914,6 +3967,36 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
     --kbd-key-h: clamp(1.8rem, 9vh, 2.8rem);
     --kbd-row-gap: clamp(0.25rem, 1.2vh, 0.5rem);
   }
+}
+
+/* Tablet landscape — min-height: 601px complements the compact-monster-
+   list matchMedia in game-view.ts (max-height: 600px, inclusive) with no
+   overlap: no height gets compact list + wide sidebar together. (Not
+   range syntax — pre-16.4 Safari drops an entire query it can't parse,
+   costing those iPads the whole enhancement. Fractional heights in
+   (600,601) fall to 16rem + full list, a combination that's legitimate
+   anyway just below the width floor.) Widen the sidebar to the portrait
+   panel cap so the macro keys are one size across iPad rotations; phones
+   in landscape (~400px tall) keep 16rem, where the map can't spare the
+   extra columns. min-width keeps squarish desktop / Stage Manager windows
+   (landscape only promises width>height, so ~620×610 qualifies) from
+   spending over half their width on sidebar — every real iPad landscape
+   is ≥1024. */
+@media (orientation: landscape) and (min-width: 768px) and (min-height: 601px) {
+  :root { --sidebar-w: var(--touch-panel-cap); }
+  /* At the wide sidebar there's room for the reference's 45/55 stat split,
+     so restore it: the left column ends 0.5rem (the column gap) before the
+     45% line, putting the right column's left edge exactly where the
+     right-anchored 55% HP/MP bars begin — one shared column line down the
+     whole panel, as in the reference. The base max-content sizing stays on
+     phones, where 16rem can't afford a fixed split (see .hud-grid). */
+  .hud-grid { grid-template-columns: calc(45% - 0.5rem) minmax(0, 1fr); }
+  /* Likewise widen the caption gap to the reference's literal space
+     ("Str: 3"; 1ch in the mono font). The templates write caption+value
+     spans with no whitespace between, so the gap is all margin — and the
+     phone sidebar keeps the tight 0.15em base gap, where the max-content
+     left column can't spare the extra ~2ch. */
+  .hud-grid .hg-caption + span { margin-left: 1ch; }
 }
 
 /* Landscape on short viewports: compact the login card so it fits

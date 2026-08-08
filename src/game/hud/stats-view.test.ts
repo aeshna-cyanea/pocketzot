@@ -143,3 +143,37 @@ describe('StatsView settings chip', () => {
     expect(taps).toBe(1)
   })
 })
+
+describe('StatsView stat_colour warning', () => {
+  function statEl(v: StatsView, id: string): HTMLElement {
+    return v.element.querySelector<HTMLElement>(`#${id}`)!
+  }
+
+  it('tints a stat at or under the default 3:red threshold', () => {
+    const v = makeView()
+    v.update({ str: 3, str_max: 3, int: 19, int_max: 19 })
+    expect(statEl(v, 'hud-str').style.color).not.toBe('')
+    expect(statEl(v, 'hud-int').style.color).toBe('')
+  })
+
+  it('follows thresholds from the options message, including clearing', () => {
+    const v = makeView()
+    v.setOptions({ stat_colour: [{ value: 10, colour: 'yellow' }] })
+    v.update({ dex: 9, dex_max: 9 })
+    expect(statEl(v, 'hud-dex').style.color).not.toBe('')
+    v.setOptions({ stat_colour: [] })  // stat_colour -= : a real "off"
+    expect(statEl(v, 'hud-dex').style.color).toBe('')
+  })
+
+  it('ranks lost > threshold > drained, as the reference does', () => {
+    const v = makeView()
+    v.update({ str: 2, str_max: 10, status: [{ text: 'lost str' }] })
+    const str = statEl(v, 'hud-str')
+    expect(str.classList.contains('stat-zero')).toBe(true)
+    expect(str.style.color).toBe('')
+    v.update({ status: [] })
+    // 2 <= 3 hits the default threshold; drained (2 < 10) must not win
+    expect(str.style.color).not.toBe('')
+    expect(str.classList.contains('stat-degenerated')).toBe(false)
+  })
+})
