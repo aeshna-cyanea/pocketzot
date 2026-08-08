@@ -124,7 +124,11 @@ export function renderCharCard(
   if (model.place && placeInSub) sub.push(model.place)
   // God on the sub line only when there's no rank line to carry it.
   if (model.god && !(model.godRank && !opts.compact)) sub.push(model.god)
-  joinedLine(body, 'char-card-sub', sub.filter(Boolean))
+  // The combo may wrap internally — "Mountain Dwarf Earth Elementalist"
+  // can outgrow a narrow line, and its own word breaks read fine. Every
+  // other fact (god name, XL, place) moves whole — so no soft slot when
+  // the combo is absent (filtered out) and index 0 is some other fact.
+  joinedLine(body, 'char-card-sub', sub.filter(Boolean), combo ? 0 : -1)
 
   if (resultText) {
     const el = line(body, 'char-card-result', resultText + (placeInResult ? ` in ${model.place}` : ''))
@@ -155,7 +159,13 @@ export function renderCharCard(
     card.classList.add('char-card-tappable')
     card.setAttribute('role', 'button')
     card.tabIndex = 0
-    if (model.dump) line(card, 'char-card-open', '↗')
+    // The ↗ overlays the top-right corner (has-open pads the headline clear
+    // of it) instead of reserving a flex column — that column would cost
+    // every wrapping line ~24px just to mark tappability.
+    if (model.dump) {
+      card.classList.add('char-card-has-open')
+      line(card, 'char-card-open', '↗')
+    }
     card.addEventListener('click', () => onOpen(model.dump))
     card.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') {
@@ -205,29 +215,53 @@ function sepSpan(): HTMLElement {
   return s
 }
 
-function joinedLine(parent: HTMLElement, cls: string, parts: readonly string[]): HTMLElement {
+// Each fact rides in its own nowrap span (.char-card-fact) so it wraps to
+// the next line whole — "the Shining One", "7 days ago", "0.35-a0" never
+// break mid-fact (NBSP joins can't do this: hyphens stay legal break
+// points). softIdx marks the one part allowed to wrap internally instead.
+function joinedLine(
+  parent: HTMLElement, cls: string, parts: readonly string[], softIdx = -1,
+): HTMLElement {
   const el = line(parent, cls, '')
   parts.forEach((p, i) => {
     if (i > 0) el.append(sepSpan(), '\u200b')
-    el.append(p)
+    if (i === softIdx) {
+      el.append(p)
+      return
+    }
+    const s = document.createElement('span')
+    s.className = 'char-card-fact'
+    s.textContent = p
+    el.append(s)
   })
   return el
 }
 
 // Color-coded per stat (à la dcss-stats) — each label+value pair is one
-// tinted span, separators plain.
+// tinted span, separators plain. Label casing and group order follow the
+// HUD (and the morgue's char block): AC/EV/SH first, then Str/Int/Dex.
+// Each trio is a nowrap group, so a phone line too narrow for the whole
+// row (seen on-device: iOS metrics run wider than desktop WebKit) breaks
+// at the middot into two aligned halves, never mid-group.
 function statsRow(s: NonNullable<CharCardModel['stats']>): HTMLElement {
   const row = document.createElement('div')
   row.className = 'char-card-stats'
-  const pairs: Array<[string, number]> = [
-    ['str', s.str], ['int', s.int], ['dex', s.dex], ['ac', s.ac], ['ev', s.ev], ['sh', s.sh],
+  const groups: Array<Array<[string, number]>> = [
+    [['AC', s.ac], ['EV', s.ev], ['SH', s.sh]],
+    [['Str', s.str], ['Int', s.int], ['Dex', s.dex]],
   ]
-  pairs.forEach(([k, v], i) => {
-    if (i > 0) row.append(i === 3 ? sepSpan() : ' ')
-    const span = document.createElement('span')
-    span.className = `char-card-st-${k}`
-    span.textContent = `${k}:${v}`
-    row.append(span)
+  groups.forEach((pairs, gi) => {
+    if (gi > 0) row.append(sepSpan(), '\u200b')
+    const grp = document.createElement('span')
+    grp.className = 'char-card-fact'
+    pairs.forEach(([label, v], i) => {
+      if (i > 0) grp.append(' ')
+      const span = document.createElement('span')
+      span.className = `char-card-st-${label.toLowerCase()}`
+      span.textContent = `${label}:${v}`
+      grp.append(span)
+    })
+    row.append(grp)
   })
   return row
 }

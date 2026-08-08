@@ -247,16 +247,21 @@ export function buildOfflineLobbyView(
     const name = rec?.name ?? stem
     const who = nameTitle(name, rec?.title)
     // Metadata line: one left-aligned run in the online lobby's own idiom
-    // (lobby.ts buildRow) — identity first, then where and how long. The combo
-    // comes from milestone snapshots, everything else from live player deltas
-    // (offline-state.ts).
+    // (lobby.ts buildRow) — char/XL/place, no turn count (it cost the width
+    // that long god names need; the record still tracks rec.turn). Each fact
+    // is its own flex item so the one variable-width token — the char^god
+    // pair ("MDBe^the Shining One") — can shrink and ellipsize alone,
+    // instead of pushing the place off the row
+    // (see .offline-slot-row .lobby-game-info).
     const parts: string[] = []
-    if (rec?.xl != null) parts.push(`XL:${rec.xl}`)
-    if (rec?.char) parts.push(rec.god ? `${rec.char}^${rec.god}` : rec.char)
-    else if (rec?.god) parts.push(rec.god)
-    if (rec?.place) parts.push(compactPlace(rec.place, rec.depth))
-    if (rec?.turn != null) parts.push(`T:${rec.turn}`)
-    if (parts.length === 0) parts.push('Saved game')
+    if (rec?.xl != null) parts.push(`<span>XL:${rec.xl}</span>`)
+    const combo = rec?.char ? escHtml(rec.char) : ''
+    const god = rec?.god ? escHtml(rec.god) : ''
+    if (combo || god) {
+      parts.push(`<span class="offline-slot-god">${combo && god ? `${combo}^${god}` : combo || god}</span>`)
+    }
+    if (rec?.place) parts.push(`<span>${escHtml(compactPlace(rec.place, rec.depth))}</span>`)
+    if (parts.length === 0) parts.push('<span>Saved game</span>')
 
     const row = document.createElement('div')
     row.className = 'lobby-game-row offline-slot-row'
@@ -269,7 +274,7 @@ export function buildOfflineLobbyView(
         <div class="lobby-game-toprow">
           <span class="lobby-game-user">${escHtml(who)}</span>
         </div>
-        <span class="lobby-game-info">${escHtml(parts.join(' '))}</span>
+        <span class="lobby-game-info">${parts.join('')}</span>
         ${rec?.milestone ? `<span class="offline-slot-milestone">${escHtml(rec.milestone)}</span>` : ''}
       </div>
     `

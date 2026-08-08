@@ -652,8 +652,11 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
-  padding: 0 max(1rem, var(--safe-right))
-           max(1rem, var(--safe-bottom)) max(1rem, var(--safe-left));
+  /* 0.5rem gutter (was 1rem), matching the records list: rows provide
+     their own air, and the reclaimed width goes to the slot rows' info
+     line (char^god beside a doll) and spectate-row fact runs. */
+  padding: 0 max(0.5rem, var(--safe-right))
+           max(1rem, var(--safe-bottom)) max(0.5rem, var(--safe-left));
 }
 
 /* Pinned nav bar shared by the lobby and the crypt: a 36px centered row that
@@ -1021,13 +1024,23 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
 }
 .offline-slot-doll:empty { display: none; }
 
-/* The slot row's meta line carries more than an online row's (identity, place,
-   turn) beside a doll, so it truncates instead of wrapping the row onto a
-   fourth line — the same treatment as the milestone line under it. */
+/* Slot-row meta line: stays one line beside the doll instead of wrapping the
+   row taller. Only the char^god fact may shrink/ellipsize — rationale at
+   offline-lobby.ts buildSlotRow. The 1ch gap equals the mono space the old
+   text join used. */
 .offline-slot-row .lobby-game-info {
+  display: flex;
+  gap: 1ch;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.offline-slot-row .lobby-game-info > span { flex: none; }
+.offline-slot-row .lobby-game-info > .offline-slot-god {
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* Third slot-row line = latest milestone, rendered only when one was
@@ -4688,6 +4701,7 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
    death, border-dim otherwise. Compact form (crypt grid) drops the stats,
    meta, and god-rank lines in the renderer, not here. */
 .char-card {
+  position: relative;
   display: flex;
   align-items: flex-start;
   gap: 0.6rem;
@@ -4726,6 +4740,10 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
    width (thin/hair spaces fall back to the full space advance in this
    stack, so spacing must come from CSS, not characters). */
 .char-card-sep { margin: 0 0.18em; opacity: 0.8; }
+/* One fact = one unbreakable run (joinedLine / statsRow groups): lines wrap
+   at the separators, never inside "the Shining One" / "7 days ago" /
+   "0.35-a0" (hyphens are otherwise legal break points). */
+.char-card-fact { white-space: nowrap; }
 .char-card-result {
   color: var(--text);
   font-size: 0.8rem;
@@ -4750,7 +4768,16 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
 .char-card-st-ev  { color: #b48fe0; }
 .char-card-st-sh  { color: #8fa8b8; }
 .char-card-meta { color: var(--text-dim); font-size: 0.72rem; opacity: 0.85; }
-.char-card-open { flex: none; color: var(--accent); font-size: 0.9rem; padding-top: 0.1rem; }
+/* Corner overlay, not a flex column — rationale in char-card.ts; has-open
+   pads the headline clear of it. */
+.char-card-open {
+  position: absolute;
+  top: 0.55rem;
+  right: 0.6rem;
+  color: var(--accent);
+  font-size: 0.9rem;
+}
+.char-card-has-open .char-card-head { padding-right: 1.1rem; }
 .char-card-compact { padding: 0.45rem 0.55rem; }
 .char-card-compact .char-card-doll { min-width: 48px; min-height: 48px; }
 .char-card-badge {
@@ -4788,6 +4815,14 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   padding-top: 0.5rem;
   max-width: 560px;
   margin: 0 auto;
+}
+/* Give the cards the phone's width: the shell's 1rem gutter is air the
+   cards' own padding already provides. On-device (iOS metrics run wider
+   than desktop WebKit) the reclaimed width is what keeps the stats row
+   and meta facts from wrapping. */
+.records-view .crypt-scroll {
+  padding-left: max(0.5rem, var(--safe-left));
+  padding-right: max(0.5rem, var(--safe-right));
 }
 .records-morgue-title {
   margin-left: auto; /* right edge, opposite ← Back (header has no justify) */

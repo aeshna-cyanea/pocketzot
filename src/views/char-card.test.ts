@@ -254,10 +254,12 @@ describe('renderCharCard', () => {
     expect(result?.textContent).toBe('Quit the game in D:1')
     expect(result?.classList.contains('char-card-kind-quit')).toBe(true)
     expect(card.querySelector('.char-card-god')?.textContent).toBe('Was a Follower of Trog.')
-    expect(card.querySelector('.char-card-stats')?.textContent).toBe('str:21 int:4 dex:9·ac:2 ev:11 sh:0')
-    expect(card.querySelector('.char-card-stats .char-card-st-str')?.textContent).toBe('str:21')
-    expect(card.querySelector('.char-card-meta')?.textContent).toContain('0 pts')
-    expect(card.querySelector('.char-card-meta')?.textContent).toContain('00:00:25')
+    expect(card.querySelector('.char-card-stats')?.textContent?.replace(/\u200b/g, ''))
+      .toBe('AC:2 EV:11 SH:0·Str:21 Int:4 Dex:9')
+    expect(card.querySelector('.char-card-stats .char-card-st-str')?.textContent).toBe('Str:21')
+    const meta = card.querySelector('.char-card-meta')?.textContent
+    expect(meta).toContain('0 pts')
+    expect(meta).toContain('00:00:25')
   })
 
   it('flags wins and keeps the place off the result line', () => {
