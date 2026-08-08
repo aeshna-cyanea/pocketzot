@@ -1,23 +1,26 @@
 .DS_Store
-dev-material/
 node_modules/
+dist/
 coverage/
 .vitest/
+.playwright/
+.playwright-cli/
+.wrangler/
+scratchpad/
+shots/
+dev-material/
+design/
+scripts/
 CLAUDE.md
 BUGS.md
 BUILD.md
 TODO.md
+TODO
 SPECS.md
 dev-credentials.json
-.claude/
-.playwright-cli/
-dist/
-design/
-scripts/
-TODO
 .env*.local
-# Operator-only deployment assets. About / What's new ship in-app from
-# ABOUT.md / CHANGELOG.md; the static .html files are web mirrors.
+.claude/
+functions/
 public/about.html
 public/support.html
 public/changelog.html
@@ -26,12 +29,5 @@ public/social-card.png
 public/shot-*.png
 public/robots.txt
 public/sitemap.xml
-# Offline-play engine artifacts (Phase A build outputs from the sibling
-# pocketzot-engine repo — GPL crawl build products, fetched at deploy time,
-# never committed here).
 public/offline/
 public/gamedata/local/
-functions/
-.playwright/
-scratchpad/
-shots/
