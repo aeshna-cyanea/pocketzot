@@ -5,6 +5,7 @@ export const CRYPT_LINES: readonly string[] = [
   'DISTURB NOT THEIR HALLOWED REPOSE',
   'MEDITATE UPON THY TRIUMPHS',
   'CONTEMPLATE THY TRIBULATIONS',
+  'O TRAVELER, BASK IN THY GLORY',
 ]
 
 // Rolled once per open, never during re-renders.
