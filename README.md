@@ -42,8 +42,8 @@ Progressive Web App.
 - Over 2.8 trillion logos.
 - Installs to your home screen as a PWA.
 
-See [ABOUT.md](ABOUT.md) for more, including the controls model and security
-details (credential handling, session cookies).
+See [ABOUT.md](ABOUT.md) for more, including the controls model and the
+security and privacy notes.
 
 ## Tech
 

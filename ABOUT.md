@@ -2,9 +2,9 @@
 
 PocketZot is an unofficial [DCSS](https://crawl.develz.org) app designed for iOS and Android phones in portrait mode. Play online on public [WebTiles](https://crawl.develz.org/wordpress/howto) servers, or offline with a full build of DCSS that runs entirely on your device.
 
-## DCSS on iOS and Android
+## Getting started
 
-DCSS has no app on the App Store, but you don't need one. PocketZot is a web app: open it in Safari or Chrome, then log in to a WebTiles server. Or play offline, right on the device. Use "Add to Home Screen" to install it like an app on your iPhone or Android phone. iPads and Android tablets work too.
+DCSS has no app on the App Store, but you don't need one: install PocketZot like an app with "Add to Home Screen". Then log in to a WebTiles server and play, or tap "Play offline". iPads and other tablets work too.
 
 ## Features
 
@@ -50,9 +50,9 @@ Offline characters get named save slots, a past-games list with scores and full 
 
 Current stable and trunk DCSS are supported. Versions back to 0.24 generally work; older versions and forks may or may not. In particular, starting a new character on versions before 0.24 doesn't work. Offline play ships its own DCSS build.
 
-## Security
+## Security and privacy
 
-PocketZot is a static web app with no backend of its own. Your browser connects directly to your chosen DCSS server over an encrypted WebSocket (`wss://`). Credentials are sent only in the login message and never stored.
+PocketZot has no accounts of its own. Your browser connects directly to your chosen DCSS server over an encrypted WebSocket, just like the desktop WebTiles client. Credentials go only in the login message and are never stored. Saved logins keep the server's session cookie, not your password. The site records anonymous usage counts.
 
 ## How it was built
 
