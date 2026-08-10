@@ -9,6 +9,11 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-08-09
+
+- Fixed the installed app on iPhone allowing the swipe-from-left-edge
+  gesture during a game.
+
 ## 2026-08-08
 
 - Improved iPad/tablet layouts, including the portrait controls, landscape
