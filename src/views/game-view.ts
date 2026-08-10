@@ -41,6 +41,17 @@ import {
   type OverlayScreenCtx, type UiPushMsg,
 } from './game-overlays'
 
+// Minimal surface of Chromium's CloseWatcher API (absent from TS's DOM lib);
+// used by the Android back handler below. Feature-detected via
+// window.CloseWatcher — never assume presence.
+interface CloseWatcherLike {
+  onclose: (() => void) | null
+  destroy(): void
+}
+declare global {
+  interface Window { CloseWatcher?: new () => CloseWatcherLike }
+}
+
 // MOUSE_MODE_YESNO from DCSS defines.h. Set inside yesno() (prompt.cc:219)
 // for the duration of the y/N read, regardless of whether a menu is open.
 const MOUSE_MODE_YESNO = 8
@@ -725,8 +736,9 @@ export function buildGameView(
   }
 
   // Shared input dispatch for the touch-control buttons AND the Android
-  // back button (popstate below): the client-panel/lens/menu-nav guards
-  // here are what give an injected Esc the same meaning as a tapped one.
+  // back gesture (CloseWatcher below): the client-panel/lens/menu-nav
+  // guards here are what give an injected Esc the same meaning as a
+  // tapped one.
   function dispatchTouchInput(msg: ClientMsg): void {
     if (isHarvesting()) return  // suppress d-pad/macro input during silent harvest
     // The monster panel is a client-only overlay and the touch controls stay
@@ -913,56 +925,68 @@ export function buildGameView(
   }
   window.addEventListener(MONSTER_LIST_MODE_CHANGED_EVENT, onMonsterListModePref)
 
-  // Android back button: behaves exactly like the on-screen Esc button —
-  // same dispatch, same guards, no special cases. Without this, Back
-  // navigates the tab away (or backgrounds the installed app) and tears
-  // down the socket mid-game; users reach for it when a screen won't close
-  // (Android's universal dismiss gesture). A single sentinel history entry
-  // absorbs the pop, re-arms itself, and routes Esc; with nothing open Esc
-  // is a no-op, so Back never exits a running game (deliberate —
-  // accidental exit is the disaster case; the lobby button and home
-  // gesture remain). The chat sheet is deliberately NOT closed by Back:
-  // it's a companion pane carried across screens, and no other Esc path
-  // targets it either. Armed ONLY on Android: pushing any history entry is
-  // what feeds iOS's edge-swipe-back — installed PWAs launch with a
-  // single-entry history, so with no sentinel the gesture is inert, and
-  // with one it plays Safari's uninterceptable stale-snapshot animation
-  // before popstate ever fires (on-device confirmed both ways). Everywhere
-  // but Android this code must not run at all. Same lifecycle as the pref
-  // listeners above: released in exitToLobby, isConnected self-unhook as
-  // the backstop.
-  function onPopState(): void {
+  // Android back (gesture or button) via CloseWatcher: a close request with
+  // no history traversal, so predictive-back has nothing to animate — the
+  // history-sentinel approach this replaced flashed an old-surface slide-in
+  // before popstate could re-arm. Back dismisses the topmost thing (virtual
+  // kbd, chat sheet, then any client overlay via the same Esc dispatch as
+  // the ⎋ button); with nothing open while playing it sends 'S', making the
+  // engine's own "Save game and exit?" prompt the exit offer — back never
+  // silently exits. Spectators keep plain Esc. Android-only twice over: no
+  // other platform has a back contract (iOS edge-swipe stays inert now that
+  // nothing pushes history entries), and on desktop CloseWatcher treats the
+  // physical Esc KEY as the close signal — arming would double-fire every
+  // Esc. One watcher alive at a time, re-armed per close; no CloseWatcher
+  // (pre-126 Chromium, Samsung Internet <28) means native back behavior,
+  // accepted. Destroyed in exitToLobby, isConnected as the backstop.
+  let closeWatcher: CloseWatcherLike | null = null
+  function armCloseWatcher(): void {
+    if (!window.CloseWatcher) return
+    const w = new window.CloseWatcher()
+    w.onclose = onBackRequest
+    closeWatcher = w
+  }
+  function onBackRequest(): void {
     if (!view.isConnected) {
-      window.removeEventListener('popstate', onPopState)
+      closeWatcher?.destroy()
+      closeWatcher = null
       return
     }
-    history.pushState({ pz: 'game' }, '')
-    dispatchTouchInput({ msg: 'key', keycode: 27 })
-  }
-  if (/android/i.test(navigator.userAgent)) {
-    // Reloads and auto-resumes land with the sentinel already on top —
-    // don't stack another (each stale entry would cost one dead Back press
-    // after the view is gone).
-    if ((history.state as { pz?: string } | null)?.pz !== 'game') {
-      history.pushState({ pz: 'game' }, '')
+    armCloseWatcher()  // the fired watcher is spent; re-arm before handling
+    if (touchControls.isKbdOpen()) {
+      // A back-dismissal is manual regardless of who opened the kbd — clear
+      // the auto flag or a later autoCloseKbdIfOurs closes a kbd the user
+      // reopened by hand.
+      kbdAutoOpened = false
+      touchControls.closeKbd()
+      return
     }
-    window.addEventListener('popstate', onPopState)
+    if (chatView.isOpen) {
+      chatView.closeSheet()  // same routing as physical Esc (docKeyHandler)
+      return
+    }
+    // 'S' only when truly idle. uiQuiet covers menus/overlays/CRT/dialogs,
+    // channel-2 prompts, the --more-- pager, and X-mode; on top of that,
+    // the client-only panels and the two inline input rows (text/numpad)
+    // must route Esc too — during a server line-read, 'S' would be typed
+    // INTO the read (or pick item slot S at a slot prompt). The engine
+    // answers that Esc by returning input_mode to COMMAND, which is what
+    // removes the input rows client-side.
+    const idle = uiQuiet() && !monsterPanelOpen && !minimapOpen
+      && !msgLog.querySelector('.game-text-input-row')
+      && numpadInput.style.display === 'none'
+    if (idle && !spectating) dispatchTouchInput({ msg: 'input', text: 'S' })
+    else dispatchTouchInput({ msg: 'key', keycode: 27 })
   }
+  if (/android/i.test(navigator.userAgent)) armCloseWatcher()
 
   // Every deliberate return to the lobby funnels through here so this view's
   // window listeners don't outlive it (each game builds a fresh view).
   function exitToLobby(exit?: GameExit): void {
     window.removeEventListener(RENDER_MODE_CHANGED_EVENT, onRenderModePref)
     window.removeEventListener(MONSTER_LIST_MODE_CHANGED_EVENT, onMonsterListModePref)
-    window.removeEventListener('popstate', onPopState)
-    // Consume the Android back sentinel now that nothing listens: left in
-    // place it costs the post-game lobby one dead Back press (first pop
-    // silently eats the entry, only the second exits). The resulting
-    // popstate lands after the listener is gone, so nothing re-arms; the
-    // next game's dedupe check sees a non-sentinel entry and pushes fresh.
-    if ((history.state as { pz?: string } | null)?.pz === 'game') {
-      history.back()
-    }
+    closeWatcher?.destroy()
+    closeWatcher = null
     touchControls.destroy()
     onLobby(exit)
   }

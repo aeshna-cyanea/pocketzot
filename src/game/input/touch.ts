@@ -60,6 +60,7 @@ export interface TouchControls {
   setCursorMode(on: boolean): void
   openKbd(): void
   closeKbd(): void
+  isKbdOpen(): boolean     // for the Android back handler: back dismisses the kbd first
   refreshSpellTab(): void  // re-render the z tab if it is the active tab
   // Whether the d-pad Shift toggle is engaged, consuming a one-shot (lock
   // stays). For shift-modified taps on surfaces outside this panel, e.g. the
@@ -783,5 +784,8 @@ export function buildTouchControls(send: SendFn, opts: TouchControlsOpts = {}): 
     return on
   }
 
-  return { element: root, enterXMode, exitXMode, setCursorMode, openKbd, closeKbd, refreshSpellTab, consumeShift, destroy }
+  // isKbdOpen also demands rendered geometry: overlay layouts can hide the
+  // whole controls root while a manually-opened kbd stays display:flex —
+  // an invisible kbd must not swallow the back gesture's dismissal.
+  return { element: root, enterXMode, exitXMode, setCursorMode, openKbd, closeKbd, isKbdOpen: () => kbdEl.style.display !== 'none' && kbdEl.getClientRects().length > 0, refreshSpellTab, consumeShift, destroy }
 }
