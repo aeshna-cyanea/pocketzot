@@ -9,6 +9,13 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-08-10
+
+- Reworked the Android back button/gesture. Back now dismisses whatever is
+  topmost: keyboard, chat, or any menu. It also brings up the game's
+  save-and-exit prompt when nothing is open, and returns to the lobby while
+  spectating. I have no Android device to test on. Reports welcome.
+
 ## 2026-08-09
 
 - Fixed the installed app on iPhone allowing the swipe-from-left-edge

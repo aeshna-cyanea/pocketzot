@@ -14,7 +14,7 @@ import { InventoryStore } from '../game/inventory-store'
 import { buildTouchControls } from '../game/input/touch'
 import type { TouchControls } from '../game/input/touch'
 import { openSettings } from './settings-view'
-import { isOverlayOpen } from './overlay'
+import { isOverlayOpen, closeTopOverlay } from './overlay'
 import { handleKeydown, CK_UP, CK_DOWN, CK_PGUP, CK_PGDN, CK_HOME, CK_END } from '../game/input/keyboard'
 import { createShiftToggle } from '../game/input/shift-state'
 import { uiColor, escHtml, dcssToHtml } from '../game/dcss-colors'
@@ -42,14 +42,12 @@ import {
 } from './game-overlays'
 
 // Minimal surface of Chromium's CloseWatcher API (absent from TS's DOM lib);
-// used by the Android back handler below. Feature-detected via
-// window.CloseWatcher — never assume presence.
+// used by the Android back handler below. Feature-detected at the single use
+// site via an inline window cast (house style for nonstandard members) —
+// never assume presence.
 interface CloseWatcherLike {
   onclose: (() => void) | null
   destroy(): void
-}
-declare global {
-  interface Window { CloseWatcher?: new () => CloseWatcherLike }
 }
 
 // MOUSE_MODE_YESNO from DCSS defines.h. Set inside yesno() (prompt.cc:219)
@@ -440,6 +438,14 @@ export function buildGameView(
     touchControls.closeKbd()
   }
 
+  // A user-driven dismissal (the Android back gesture) closes the kbd
+  // regardless of who opened it — and must clear the auto flag, or a later
+  // autoCloseKbdIfOurs closes a kbd the user reopened by hand.
+  function manualCloseKbd(): void {
+    kbdAutoOpened = false
+    touchControls.closeKbd()
+  }
+
   const view = document.createElement('div')
   view.id = 'game-view'
 
@@ -488,10 +494,7 @@ export function buildGameView(
           // (.dialog-body .button in style.css).
           btn.className = 'button'
           btn.textContent = 'Back to lobby'
-          btn.addEventListener('click', () => {
-            conn.send({ msg: 'go_lobby' })
-            exitToLobby()
-          })
+          btn.addEventListener('click', () => leaveToLobby())
           btnRow.appendChild(btn)
           body.append(p, btnRow)
           uiOverlay.appendChild(body)
@@ -805,10 +808,7 @@ export function buildGameView(
     exitBtn.className = 'lobby-btn-ghost'
     exitBtn.setAttribute('aria-label', 'Back to lobby')
     exitBtn.textContent = '← Lobby'
-    exitBtn.addEventListener('click', () => {
-      conn.send({ msg: 'go_lobby' })
-      exitToLobby()
-    })
+    exitBtn.addEventListener('click', () => leaveToLobby())
     const chip = document.createElement('div')
     chip.className = 'lobby-account-chip is-guest'
     chip.innerHTML = `
@@ -932,7 +932,9 @@ export function buildGameView(
   // kbd, chat sheet, then any client overlay via the same Esc dispatch as
   // the ⎋ button); with nothing open while playing it sends 'S', making the
   // engine's own "Save game and exit?" prompt the exit offer — back never
-  // silently exits. Spectators keep plain Esc. Android-only twice over: no
+  // silently exits. Spectators leave for the lobby (the server discards a
+  // watcher's wire input, so an injected Esc would make back a no-op; mirror
+  // the physical-Esc handler instead). Android-only twice over: no
   // other platform has a back contract (iOS edge-swipe stays inert now that
   // nothing pushes history entries), and on desktop CloseWatcher treats the
   // physical Esc KEY as the close signal — arming would double-fire every
@@ -941,44 +943,47 @@ export function buildGameView(
   // accepted. Destroyed in exitToLobby, isConnected as the backstop.
   let closeWatcher: CloseWatcherLike | null = null
   function armCloseWatcher(): void {
-    if (!window.CloseWatcher) return
-    const w = new window.CloseWatcher()
+    // The platform gate lives here (not just at the initial arming) so the
+    // __dcssBack() dev hook can exercise onBackRequest's routing on any
+    // browser without the re-arm minting a real watcher — on desktop the
+    // close signal is the Esc KEY, and a live watcher would double-fire it.
+    if (!/android/i.test(navigator.userAgent)) return
+    const CW = (window as unknown as { CloseWatcher?: new () => CloseWatcherLike }).CloseWatcher
+    if (!CW) return
+    const w = new CW()
     w.onclose = onBackRequest
     closeWatcher = w
   }
   function onBackRequest(): void {
-    if (!view.isConnected) {
-      closeWatcher?.destroy()
-      closeWatcher = null
-      return
-    }
+    // Declining to re-arm IS the self-unhook (the fired watcher is already
+    // spent), same backstop pattern as the pref listeners above.
+    if (!view.isConnected) return
     armCloseWatcher()  // the fired watcher is spent; re-arm before handling
+    // Body-mounted overlays (Settings, docs, crypt) sit over everything and
+    // are invisible to uiQuiet — dismiss the topmost, like their Escape
+    // listener does (and like docKeyHandler, which checks them first).
+    if (closeTopOverlay()) return
     if (touchControls.isKbdOpen()) {
-      // A back-dismissal is manual regardless of who opened the kbd — clear
-      // the auto flag or a later autoCloseKbdIfOurs closes a kbd the user
-      // reopened by hand.
-      kbdAutoOpened = false
-      touchControls.closeKbd()
+      manualCloseKbd()
       return
     }
     if (chatView.isOpen) {
       chatView.closeSheet()  // same routing as physical Esc (docKeyHandler)
       return
     }
-    // 'S' only when truly idle. uiQuiet covers menus/overlays/CRT/dialogs,
-    // channel-2 prompts, the --more-- pager, and X-mode; on top of that,
-    // the client-only panels and the two inline input rows (text/numpad)
-    // must route Esc too — during a server line-read, 'S' would be typed
-    // INTO the read (or pick item slot S at a slot prompt). The engine
-    // answers that Esc by returning input_mode to COMMAND, which is what
-    // removes the input rows client-side.
-    const idle = uiQuiet() && !monsterPanelOpen && !minimapOpen
-      && !msgLog.querySelector('.game-text-input-row')
-      && numpadInput.style.display === 'none'
-    if (idle && !spectating) dispatchTouchInput({ msg: 'input', text: 'S' })
+    if (spectating) {
+      // The server discards a watcher's game input, so an injected Esc
+      // would make back a no-op; leave client-side like physical Esc does.
+      leaveToLobby()
+      return
+    }
+    // With everything truly idle, 'S' makes the engine's own "Save game and
+    // exit?" prompt the exit offer; anything transient gets the canceling
+    // Esc instead (see idleAtCommandPrompt for the full inventory).
+    if (idleAtCommandPrompt()) dispatchTouchInput({ msg: 'input', text: 'S' })
     else dispatchTouchInput({ msg: 'key', keycode: 27 })
   }
-  if (/android/i.test(navigator.userAgent)) armCloseWatcher()
+  armCloseWatcher()  // no-op off Android (gate inside)
 
   // Every deliberate return to the lobby funnels through here so this view's
   // window listeners don't outlive it (each game builds a fresh view).
@@ -989,6 +994,14 @@ export function buildGameView(
     closeWatcher = null
     touchControls.destroy()
     onLobby(exit)
+  }
+
+  // Deliberate user-driven leave: tell the server, then tear down locally.
+  // Shared by every "back to lobby" affordance (creation-guard button,
+  // spectator bar, spectator Esc/back) so the leave sequence can't drift.
+  function leaveToLobby(): void {
+    conn.send({ msg: 'go_lobby' })
+    exitToLobby()
   }
 
   // Save the player's current doll as a login-screen avatar recipe when their
@@ -1080,6 +1093,12 @@ export function buildGameView(
     // whole strip. Toggles; pass true/false to force.
     ;(window as unknown as { __dcssMsgPill: (on?: boolean) => void }).__dcssMsgPill =
       (on) => { view.classList.toggle('msg-pill', on) }
+    // __dcssBack() — fire the Android back-gesture handler (onBackRequest)
+    // directly, so every routing branch is drivable in Playwright on any
+    // engine; only the CloseWatcher delivery itself needs a real device.
+    // armCloseWatcher's platform gate keeps the re-arm inert off Android.
+    ;(window as unknown as { __dcssBack: () => void }).__dcssBack =
+      () => onBackRequest()
     // __dcssMinimap() — open the level minimap overlay (same as tapping the
     // HUD place chip), for driving with __dcssSimulateIn'd map frames.
     ;(window as unknown as { __dcssMinimap: () => void }).__dcssMinimap =
@@ -1152,8 +1171,7 @@ export function buildGameView(
     if (spectating) {
       if (e.key === 'Escape') {
         e.preventDefault()
-        conn.send({ msg: 'go_lobby' })
-        exitToLobby()
+        leaveToLobby()
       }
       return
     }
@@ -2837,6 +2855,23 @@ export function buildGameView(
   function uiQuiet(): boolean {
     return uiStack.length === 0 && !crtActive && !dialogActive && !activeMenu
       && !inXMode && activePromptEl === null && moreBtn.style.display === 'none'
+  }
+
+  // Truly idle at the command prompt — safe to inject a keystroke that must
+  // be read as a command (the Android back handler's 'S'). On top of
+  // commandChannelIdle (uiQuiet + harvest phase), input_mode must be COMMAND
+  // (1) — targeting and yesno reads are modes of their own that uiQuiet
+  // can't see (same guard as castSpellLetter's), where Esc is the cancel —
+  // and the client-only panels and the two inline input rows (text/numpad)
+  // must route Esc too: during a server line-read, an injected letter would
+  // be typed INTO the read (or pick an item slot at a slot prompt). The
+  // engine answers that Esc by returning input_mode to COMMAND, which is
+  // what removes the input rows client-side.
+  function idleAtCommandPrompt(): boolean {
+    return commandChannelIdle() && currentInputMode === 1
+      && !monsterPanelOpen && !minimapOpen
+      && !msgLog.querySelector('.game-text-input-row')
+      && numpadInput.style.display === 'none'
   }
 
   // Fill the menu's `--more--` footer, hiding it entirely when the text is

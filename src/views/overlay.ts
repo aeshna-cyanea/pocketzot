@@ -9,7 +9,17 @@
 const stack: Array<() => void> = []
 
 function onKey(e: KeyboardEvent): void {
-  if (e.key === 'Escape') stack[stack.length - 1]?.()
+  if (e.key === 'Escape') closeTopOverlay()
+}
+
+// Close the topmost overlay — the same one the Escape listener targets.
+// Returns whether one was open, so a caller routing a platform close signal
+// (the Android back gesture) can stop once the overlay consumed it.
+export function closeTopOverlay(): boolean {
+  const top = stack[stack.length - 1]
+  if (!top) return false
+  top()
+  return true
 }
 
 // Whether any body-mounted overlay is currently open. Surfaces underneath (the
