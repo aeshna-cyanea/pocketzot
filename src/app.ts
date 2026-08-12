@@ -96,7 +96,14 @@ function showOfflineLobby(exit?: GameExit): void {
 // header). Exit returns to the offline lobby, which shows the same
 // end-of-game dialog as the online one.
 async function showOfflineGame(name: string): Promise<void> {
-  const { bootOffline } = await import('./offline/boot')
+  let bootMod: typeof import('./offline/boot')
+  try {
+    bootMod = await import('./offline/boot')
+  } catch (e) {
+    showFatal(`Offline engine failed to load: ${String(e)}`)
+    return
+  }
+  const { bootOffline } = bootMod
   const params = new URLSearchParams(location.search)
   const boot = bootOffline(params, name)
   // Fixture replays get no gameId, keeping avatar/crypt writes disabled —
@@ -280,6 +287,16 @@ function platformSuspendsSockets(): boolean {
 function setView(el: HTMLElement): void {
   root.textContent = ''
   root.appendChild(el)
+}
+
+// Dynamic-import failure surface: a stale SW start doc serving rotated chunk
+// hashes after a deploy makes lazy chunks 404 — that must render something,
+// not leave a blank #app with a silent unhandled rejection.
+function showFatal(text: string): void {
+  const el = document.createElement('pre')
+  el.style.cssText = 'padding:16px;color:#eeeeec;white-space:pre-wrap'
+  el.textContent = text
+  setView(el)
 }
 
 export { state }
