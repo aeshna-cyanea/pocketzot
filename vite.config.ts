@@ -86,8 +86,37 @@ function swPrecache(): Plugin {
   }
 }
 
+// Perf-harness recordings live in <root>/recordings/ (gitignored) — captured
+// session content (usernames, chat, message log) that must never ride a
+// deploy. Keeping them outside public/ means no build output can ever
+// contain them; this dev-server-only middleware is what makes ?replay=
+// able to fetch them at /recordings/<name> during development.
+function serveRecordings(): Plugin {
+  return {
+    name: 'pz-serve-recordings',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use('/recordings', (req, res, next) => {
+        const name = decodeURIComponent((req.url ?? '').replace(/^\//, '').split('?')[0])
+        if (!/^[\w.-]+\.json$/.test(name)) return next()
+        // One read, one failure mode: anything unreadable (absent, a
+        // directory named <name>.json, races) falls through to the next
+        // middleware as a plain 404 rather than crashing the dev server.
+        let body: Buffer
+        try {
+          body = readFileSync(resolve(projectRoot, 'recordings', name))
+        } catch {
+          return next()
+        }
+        res.setHeader('Content-Type', 'application/json')
+        res.end(body)
+      })
+    },
+  }
+}
+
 export default defineConfig({
-  plugins: [swPrecache()],
+  plugins: [swPrecache(), serveRecordings()],
   build: {
     sourcemap: false,
   },

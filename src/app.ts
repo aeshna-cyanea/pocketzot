@@ -51,6 +51,19 @@ export function initApp(appEl: HTMLElement): void {
   // lobby and mounts the game view directly: fixtures have no save slot, and
   // the replay flows drive rendering, not slot management.
   const params = new URLSearchParams(location.search)
+  // Perf harness: ?replay=<recording> replays a __dcssRec capture through the
+  // real game view with instrumentation (src/perf/replay.ts) — a lab bench,
+  // not a session: no login, no resume, no server. Checked first so a stale
+  // resume record can't hijack a profiling run. DEV-only (recordings are
+  // only served by the dev server); the DEV gate also keeps the lazy replay
+  // chunk out of prod builds entirely.
+  if (import.meta.env.DEV && params.get('replay')) {
+    void (async () => {
+      const { buildReplayView } = await import('./perf/replay')
+      setView(await buildReplayView(params))
+    })().catch((e: unknown) => showFatal(`Replay failed: ${e instanceof Error ? e.message : String(e)}`))
+    return
+  }
   if (params.has('offline')) {
     if (params.get('engine') === 'fake') void showOfflineGame('local')
     else showOfflineLobby()
