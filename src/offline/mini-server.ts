@@ -146,8 +146,8 @@ export function createMiniServer(
   const handleOutput = (chunk: string): void => {
     // Socket framing: concatenated JSON objects, one per "\n"-terminated line.
     // Dispatch the whole chunk synchronously so a turn's player+map land in
-    // one task and coalesce in the game view's scheduleRender, same as a
-    // batched WS frame.
+    // one task, same as a batched WS frame (the view renders synchronously
+    // per message, so this bounds the work to one task, not one paint).
     for (const line of chunk.split('\n')) {
       if (line === '') continue
       const starred = line.startsWith('*')

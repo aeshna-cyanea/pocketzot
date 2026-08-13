@@ -159,41 +159,16 @@ export function buildGameView(
   // where the loader lands when it wasn't forwarded from the lobby.
   if (import.meta.env.DEV && loader) (window as unknown as { __dcssLoader: TileLoader }).__dcssLoader = loader
   let mapView: MapView | TileMapView = new MapView(store)
-  // Coalesced map rendering. A turn's `player` and `map` (plus any animation
-  // frames) usually arrive in one WS batch and dispatch within one task;
-  // rendering inside each handler meant the player-pan fullRender painted the
-  // *stale* store at the new center, then the map merge rendered again — all
-  // before the browser's next paint, so the first pass was pure wasted work.
-  // Handlers now schedule instead: store mutations stay synchronous, and one
-  // microtask flush (after the whole batch) paints the final state once. A
-  // pending full render subsumes any queued dirty set.
-  let pendingDirty: Set<string> | null = null
-  let pendingFull = false
-  let renderQueued = false
-  const scheduleRender = (dirty?: Set<string>): void => {
-    if (!dirty) {
-      pendingFull = true
-      pendingDirty = null
-    } else if (!pendingFull) {
-      // First dirty set of the flush window is adopted as-is (merge() returns
-      // a fresh Set per message); later ones union into it.
-      if (pendingDirty) for (const k of dirty) pendingDirty.add(k)
-      else pendingDirty = dirty
-    }
-    if (renderQueued) return
-    renderQueued = true
-    queueMicrotask(() => {
-      renderQueued = false
-      const full = pendingFull
-      const dirtySet = pendingDirty
-      pendingFull = false
-      pendingDirty = null
-      // Read `mapView` at flush time: a render-mode swap between schedule and
-      // flush should paint the live view, not the discarded one.
-      if (full) mapView.fullRender()
-      else if (dirtySet) mapView.render(dirtySet)
-    })
-  }
+  // Map rendering is synchronous per message, mirroring the reference client
+  // (display.js handle_map_message): the view center moves ONLY on map.vgrdc
+  // — never on player.pos — and the pan-blit + dirty repaint happen right in
+  // the map handler, before the next message dispatches. That ordering is
+  // what makes later same-batch paints (cursor, player HP stamp) safe by
+  // construction: nothing ever paints against a canvas whose origin is about
+  // to move. The earlier microtask-coalescing flush existed only to absorb
+  // the double paint caused by panning on player.pos; with vgrdc-only
+  // panning there is nothing to coalesce (multi-map batches are ~1% of
+  // traffic, and per-paint cost is sub-millisecond on the blit path).
   // Running HP/MP snapshot (merged across player deltas) for the tile view's
   // under-tile mini-bars. Kept here so a render-mode swap can seed the freshly
   // created view, which otherwise starts at zero until the next player message.
@@ -856,9 +831,23 @@ export function buildGameView(
   // mapView.fitToContainer() explicitly. That's redundant with the observer
   // but resolves the layout one frame earlier — without it there'd be a
   // brief flash at the old size before the observer's callback runs.
+  // Coalesced "re-fit next frame", modelled on scheduleMinimapRepaint below.
+  // Several triggers inside one frame (log growth + HUD change + keyboard,
+  // or an X-mode toggle landing on the same frame as an observer fire) used
+  // to schedule that many rAF re-fits, and fitToContainer is the most
+  // expensive thing on this path.
+  let fitQueued = false
+  function scheduleFit(): void {
+    if (fitQueued) return
+    fitQueued = true
+    requestAnimationFrame(() => {
+      fitQueued = false
+      mapView.fitToContainer()
+    })
+  }
   const fontScaleObserver = new ResizeObserver(() => {
     if (!hudRevealed) return
-    requestAnimationFrame(() => mapView.fitToContainer())
+    scheduleFit()
   })
   fontScaleObserver.observe(mapView.element)
 
@@ -950,6 +939,12 @@ export function buildGameView(
     if (!/android/i.test(navigator.userAgent)) return
     const CW = (window as unknown as { CloseWatcher?: new () => CloseWatcherLike }).CloseWatcher
     if (!CW) return
+    // Destroy any live predecessor first: after a real close it's spent and
+    // this is a no-op, but a direct __dcssBack() call re-arms while the old
+    // watcher is still alive — without this, each call would mint one more
+    // watcher in the same close-watcher group, and a single real back
+    // gesture would then fire onBackRequest once per watcher.
+    closeWatcher?.destroy()
     const w = new CW()
     w.onclose = onBackRequest
     closeWatcher = w
@@ -1315,16 +1310,22 @@ export function buildGameView(
         mapSeen = true
         disarmCreationGuard()
         if (msg.clear) store.clear()
-        // vgrdc is resent on every map message even when it equals the
-        // current view center; setViewCenter returns true only on a real
-        // pan, so we can keep the dirty-render path live in steady state.
+        // vgrdc is the server's complete view-centering signal (present on a
+        // map message whenever it matters — roughly half of them in
+        // practice); setViewCenter returns true only on a real pan. The
+        // player handler never pans — reference parity (its player.js has no
+        // view-center writes at all).
         const panned = msg.vgrdc ? mapView.setViewCenter(msg.vgrdc) : false
         // Sticky like the reference's inv_mons_msg: only a present key
         // changes it ('' clears); store.clear() above also resets it.
         if (msg.invis_mon_desc !== undefined) store.invisMonDesc = msg.invis_mon_desc
         const dirty = store.merge(msg.cells ?? [])
-        if (msg.clear || panned) scheduleRender()
-        else scheduleRender(dirty)
+        // Render now, synchronously (reference display.js order, except we
+        // merge before panning so the blit's exposed strips paint this turn's
+        // cells instead of last turn's — panRender dedups strip∪dirty).
+        if (msg.clear) mapView.fullRender()          // store wiped — hard
+        else if (panned) mapView.panRender(dirty)    // origin moved — blit
+        else mapView.render(dirty)
         monsterListView.update(store.getMonsters())
         if (monsterPanelOpen) monsterPanel.update(store.getMonsters())
         scheduleMinimapRepaint()
@@ -1345,12 +1346,10 @@ export function buildGameView(
         tryResolveBackground() // name/species may have just arrived; see welcomeLine
         if (msg.pos) {
           store.playerPos = { x: msg.pos.x, y: msg.pos.y }
-          // setViewCenter reports whether the center actually moved; reuse that
-          // instead of recomputing the prev/current comparison here. (Same gate
-          // as the 'map' case — full redraw only on a real pan.) Scheduled, not
-          // rendered: the same batch's `map` message merges this turn's deltas
-          // before the flush, so the full render paints the fresh store once.
-          if (mapView.setViewCenter(store.playerPos)) scheduleRender()
+          // Deliberately NO view-center change here: the view pans only on
+          // map.vgrdc, like the reference client (its player.js never touches
+          // the center). vgrdc arrives on the same turn's map message, whose
+          // handler pans and repaints synchronously before anything else runs.
           scheduleMinimapRepaint()
         }
         // Feed HP/MP to the renderer (tile mode draws under-tile mini-bars).
@@ -1919,7 +1918,7 @@ export function buildGameView(
     // Zoom mode is left untouched: tiles already had zoom-on (forced at
     // construction by setRenderMode), and the scale shrinks each cell by
     // X_MODE_SCALE so the freed HUD/log area fills with more cells.
-    requestAnimationFrame(() => mapView.fitToContainer())
+    scheduleFit()
     // Stash-search activation opens an X-mode preview with the destination
     // cursor: swap the results menu out for the full map + d-pad so the
     // player can see where they'd travel and confirm with Enter. Restored
@@ -1942,7 +1941,7 @@ export function buildGameView(
     xdescReset()
     touchControls.exitXMode()
     mapView.setFontScale(1.0)
-    requestAnimationFrame(() => mapView.fitToContainer())
+    scheduleFit()
     renderSpellRail()  // restore the quick-cast rail hidden by enterXMode
     if (activeMenu?.tag === 'stash') {
       // Returning to the stash results menu: keep HUD/msglog hidden (they were
@@ -3230,10 +3229,9 @@ export function buildGameView(
     )
   }
 
-  // Message-driven repaints coalesce through rAF, mirroring the main map's
-  // scheduleRender: a movement turn delivers player + map in one batch, and
-  // without this each message would repaint (and restyle) the lens
-  // separately.
+  // Message-driven repaints coalesce through rAF: a movement turn delivers
+  // player + map in one batch, and without this each message would repaint
+  // (and restyle) the lens separately.
   let minimapRepaintQueued = false
   function scheduleMinimapRepaint(): void {
     if (!minimapOpen || minimapRepaintQueued) return

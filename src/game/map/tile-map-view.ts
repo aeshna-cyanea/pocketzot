@@ -357,6 +357,15 @@ export class TileMapView {
   // The center is `centerCol`/`centerRow`, not the middle cell — see the fields.
   private get offX(): number { return this.viewCenter.x - this.centerCol }
   private get offY(): number { return this.viewCenter.y - this.centerRow }
+  // Viewport origin as of the last complete paint (fullRender sweep or
+  // panRender blit) — panRender's blit is valid only relative to this.
+  // Stamped after painting, so canvas reconfiguration (setViewportSize wipes
+  // the backing store, then fullRender repaints and re-stamps) can never
+  // leave a stale origin trusted. The origin only ever moves inside the map
+  // handler, which pans and repaints synchronously before any other paint
+  // can run (reference-parity — see the render note in game-view.ts), so no
+  // paint ever observes a canvas whose origin differs from this.
+  private lastPaintOff: { x: number; y: number } | null = null
   private inView(col: number, row: number): boolean {
     return col >= 0 && col < this.viewportW && row >= 0 && row < this.viewportH
   }
@@ -368,46 +377,58 @@ export class TileMapView {
   }
 
   render(dirty?: Set<string>): void {
-    const offX = this.offX
-    const offY = this.offY
     if (dirty) {
-      // Repaint the changed cells PLUS a one-cell halo around each. Sprites
-      // routinely paint outside their own 32×32 cell — tall monster tiles spill
-      // upward, status/MDAM marks and icons sit at the top edge and fan left,
-      // items/overlays carry sub-cell offsets — so clearing only the changed
-      // cell leaves that spill orphaned in an unchanged neighbour (a stale
-      // sliver at the neighbour's edge). The full sweep avoids this by clearing
-      // the whole canvas first; here we instead clear+redraw the neighbourhood.
-      // (ASCII MapView needs no halo — each cell is its own DOM span, no bleed.)
-      //
-      // Collected into a deduped screen-cell set keyed row*W+col, then painted
-      // in ascending (row-major) order so a cell's upward spill lands on the
-      // already-painted cell above and isn't wiped by a later clear — the exact
-      // draw order fullRender uses, just restricted to the touched region.
       const cells = new Set<number>()
-      for (const key of dirty) {
-        const { x: mx, y: my } = parseCellKey(key)
-        const c0 = mx - offX
-        const r0 = my - offY
-        for (let dr = -1; dr <= 1; dr++) {
-          for (let dc = -1; dc <= 1; dc++) {
-            const col = c0 + dc
-            const row = r0 + dr
-            if (this.inView(col, row)) cells.add(row * this.viewportW + col)
-          }
-        }
-      }
-      for (const tag of [...cells].sort((a, b) => a - b)) {
-        const col = tag % this.viewportW
-        const row = (tag - col) / this.viewportW
-        this.paintCell(col, row, offX + col, offY + row)
-      }
+      this.addDirtyTags(dirty, cells)
+      this.paintTags(cells)
       return
     }
+    const offX = this.offX
+    const offY = this.offY
     for (let row = 0; row < this.viewportH; row++) {
       for (let col = 0; col < this.viewportW; col++) {
         this.paintCell(col, row, offX + col, offY + row)
       }
+    }
+  }
+
+  // Collect the changed cells PLUS a one-cell halo around each, as screen
+  // tags (row*W+col). Sprites routinely paint outside their own 32×32 cell —
+  // tall monster tiles spill upward, status/MDAM marks and icons sit at the
+  // top edge and fan left, items/overlays carry sub-cell offsets — so
+  // clearing only the changed cell leaves that spill orphaned in an
+  // unchanged neighbour (a stale sliver at the neighbour's edge). The full
+  // sweep avoids this by clearing the whole canvas first; the tag paths
+  // instead clear+redraw the neighbourhood. (ASCII MapView needs no halo —
+  // each cell is its own DOM span, no bleed.)
+  private addDirtyTags(dirty: Set<string>, cells: Set<number>): void {
+    const offX = this.offX
+    const offY = this.offY
+    for (const key of dirty) {
+      const { x: mx, y: my } = parseCellKey(key)
+      const c0 = mx - offX
+      const r0 = my - offY
+      for (let dr = -1; dr <= 1; dr++) {
+        for (let dc = -1; dc <= 1; dc++) {
+          const col = c0 + dc
+          const row = r0 + dr
+          if (this.inView(col, row)) cells.add(row * this.viewportW + col)
+        }
+      }
+    }
+  }
+
+  // Paint a deduped screen-tag set in ascending (row-major) order so a
+  // cell's upward spill lands on the already-painted cell above and isn't
+  // wiped by a later clear — the exact draw order fullRender uses, just
+  // restricted to the touched region.
+  private paintTags(cells: Set<number>): void {
+    const offX = this.offX
+    const offY = this.offY
+    for (const tag of [...cells].sort((a, b) => a - b)) {
+      const col = tag % this.viewportW
+      const row = (tag - col) / this.viewportW
+      this.paintCell(col, row, offX + col, offY + row)
     }
   }
 
@@ -483,6 +504,121 @@ export class TileMapView {
     this.ctx.fillStyle = '#000'
     this.ctx.fillRect(0, 0, this.viewportW * ATLAS_CELL, this.viewportH * ATLAS_CELL)
     this.render()
+    this.lastPaintOff = { x: this.offX, y: this.offY }
+  }
+
+  // Pan-only repaint: the viewport origin moved but cell content is
+  // otherwise unchanged, except `dirty` (this turn's merged deltas). The
+  // backing store is a fixed ATLAS_CELL per cell regardless of display
+  // scale, so a pan is an exact integer-pixel shift: blit the overlapping
+  // region onto itself, repaint exactly the exposed edge strips (plus dirty
+  // and deferred cells), then regenerate the seam spill (see paintSeamSpill).
+  // The invariant is sweep-equivalence: the resulting pixels match what
+  // fullRender would produce. A movement step used to cost the full W×H
+  // sweep; now it costs |strip| + |dirty| cells. Falls back to fullRender
+  // when there is no trusted previous origin, when the shift exceeds the
+  // viewport (teleport, stairs), or when the repaint set has grown to cover
+  // most of the viewport anyway.
+  panRender(dirty?: Set<string>): void {
+    const last = this.lastPaintOff
+    const dx = last ? this.offX - last.x : 0
+    const dy = last ? this.offY - last.y : 0
+    if (!last || Math.abs(dx) >= this.viewportW || Math.abs(dy) >= this.viewportH) {
+      this.fullRender()
+      return
+    }
+    if (dx === 0 && dy === 0) {
+      if (dirty?.size) this.render(dirty)
+      return
+    }
+    const w = this.viewportW
+    const h = this.viewportH
+
+    // Exactly the exposed strips — the cells the blit brings no pixels for.
+    // Deliberately NOT widened into the blitted region: a repaint clears the
+    // cell's box first, which would wipe spill blitted into it from deeper
+    // neighbours that nothing repaints (the seam pass below regenerates the
+    // one kind of spill genuinely missing from the copy). Built before the
+    // blit so an oversized repaint set can skip it entirely.
+    const cells = new Set<number>()
+    const colFrom = dx > 0 ? w - dx : 0
+    const colTo = dx > 0 ? w : -dx // dx ≥ 0 makes this ≤ colFrom: empty
+    for (let col = colFrom; col < colTo; col++) {
+      for (let row = 0; row < h; row++) cells.add(row * w + col)
+    }
+    const rowFrom = dy > 0 ? h - dy : 0
+    const rowTo = dy > 0 ? h : -dy
+    for (let row = rowFrom; row < rowTo; row++) {
+      for (let col = 0; col < w; col++) cells.add(row * w + col)
+    }
+    if (dirty) this.addDirtyTags(dirty, cells)
+    // When this turn's deltas have grown the repaint set to most of the
+    // viewport (level change, magic mapping — dirty sets in the thousands),
+    // the blit's pixels are almost all overdrawn anyway, so the self-copy,
+    // the tag sort and the seam pass are pure overhead on top of what is
+    // already a full sweep. fullRender is sweep-equivalent by definition.
+    if (cells.size * 10 >= w * h * 7) {
+      this.fullRender()
+      return
+    }
+    const cw = (w - Math.abs(dx)) * ATLAS_CELL
+    const ch = (h - Math.abs(dy)) * ATLAS_CELL
+    // Per the 2D canvas spec, drawing a canvas onto itself behaves as if the
+    // source were snapshotted first — an overlapping self-copy is safe.
+    this.ctx.drawImage(this.canvas,
+      Math.max(0, dx) * ATLAS_CELL, Math.max(0, dy) * ATLAS_CELL, cw, ch,
+      Math.max(0, -dx) * ATLAS_CELL, Math.max(0, -dy) * ATLAS_CELL, cw, ch)
+    this.lastPaintOff = { x: this.offX, y: this.offY }
+
+    this.paintTags(cells)
+    this.paintSeamSpill(dx, dy, cells)
+  }
+
+  // Regenerate seam spill after a north/west pan. Sprites spill up/left
+  // (tall tiles, left-fanning status icons), so the first blitted row/column
+  // had spill that was clipped off-canvas before the pan and is missing from
+  // the copied pixels — the freshly painted strip next to it would otherwise
+  // show truncated monster heads. Redraw those seam cells with the context
+  // CLIPPED to the strip region: only the spill pixels land, and the seam
+  // cells' own blitted boxes are never cleared (a box clear would wipe spill
+  // blitted into them from one row/column deeper — the accumulating-sliver
+  // bug this replaces; widening the cleared seam only moves that boundary).
+  // South/east pans need no seam pass: full-sweep row-major paint order
+  // means down/right spill is always overdrawn by the later neighbour's
+  // clear, so it is never visible in the sweep this path must match.
+  // `painted` = tags already repainted this pan (strips + dirty + deferred);
+  // their unclipped paint already emitted spill, so skip them here or
+  // translucent spill would composite twice and read darker.
+  private paintSeamSpill(dx: number, dy: number, painted: Set<number>): void {
+    if (dx >= 0 && dy >= 0) return
+    const w = this.viewportW
+    const h = this.viewportH
+    const offX = this.offX
+    const offY = this.offY
+    this.ctx.save()
+    try {
+      this.ctx.beginPath()
+      if (dy < 0) this.ctx.rect(0, 0, w * ATLAS_CELL, -dy * ATLAS_CELL)
+      if (dx < 0) this.ctx.rect(0, 0, -dx * ATLAS_CELL, h * ATLAS_CELL)
+      this.ctx.clip()
+      if (dy < 0) {
+        const row = -dy
+        for (let col = 0; col < w; col++) {
+          if (painted.has(row * w + col)) continue
+          this.paintCell(col, row, offX + col, offY + row)
+        }
+      }
+      if (dx < 0) {
+        const col = -dx
+        for (let row = 0; row < h; row++) {
+          if (dy < 0 && row === -dy) continue // corner cell drawn above
+          if (painted.has(row * w + col)) continue
+          this.paintCell(col, row, offX + col, offY + row)
+        }
+      }
+    } finally {
+      this.ctx.restore()
+    }
   }
 
   setCursor(loc?: { x: number; y: number }): void {

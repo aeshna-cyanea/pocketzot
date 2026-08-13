@@ -143,16 +143,16 @@ describe('map message → store merge', () => {
     expect(store.get(5, 6)).toBeUndefined()
   })
 
-  it('coalesces a batch\'s renders into one microtask flush', async () => {
+  it('renders synchronously in the map handler (reference parity)', () => {
     const h = setup()
-    // player + map for the same turn, dispatched in one task like a WS batch:
-    // the handlers merge synchronously but only schedule the paint.
+    // player + map for the same turn, dispatched in one task like a WS batch.
+    // The player handler never pans or paints the map; the map handler pans
+    // (vgrdc) and paints before returning — a later same-batch message can
+    // never observe an unpainted origin change.
     h.dispatch({ msg: 'player', pos: { x: 5, y: 6 } })
-    h.dispatch({ msg: 'map', cells: [{ x: 5, y: 6, g: '@', col: 7 }] })
     const grid = h.view.querySelector<HTMLElement>('#map-grid')!
     expect(grid.textContent).not.toContain('@')
-    // The flush microtask was queued before this await, so one hop suffices.
-    await Promise.resolve()
+    h.dispatch({ msg: 'map', vgrdc: { x: 5, y: 6 }, cells: [{ x: 5, y: 6, g: '@', col: 7 }] })
     expect(grid.textContent).toContain('@')
   })
 })

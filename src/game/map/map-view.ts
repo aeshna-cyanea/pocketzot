@@ -33,6 +33,12 @@ export class MapView {
   private viewCenter = { x: 0, y: 0 }
   private cursorLoc: { x: number; y: number } | null = null
   private cursorSpan: HTMLSpanElement | null = null
+  // Char-width-per-font-size-px ratio from the probe measurement, cached per
+  // font (a pure font metric — invariant across container resizes).
+  // Re-measuring it every fit was this method's dominant cost: the probe
+  // append/measure/remove forces a synchronous layout of the whole page.
+  private charWPerFs = 0
+  private probeKey = ''
 
   constructor(store: MapStore) {
     this.store = store
@@ -89,25 +95,30 @@ export class MapView {
     const rect = this.container.getBoundingClientRect()
     if (rect.width === 0 || rect.height === 0) return
 
-    // Reset inline font-size so each run measures against the CSS default.
-    // Without this, prior runs' inline fontSize feeds back into the probe
-    // measurement; sub-pixel rounding of `width: 1ch` differs across font
-    // sizes (notably in Safari), producing a cycle where the computed font
-    // shifts between two or three values across successive resize ticks.
-    this.container.style.fontSize = ''
-
     const cs = getComputedStyle(this.container)
-    const baseFs = parseFloat(cs.fontSize)
-    if (!baseFs) return
 
     // Measure char width with a long probe to amortize sub-pixel rounding.
     // (#map-grid span has width:1ch, so we use a div to escape that rule.)
-    const probe = document.createElement('div')
-    probe.textContent = '0'.repeat(100)
-    probe.style.cssText = 'visibility:hidden;position:absolute;white-space:pre;width:max-content'
-    this.container.appendChild(probe)
-    const charWPerFs = Math.max(0.1, probe.getBoundingClientRect().width / 100) / baseFs
-    probe.remove()
+    // The probe carries an explicit font-size so the ratio is independent of
+    // the container's current inline size — that both makes it cacheable per
+    // font family and closes the feedback loop the old measure-at-inherited-
+    // size approach had (sub-pixel rounding of `width:1ch` differs across
+    // font sizes, notably in Safari, so a probe inheriting the previous fit's
+    // font could oscillate between two or three values across resize ticks).
+    // Cache key covers every inherited property the probe's width depends
+    // on, not just the family — dropping bold or adding letter-spacing on
+    // #map-grid must invalidate the ratio too.
+    const probeKey = `${cs.fontFamily}|${cs.fontWeight}|${cs.fontStretch}|${cs.letterSpacing}`
+    if (this.probeKey !== probeKey) {
+      const probe = document.createElement('div')
+      probe.textContent = '0'.repeat(100)
+      probe.style.cssText = 'visibility:hidden;position:absolute;white-space:pre;width:max-content;font-size:16px'
+      this.container.appendChild(probe)
+      this.charWPerFs = Math.max(0.1, probe.getBoundingClientRect().width / 100) / 16
+      probe.remove()
+      this.probeKey = probeKey
+    }
+    const charWPerFs = this.charWPerFs
 
     // Read the line-height multiplier from the CSS custom property directly.
     // getComputedStyle().lineHeight returns the resolved pixel value in Chrome
@@ -153,7 +164,8 @@ export class MapView {
     const heightFs = availH / (minH * lineHPerFs)
     const maxFs = isZoom ? 64 : 36
     const fontSize = Math.max(10, Math.min(maxFs, Math.min(widthFs, heightFs))) * this.fontScale
-    this.container.style.fontSize = fontSize + 'px'
+    const fontSizePx = fontSize + 'px'
+    if (this.container.style.fontSize !== fontSizePx) this.container.style.fontSize = fontSizePx
 
     // Expand viewport in the slack dimension to fill the container.
     // Hysteresis: only shrink the dimension if the current value genuinely
@@ -293,6 +305,14 @@ export class MapView {
   fullRender(): void {
     this.render()
     this.updateCursorSpan()
+  }
+
+  // Pan-only repaint. The ASCII grid can't blit DOM spans, but the per-span
+  // `painted` diff cache already makes the full sweep cheap, so a pan is just
+  // a fullRender; the parameter exists for TileMapView parity (its blit path
+  // needs the turn's dirty cells).
+  panRender(_dirty?: Set<string>): void {
+    this.fullRender()
   }
 
   // Show or hide the examine cursor.

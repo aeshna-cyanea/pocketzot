@@ -63,8 +63,7 @@ export type WorkerOutMsg =
 //   transit — the remainder of send → first chunk on the main thread
 //             (postMessage both ways + task-queue waits)
 //   stream  — first → last output chunk of the turn (each chunk is its own
-//             main-thread task; `chunks` counts them — this is also renders-
-//             per-input pressure, since scheduleRender coalesces per task)
+//             main-thread task; `chunks` counts them)
 //   render  — last chunk's arrival → the next animation frame (dispatch +
 //             DOM work + frame wait)
 // Console: __pzPerf.summary() → p50/p90 per field; __pzPerf.samples for raw.
