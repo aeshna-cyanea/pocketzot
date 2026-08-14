@@ -251,6 +251,145 @@ describe('cursor-mode d-pad state class (x examine / targeting)', () => {
   })
 })
 
+describe('ui_cutoff (engine runs the map under the popup stack)', () => {
+  // Wire order captured from a live trunk engine: tapping e(v)oke in an item
+  // describe pops the describe, then targeting starts with the inventory menu
+  // still open server-side — ui_cutoff hides it so the map and aiming prompt
+  // show through; -1 restores, and the menu's own close_menu ends it.
+  const openInventoryWithDescribe = (h: Harness) => {
+    h.dispatch({
+      msg: 'menu', tag: 'inventory', title: { text: 'Inventory' },
+      items: [{ level: 2, text: 'a - a wand of flame (15)', hotkeys: [97] }],
+    })
+    h.dispatch({ msg: 'ui-push', type: 'describe-item', title: 'a wand of flame', body: 'A magical device.' })
+    h.dispatch({ msg: 'ui-pop' })   // describe closes as the targeter starts
+  }
+
+  it('hides the covered stack while targeting, restores it on -1, then close_menu ends it', () => {
+    const h = setup()
+    openInventoryWithDescribe(h)
+    expect(isHidden(overlay(h))).toBe(false)  // back on the inventory
+    h.dispatch({ msg: 'ui_cutoff', cutoff: 1 })
+    expect(isHidden(overlay(h))).toBe(true)   // map + aiming prompt visible
+    h.dispatch({ msg: 'ui_cutoff', cutoff: -1 })
+    expect(isHidden(overlay(h))).toBe(false)
+    expect(overlay(h).querySelector('.overlay-title span')?.textContent).toBe('Inventory')
+    h.dispatch({ msg: 'close_menu' })
+    expect(isHidden(overlay(h))).toBe(true)
+  })
+
+  it('a popup pushed during targeting renders, and its pop returns to the map, not the hidden stack', () => {
+    const h = setup()
+    openInventoryWithDescribe(h)
+    h.dispatch({ msg: 'ui_cutoff', cutoff: 1 })
+    // e.g. pressing v (describe target) mid-aim: above the cutoff, so visible.
+    h.dispatch({ msg: 'ui-push', type: 'describe-monster', title: 'a rat', body: 'A rat.' })
+    expect(isHidden(overlay(h))).toBe(false)
+    h.dispatch({ msg: 'ui-pop' })
+    expect(isHidden(overlay(h))).toBe(true)   // aiming again, inventory stays hidden
+  })
+
+  it('close_all_menus clears an active cutoff so the next menu is not born hidden', () => {
+    const h = setup()
+    openInventoryWithDescribe(h)
+    h.dispatch({ msg: 'ui_cutoff', cutoff: 1 })
+    h.dispatch({ msg: 'close_all_menus' })
+    h.dispatch({ msg: 'menu', tag: 'inventory', title: { text: 'Inventory' }, items: [] })
+    expect(isHidden(overlay(h))).toBe(false)
+  })
+
+  it('a nested pop_ui_cutoff (enclosing value, not -1) re-shows layers above the new cutoff', () => {
+    const h = setup()
+    openInventoryWithDescribe(h)
+    h.dispatch({ msg: 'ui_cutoff', cutoff: 1 })          // inventory hidden
+    h.dispatch({ msg: 'ui-push', type: 'describe-monster', title: 'a rat', body: 'A rat.' })
+    h.dispatch({ msg: 'ui_cutoff', cutoff: 2 })          // nested: hides the describe too
+    expect(isHidden(overlay(h))).toBe(true)
+    // pop_ui_cutoff sends the enclosing cutoff (tileweb.cc:971), not -1: the
+    // describe (depth 2) is uncovered again, the inventory (depth 1) is not.
+    h.dispatch({ msg: 'ui_cutoff', cutoff: 1 })
+    expect(isHidden(overlay(h))).toBe(false)
+    expect(overlay(h).querySelector('.overlay-title span')?.textContent).toBe('a rat')
+  })
+
+  it('a menu closing above an active cutoff returns to the map, not the covered menu', () => {
+    const h = setup()
+    openInventoryWithDescribe(h)
+    h.dispatch({ msg: 'ui_cutoff', cutoff: 1 })
+    // A menu stacked above the cutoff renders; its close_menu must fall back
+    // to the hidden state, not repaint the covered inventory over the map.
+    h.dispatch({ msg: 'menu', tag: 'prompt', title: { text: 'Really zap?' }, items: [] })
+    expect(isHidden(overlay(h))).toBe(false)
+    h.dispatch({ msg: 'close_menu' })
+    expect(isHidden(overlay(h))).toBe(true)
+  })
+
+  it('the monster panel opened mid-targeting hands off when -1 restores the covered menu', () => {
+    const h = setup()
+    openInventoryWithDescribe(h)
+    h.dispatch({ msg: 'ui_cutoff', cutoff: 1 })
+    // Mid-cutoff the screen is the live map, so the panel may open (the
+    // serverPromptActive carve-out — that's the feature under test's flip
+    // side). A hostile populates the compact list; tap-anywhere opens it.
+    h.dispatch({ msg: 'map', cells: [{ x: 5, y: 5, g: 'o', col: 7, mon: { id: 1, name: 'orc', att: 1, type: 1 } }] })
+    h.view.querySelector<HTMLElement>('#monster-list')!.click()
+    expect(overlay(h).querySelector('.mp-list')).not.toBeNull()
+    // Targeting ends: the covered inventory repaints over the panel's DOM.
+    // The panel flag must drop with it — latched, it would swallow every
+    // touch key and block the list from ever reopening.
+    h.dispatch({ msg: 'ui_cutoff', cutoff: -1 })
+    expect(overlay(h).querySelector('.overlay-title span')?.textContent).toBe('Inventory')
+    h.dispatch({ msg: 'close_menu' })
+    h.view.querySelector<HTMLElement>('#monster-list')!.click()
+    expect(overlay(h).querySelector('.mp-list')).not.toBeNull()
+  })
+
+  it('a cutoff arriving over an open monster panel tears it down and lets it re-open', () => {
+    // The flip side of the hand-off above: not the -1 repaint but a *push*
+    // evicting the panel via restoreTopLayer's hidden arm (a spectator has
+    // the panel up when the watched player starts targeting from plain
+    // play — push_ui_cutoff sends the pre-push depth, 0). The flag must
+    // drop there too, or the mid-cutoff tap stays refused.
+    const h = setup()
+    h.dispatch({ msg: 'map', cells: [{ x: 5, y: 5, g: 'o', col: 7, mon: { id: 1, name: 'orc', att: 1, type: 1 } }] })
+    h.view.querySelector<HTMLElement>('#monster-list')!.click()
+    expect(overlay(h).querySelector('.mp-list')).not.toBeNull()
+    h.dispatch({ msg: 'ui_cutoff', cutoff: 0 })
+    expect(isHidden(overlay(h))).toBe(true)
+    h.view.querySelector<HTMLElement>('#monster-list')!.click()
+    expect(overlay(h).querySelector('.mp-list')).not.toBeNull()
+  })
+
+  it('a stash-preview round trip (cutoff push/pop) keeps the results-list scroll', () => {
+    const h = setup()
+    const items = Array.from({ length: 40 }, (_, i) => (
+      { level: 2, text: `${String.fromCharCode(97 + (i % 26))} - a stone at D:${i + 1}`, hotkeys: [97 + (i % 26)] }))
+    h.dispatch({ msg: 'menu', tag: 'stash', title: { text: 'Search results' }, items })
+    const list = () => overlay(h).querySelector<HTMLElement>('.overlay-list')!
+    list().scrollTop = 800
+    // Stash preview: viewmap's scoped cutoff hides the results for the map
+    // + destination cursor; Esc sends the cursor clear then the pop, one
+    // batch on the wire. The pop's rebuild must restore the user's place.
+    h.dispatch({ msg: 'ui_cutoff', cutoff: 1 })
+    h.dispatch({ msg: 'cursor', id: 2, loc: { x: 5, y: 5 } })
+    h.dispatch({ msg: 'cursor', id: 2 })
+    h.dispatch({ msg: 'ui_cutoff', cutoff: -1 })
+    expect(list().scrollTop).toBe(800)
+  })
+
+  it('a trailing cutoff -1 after game over keeps the end screen, not the stale menu', () => {
+    // Offline the mini-server swallows stack teardown after exitDeclared but
+    // not ui_cutoff — so activeMenu can still be set when a late -1 arrives.
+    const h = setup()
+    openInventoryWithDescribe(h)
+    h.dispatch({ msg: 'ui_cutoff', cutoff: 1 })
+    h.dispatch({ msg: 'ui-push', type: 'game-over', title: 'Goodbye', body: 'You die...' })
+    h.dispatch({ msg: 'ui-pop' })                        // end screen held via gameOverSeen
+    h.dispatch({ msg: 'ui_cutoff', cutoff: -1 })
+    expect(overlay(h).querySelector('.overlay-title span')?.textContent).not.toBe('Inventory')
+  })
+})
+
 describe('ui-push / ui-pop overlay stack', () => {
   it('renders a pushed overlay with title + body and shows the overlay', () => {
     const h = setup()

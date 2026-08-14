@@ -9,6 +9,11 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-08-14
+
+- Fixed an issue with attempting to evoke a wand from within an item
+  description.
+
 ## 2026-08-13
 
 - Map rendering is now ~3.5x faster in ASCII mode and ~30% faster while

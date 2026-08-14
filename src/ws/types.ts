@@ -176,6 +176,10 @@ export type ServerMsg =
   | { msg: 'close_menu' }
   | { msg: 'ui-push'; type: string; body?: string }
   | { msg: 'ui-pop' }
+  // tileweb.cc push/pop_ui_cutoff: hide every overlay layer at engine
+  // menu-stack depth <= cutoff (the map runs underneath, e.g. wand aiming
+  // entered from an item describe); -1 restores. See ui::cutoff_point.
+  | { msg: 'ui_cutoff'; cutoff: number }
   | { msg: 'ui-stack'; items: ServerMsg[] }
   | { msg: 'ui-state'; type: string; props?: Record<string, unknown> }
   | { msg: 'ui-scroller-scroll'; scroll?: number }

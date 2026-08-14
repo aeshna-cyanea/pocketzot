@@ -317,6 +317,51 @@ export function buildGameView(
   // where the next keystroke gets eaten by the menu we forgot about.
   const menuStack: MenuMsg[] = []
   let activeMenu: MenuMsg | null = null
+  // Engine ui_cutoff (tileweb.cc push/pop_ui_cutoff): targeting, the level
+  // map, and inventory-adjust run *under* the popup stack (ui::cutoff_point
+  // in directn.cc / viewmap.cc / adjust.cc) — e.g. e(v)oke from an item
+  // describe pops the describe, then aims the wand while the inventory menu
+  // is still open server-side. `cutoff` is the engine menu-stack depth at
+  // push time: every layer at depth <= cutoff hides so the map and aiming
+  // prompt show through; -1 restores the survivors. Overlay *state* stays
+  // intact — the covered menu is still open server-side and tears down via
+  // its own close_menu after the targeter finishes.
+  let uiCutoff = -1
+  // Mirrors the engine's m_menu_stack depth (menus + CRT frames + ui-push
+  // layouts). Known skew: server-side a CRT occupies a real stack slot
+  // (push_crt_menu) while crtActive is a boolean that close_menu doesn't
+  // clear — between a CRT's close_menu and the layer/close_all_menus that
+  // follows, the count can be off by one. Pre-existing modeling; acceptable
+  // because no engine cutoff site can start under a CRT screen.
+  const overlayDepth = () => menuStack.length + (crtActive ? 1 : 0) + uiStack.length
+  const cutoffCovers = (depth: number) => uiCutoff >= 0 && depth <= uiCutoff
+  const cutoffHidesAll = () => cutoffCovers(overlayDepth())
+  // What belongs on screen right now, as one function of overlay state: the
+  // cutoff check plus the top-layer ladder, shared by every restore/repaint
+  // path (ui-pop, ui_cutoff, close_menu, ui-state) so the cutoff invariant
+  // holds by construction instead of per-site guards. ui-stack's
+  // empty-snapshot path stays separate on purpose — its terminal arm guards
+  // on dialogActive, not gameOverSeen.
+  const restoreTopLayer = () => {
+    // The monster panel can be up when this runs — it opens mid-cutoff by
+    // design (see serverPromptActive) — and every arm below wipes or hides
+    // its uiOverlay DOM. Drop the flag with the DOM, else the touch dispatch
+    // keeps swallowing keys for a panel that's gone and the list tap refuses
+    // to reopen. Flag only, not closeClientOverlays(): the paint arms manage
+    // the minimap themselves (enterOverlayLayout), and the hideOverlay arms
+    // must keep restoring a suspended spectator lens.
+    monsterPanelOpen = false
+    if (cutoffHidesAll()) {
+      // Skip the resync when already hidden: hideOverlay's rAF tail forces
+      // layout (fitToContainer), a real cost for a message-path no-op.
+      if (!gameOverSeen && uiOverlay.style.display !== 'none') hideOverlay()
+      return
+    }
+    if (uiStack.length > 0) showUiPush(uiStack[uiStack.length - 1])
+    else if (crtActive) restoreCrt()
+    else if (activeMenu) showMenu(activeMenu)
+    else if (!gameOverSeen) hideOverlay()
+  }
   let hoveredMenuIdx = -1
   // Raw server-side hover index for the active menu. We drive menu hover
   // client-side via menu_hover (see cycleMenuHover) instead of forwarding raw
@@ -1220,7 +1265,7 @@ export function buildGameView(
       // actually sends.
       case 'layer':
       case 'set_layer':
-        if (msg.layer === 'game') { uiStack.length = 0; crtActive = false; dialogActive = false; crtTag = undefined; menuStack.length = 0; activeMenu = null; closeClientOverlays(); harvester.reset(); hideOverlay() }
+        if (msg.layer === 'game') { uiStack.length = 0; crtActive = false; dialogActive = false; crtTag = undefined; menuStack.length = 0; activeMenu = null; uiCutoff = -1; closeClientOverlays(); harvester.reset(); hideOverlay() }
         break
 
       // Raw-HTML modal pushed by the server (save-transfer prompt on trunk
@@ -1443,6 +1488,10 @@ export function buildGameView(
         const items = (msg as unknown as { items?: ServerMsg[] }).items
         if (!Array.isArray(items)) break
         uiStack.length = 0
+        // The attach snapshot never replays ui_cutoff (tileweb.cc
+        // _send_everything), so a stale pre-reconnect cutoff must not hide
+        // the re-sent stack.
+        uiCutoff = -1
         for (const item of items) handleMsg(item)
         // An empty snapshot must also clear a stale overlay — mirror
         // ui-pop's restore chain (dialogs live outside the engine stack).
@@ -1456,11 +1505,28 @@ export function buildGameView(
 
       case 'ui-pop':
         uiStack.pop()
-        if (uiStack.length > 0) showUiPush(uiStack[uiStack.length - 1])
-        else if (crtActive) restoreCrt()
-        else if (activeMenu) showMenu(activeMenu)
-        else if (!gameOverSeen) hideOverlay()
+        restoreTopLayer()
         break
+
+      case 'ui_cutoff': {
+        // pop_ui_cutoff sends the *enclosing* cutoff (tileweb.cc:971), not
+        // always -1 — never branch on sign. Skip rendering under the
+        // end-screen hold (the offline mini-server swallows stack teardown
+        // after exitDeclared but not ui_cutoff — a trailing -1 must not
+        // paint a menu over the death screen) and under show_dialog modals
+        // (outside the engine stack, so no cutoff should touch them).
+        if (msg.cutoff === uiCutoff) break  // equal re-send: nothing to repaint
+        // A push hiding a visible menu wipes its list DOM (restoreTopLayer's
+        // hidden arm), and the pop's rebuild would land at the top — capture
+        // scroll first so e.g. a stash-preview round trip returns to where
+        // the user was. Safe here, unlike inside restoreTopLayer: any list
+        // in the DOM belongs to activeMenu (the close_menu divergence can't
+        // be in flight), and on pops the overlay is hidden so this no-ops.
+        captureMenuScroll()
+        uiCutoff = msg.cutoff
+        if (!gameOverSeen && !dialogActive) restoreTopLayer()
+        break
+      }
 
       case 'ui-state': {
         const raw = msg as unknown as Record<string, unknown>
@@ -1474,7 +1540,9 @@ export function buildGameView(
           const entry: UiPushMsg = { type: 'formatted-scroller', text, ...(highlight ? { highlight } : {}), ...(actions ? { actions } : {}) }
           if (uiStack.length > 0) {
             Object.assign(uiStack[uiStack.length - 1], entry)
-            showUiPush(uiStack[uiStack.length - 1])
+            // Update state always; restoreTopLayer repaints, so a body swap
+            // can't resurface a cutoff-hidden layer over the map.
+            restoreTopLayer()
           } else {
             showTxtPage(text)
           }
@@ -1484,7 +1552,7 @@ export function buildGameView(
           // sends a ui-state with the replacement body and keeps the parent
           // push's title, actions, and tile intact, so update body in place.
           uiStack[uiStack.length - 1].body = body
-          showUiPush(uiStack[uiStack.length - 1])
+          restoreTopLayer()
         }
         // from_webtiles=true is the server echoing our own
         // formatted_scroller_scroll back — our scroll position is already
@@ -1834,12 +1902,19 @@ export function buildGameView(
         // menu as indices in the wrong item space. The restored menu's own
         // pre-cover hover was already reset when the covering menu opened,
         // so this loses nothing: fresh look, fresh opt-in.
-        if (prev) showMenu(prev)
-        else {
+        if (prev) {
+          if (cutoffHidesAll()) {
+            // A close above an active cutoff must not repaint the covered
+            // menu over the targeting map: take the bookkeeping without the
+            // DOM build, then let restoreTopLayer clear the closed menu's
+            // surface (adoptMenu doesn't move overlayDepth, so it stays in
+            // the hidden arm).
+            adoptMenu(prev)
+            restoreTopLayer()
+          } else showMenu(prev)
+        } else {
           activeMenu = null
-          if (uiStack.length > 0) showUiPush(uiStack[uiStack.length - 1])
-          else if (crtActive) restoreCrt()
-          else if (!gameOverSeen) hideOverlay()
+          restoreTopLayer()
         }
         break
       }
@@ -1851,6 +1926,7 @@ export function buildGameView(
         crtTag = undefined
         menuStack.length = 0
         activeMenu = null
+        uiCutoff = -1
         menuShift.reset()
         closeClientOverlays()
         titlePromptInput = null
@@ -2925,23 +3001,24 @@ export function buildGameView(
     ? new ResizeObserver(() => updateMenuFooter())
     : null
 
-  function showMenu(msg: MenuMsg): void {
-    // The PromptMenu family — yesno() popups (prompt.cc, tag "prompt") and
-    // G's travel branch picker (travel.cc, tag "travel"; the only other
-    // PromptMenu in normal play) — floats as a modal over the still-visible
-    // game when arriving from normal play, like the reference .ui-popup:
-    // these questions are about the map you're standing on. A prompt fired
-    // while another menu/overlay owns the screen (shop purchase confirm,
-    // prompts over a CRT) keeps the full-screen treatment — the map isn't
-    // the context there, and un-hiding it would flash the wrong background.
-    // Checked before activeMenu is reassigned; a re-render of the same
-    // prompt (ui-pop restore) stays floating.
-    const promptFamily = msg.tag === 'prompt' || msg.tag === 'travel'
-    const floatPrompt = promptFamily && uiStack.length === 0
-      && !crtActive && !dialogActive && (activeMenu === null || activeMenu === msg)
+  // The PromptMenu family: yesno() popups (prompt.cc, tag "prompt") and G's
+  // travel branch picker (travel.cc, tag "travel") — the only PromptMenus in
+  // normal play.
+  function isPromptFamily(msg: MenuMsg): boolean {
+    return msg.tag === 'prompt' || msg.tag === 'travel'
+  }
+
+  // The state half of showMenu — everything menu adoption mutates except the
+  // paint. Split out so a cutoff-covered restore (close_menu while the engine
+  // targets on the map underneath) takes the bookkeeping without building DOM
+  // that hideOverlay would immediately discard — and without
+  // enterOverlayLayout's side effects (minimap suspend, chat-pill
+  // retraction) for an overlay that never becomes visible.
+  function adoptMenu(msg: MenuMsg): void {
     if (activeMenu !== msg) {
       captureMenuScroll()  // before reassignment: keyed to the covered menu
       hoveredMenuIdx = -1
+      const promptFamily = isPromptFamily(msg)
       // Prompt family only: seed the cursor from the menu's initial hover
       // and render it immediately (fillMenuItems highlights hoveredMenuIdx).
       // There the default hover is real information — yesno's default
@@ -2963,6 +3040,27 @@ export function buildGameView(
       promptInitialMore = msg.more ?? ''
     }
     activeMenu = msg
+  }
+
+  function showMenu(msg: MenuMsg): void {
+    // The PromptMenu family (isPromptFamily) floats as a modal over the
+    // still-visible game when arriving from normal play, like the reference
+    // .ui-popup: these questions are about the map you're standing on. A
+    // prompt fired while another menu/overlay owns the screen (shop purchase
+    // confirm, prompts over a CRT) keeps the full-screen treatment — the map
+    // isn't the context there, and un-hiding it would flash the wrong
+    // background. Checked before activeMenu is reassigned; a re-render of
+    // the same prompt (ui-pop restore) stays floating.
+    const promptFamily = isPromptFamily(msg)
+    const floatPrompt = promptFamily && uiStack.length === 0
+      && !crtActive && !dialogActive
+      && (activeMenu === null || activeMenu === msg
+        // Everything beneath this menu is cutoff-hidden (msg is already on
+        // menuStack when showMenu runs, so beneath = overlayDepth() - 1): a
+        // prompt arriving mid-targeting is a question about the live map,
+        // exactly the from-normal-play case, so it floats too.
+        || cutoffCovers(overlayDepth() - 1))
+    adoptMenu(msg)
     const title = stripDcss(msg.title?.text ?? '')
     // Prompt menus centre their question + 2-3 answer rows vertically
     // instead of pinning them under the status bar. enterOverlayLayout
@@ -3261,7 +3359,17 @@ export function buildGameView(
   // A server-driven prompt/menu owns the screen — no client-side map overlay
   // (monster panel, minimap) may open over it. Shared by the open guards so
   // the two can't drift apart.
+  //
+  // NOT a keystroke-safety check: idleAtCommandPrompt() is the injection
+  // guard, and it must keep seeing a cutoff-hidden menu as open — during a
+  // cutoff the targeter owns the keystream, so injecting is exactly as
+  // unsafe as under a visible menu.
   function serverPromptActive(): boolean {
+    // A cutoff covering the whole stack means the engine is running the map
+    // under it (targeting / level map entered from a popup): the screen is
+    // the live map, so the message pill and client lenses behave as in
+    // plain play. Dialogs live outside the engine stack and still count.
+    if (cutoffHidesAll()) return dialogActive || isHarvesting()
     return uiStack.length > 0 || crtActive || dialogActive || !!activeMenu || isHarvesting()
   }
 
