@@ -9,6 +9,11 @@ formatting and HTML chrome differ. Drift is a bug.
 
 Notable changes to PocketZot, newest first.
 
+## 2026-08-13
+
+- Map rendering is now ~3.5x faster in ASCII mode and ~30% faster while
+  moving in tiles mode.
+
 ## 2026-08-10
 
 - Reworked the Android back button/gesture. Back now dismisses whatever is
