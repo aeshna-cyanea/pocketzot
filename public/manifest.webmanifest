@@ -4,7 +4,7 @@
   "description": "Mobile app for Dungeon Crawl Stone Soup (DCSS) — play online on WebTiles servers or fully offline on your device",
   "theme_color": "#1c1917",
   "background_color": "#0a0908",
-  "display": "standalone",
+  "display": "fullscreen",
   "start_url": "/?src=pwa",
   "orientation": "any",
   "icons": [
