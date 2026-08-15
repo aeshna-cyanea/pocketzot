@@ -2,7 +2,8 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  bindZoomDrag, clampMapZoom, MAX_MAP_ZOOM, MIN_MAP_ZOOM, zoomFromDrag,
+  bindPinchZoom, bindZoomDrag, clampMapZoom, MAX_MAP_ZOOM, MIN_MAP_ZOOM,
+  zoomFromDrag, zoomFromPinch,
 } from './zoom-gesture'
 
 function pointer(
@@ -22,6 +23,14 @@ function pointer(
   el.dispatchEvent(e)
 }
 
+function touch(el: HTMLElement, type: string, points: Array<[number, number]>): void {
+  const e = new Event(type, { bubbles: true, cancelable: true })
+  Object.defineProperty(e, 'touches', {
+    value: points.map(([clientX, clientY]) => ({ clientX, clientY })),
+  })
+  el.dispatchEvent(e)
+}
+
 afterEach(() => { document.body.innerHTML = '' })
 
 describe('continuous map zoom math', () => {
@@ -34,6 +43,12 @@ describe('continuous map zoom math', () => {
   it('clamps zoom to the supported range', () => {
     expect(clampMapZoom(0.1)).toBe(MIN_MAP_ZOOM)
     expect(clampMapZoom(9)).toBe(MAX_MAP_ZOOM)
+  })
+
+  it('maps pinch span ratios directly onto zoom', () => {
+    expect(zoomFromPinch(1, 100, 150)).toBeCloseTo(1.5)
+    expect(zoomFromPinch(1, 100, 50)).toBeCloseTo(0.5)
+    expect(zoomFromPinch(1, 0, 50)).toBe(1)
   })
 })
 
@@ -105,6 +120,56 @@ describe('double-tap-hold zoom gesture', () => {
     pointer(h.map, 'pointerdown', { timeStamp: 200, clientY: 100 })
     h.binding.cancel()
     pointer(h.map, 'pointermove', { timeStamp: 220, clientY: 180 })
+    expect(h.setScale).not.toHaveBeenCalled()
+  })
+})
+
+describe('pinch zoom gesture', () => {
+  function setup() {
+    const host = document.createElement('div')
+    const map = document.createElement('div')
+    map.id = 'map-grid'
+    host.appendChild(map)
+    document.body.appendChild(host)
+    let scale = 1
+    const setScale = vi.fn((next: number) => { scale = next })
+    const onStart = vi.fn()
+    const binding = bindPinchZoom(host, {
+      enabled: () => true,
+      acceptsTarget: target => target instanceof Element && !!target.closest('#map-grid'),
+      getScale: () => scale,
+      setScale,
+      onStart,
+    })
+    return { host, map, setScale, onStart, binding, scale: () => scale }
+  }
+
+  it('zooms in when fingers spread and out when they close', () => {
+    const h = setup()
+    touch(h.map, 'touchstart', [[100, 100], [200, 100]])
+    expect(h.onStart).toHaveBeenCalledOnce()
+    touch(h.map, 'touchmove', [[50, 100], [250, 100]])
+    expect(h.scale()).toBe(2)
+    touch(h.map, 'touchend', [])
+
+    touch(h.map, 'touchstart', [[100, 100], [200, 100]])
+    touch(h.map, 'touchmove', [[125, 100], [175, 100]])
+    expect(h.scale()).toBe(1)
+  })
+
+  it('ignores sub-slop span jitter', () => {
+    const h = setup()
+    touch(h.map, 'touchstart', [[100, 100], [200, 100]])
+    touch(h.map, 'touchmove', [[98, 100], [202, 100]])
+    expect(h.setScale).not.toHaveBeenCalled()
+  })
+
+  it('requires exactly two map contacts', () => {
+    const h = setup()
+    touch(h.map, 'touchstart', [[100, 100]])
+    touch(h.map, 'touchmove', [[50, 100], [250, 100]])
+    touch(h.host, 'touchstart', [[100, 100], [200, 100]])
+    touch(h.host, 'touchmove', [[50, 100], [250, 100]])
     expect(h.setScale).not.toHaveBeenCalled()
   })
 })

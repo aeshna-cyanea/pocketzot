@@ -7,7 +7,7 @@ const KEY = 'pocketzot:prefs'
 // CONTROLS_CHANGED_EVENT in control-sets.ts.
 
 // Lets a live game view swap renderers immediately when the settings page
-// (or the two-finger gesture) changes mapRenderMode.
+// changes mapRenderMode.
 export const RENDER_MODE_CHANGED_EVENT = 'pocketzot:render-mode-changed'
 // Same live-apply contract for the monster-list mode (settings ⇄ the in-game
 // chevron, which only walks collapsed⇄full) and the login-screen character

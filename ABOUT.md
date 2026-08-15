@@ -33,8 +33,7 @@ Obligatory virtual keyboard also available.
 
 ## Gestures
 
-- Double tap and hold on map, then drag down/up to zoom in/out
-- Two-finger long press on map to toggle ASCII/tiles
+- Pinch to zoom. Alternatively, double tap and hold, then drag vertically.
 - Double tap Shift to lock it
 - Tap place name in HUD (e.g. @D:1) to toggle minimap
 - Tap floating monster list for full view, then tap monster to inspect

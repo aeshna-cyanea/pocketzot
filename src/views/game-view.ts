@@ -4,7 +4,7 @@ import { fitToWidth } from './fit-terminal'
 import { MapStore } from '../game/map/map-store'
 import { MapView } from '../game/map/map-view'
 import { TileMapView } from '../game/map/tile-map-view'
-import { bindZoomDrag } from '../game/map/zoom-gesture'
+import { bindPinchZoom, bindZoomDrag } from '../game/map/zoom-gesture'
 import { StatsView } from '../game/hud/stats-view'
 import { StatusView } from '../game/hud/status-view'
 import { MonsterListView } from '../game/hud/monster-list'
@@ -133,10 +133,10 @@ export function buildGameView(
 ): HTMLElement {
   const store = new MapStore()
   if (import.meta.env.DEV) (window as unknown as { __dcssStore: MapStore }).__dcssStore = store
-  // Map render mode. Starts in ASCII regardless of the saved preference; tile
-  // mode (reachable in-session via a two-finger long-press on the map, see
-  // below) is applied just after setup via setRenderMode, which handles the
-  // view swap, atlas preload (~10 MB), and monster-list mode in one place.
+  // Map render mode. Starts in ASCII regardless of the saved preference; the
+  // settings-selected mode is applied just after setup via setRenderMode,
+  // which handles the view swap, atlas preload (~10 MB), and monster-list
+  // mode in one place.
   // setRenderMode persists every change to prefs, so a tile-mode session
   // resumes in tiles next launch.
   let renderMode: 'ascii' | 'tiles' = 'ascii'
@@ -626,57 +626,30 @@ export function buildGameView(
   mapWrap.id = 'map-wrap'
   mapWrap.appendChild(mapView.element)
 
-  // Double-tap, hold the second tap, then drag vertically for continuous
-  // one-finger zoom (down = in, up = out). Bound to mapWrap so it survives
-  // the in-place swap between MapView and TileMapView. scheduleFit limits
-  // re-fitting to one pass per animation frame: pointermove can arrive faster
-  // than paint, and each fit performs live font/cell measurements.
+  // Continuous zoom supports both a conventional pinch and Google Maps-style
+  // one-finger input: double-tap, hold the second tap, then drag vertically
+  // (down = in, up = out). Both bind to mapWrap so they survive an in-place
+  // MapView/TileMapView swap. scheduleFit limits high-rate gesture updates to
+  // one expensive live font/cell measurement per animation frame.
+  const applyZoomScale = (scale: number): void => {
+    mapView.setZoomScale(scale)
+    scheduleFit()
+  }
   const zoomDrag = bindZoomDrag(mapWrap, {
     enabled: () => !inXMode,
     acceptsTarget: target => target instanceof Element && !!target.closest('#map-grid'),
     getScale: () => mapView.getZoomScale(),
-    setScale: (scale) => {
-      mapView.setZoomScale(scale)
-      scheduleFit()
-    },
+    setScale: applyZoomScale,
   })
-
-  // Two-finger long-press on the map flips between ASCII and tile rendering.
-  // Hidden gesture (no on-screen affordance) because the toggle is rare and
-  // not first-launch discovery — atlases are ~10 MB and we never start a
-  // session in tile mode. Hold ~450 ms; cancel on finger movement >40 px,
-  // any lift before the timer, or a 3rd touch.
-  let tileGestureTimer: number | null = null
-  let tileGestureCenter: { x: number; y: number } | null = null
-  const cancelTileGesture = (): void => {
-    if (tileGestureTimer != null) { window.clearTimeout(tileGestureTimer); tileGestureTimer = null }
-    tileGestureCenter = null
-  }
-  mapWrap.addEventListener('touchstart', (e) => {
-    if (e.touches.length !== 2) { cancelTileGesture(); return }
-    const target = e.target as HTMLElement | null
-    if (!target || !target.closest('#map-grid')) { cancelTileGesture(); return }
-    // The second finger changes ownership to the tile gesture immediately.
-    zoomDrag.cancel()
-    const t1 = e.touches[0]; const t2 = e.touches[1]
-    tileGestureCenter = { x: (t1.clientX + t2.clientX) / 2, y: (t1.clientY + t2.clientY) / 2 }
-    if (tileGestureTimer != null) window.clearTimeout(tileGestureTimer)
-    tileGestureTimer = window.setTimeout(() => {
-      tileGestureTimer = null; tileGestureCenter = null
-      setRenderMode(renderMode === 'tiles' ? 'ascii' : 'tiles')
-    }, 450)
-  }, { passive: true })
-  mapWrap.addEventListener('touchmove', (e) => {
-    if (tileGestureTimer == null || !tileGestureCenter) return
-    if (e.touches.length !== 2) { cancelTileGesture(); return }
-    const t1 = e.touches[0]; const t2 = e.touches[1]
-    const cx = (t1.clientX + t2.clientX) / 2
-    const cy = (t1.clientY + t2.clientY) / 2
-    const dx = cx - tileGestureCenter.x; const dy = cy - tileGestureCenter.y
-    if (dx * dx + dy * dy > 40 * 40) cancelTileGesture()
-  }, { passive: true })
-  mapWrap.addEventListener('touchend', cancelTileGesture, { passive: true })
-  mapWrap.addEventListener('touchcancel', cancelTileGesture, { passive: true })
+  const pinchZoom = bindPinchZoom(mapWrap, {
+    enabled: () => !inXMode,
+    acceptsTarget: target => target instanceof Element && !!target.closest('#map-grid'),
+    getScale: () => mapView.getZoomScale(),
+    setScale: applyZoomScale,
+    // Once a second contact lands, it owns this sequence; a first contact must
+    // not remain armed as the first tap of a later one-finger zoom.
+    onStart: () => zoomDrag.cancel(),
+  })
 
   // Tap the compact monster list to open the full-screen GUI variant.
   // Refuse while a server-side prompt is up so we don't drop the user out
@@ -912,9 +885,8 @@ export function buildGameView(
     mapView = next
     fontScaleObserver.observe(mapView.element)
     // Only preload once we hold this game's loader. If we're switching to tiles
-    // before that — e.g. the persisted-pref application at build, or a gesture
-    // toggle before game_client — the game_client handler preloads when the
-    // version lands.
+    // before that — e.g. the persisted-pref application at build — the
+    // game_client handler preloads when the version lands.
     if (mode === 'tiles' && loader) void (mapView as TileMapView).preloadAtlases(loader)
     monsterListView.setRenderMode(mode)
     requestAnimationFrame(() => { mapView.fitToContainer(); mapView.fullRender() })
@@ -1020,6 +992,7 @@ export function buildGameView(
     closeWatcher?.destroy()
     closeWatcher = null
     zoomDrag.destroy()
+    pinchZoom.destroy()
     touchControls.destroy()
     onLobby(exit)
   }
@@ -1088,9 +1061,7 @@ export function buildGameView(
     }
   }
 
-  // Dev-only console hook so the tile mode (otherwise only a hidden
-  // two-finger long-press) can be toggled from desktop Safari, which has
-  // no TouchEvent constructor to synthesize the gesture.
+  // Dev-only console hook for quickly forcing either renderer during testing.
   // __dcssTiles() toggles; __dcssTiles(true|false) forces tiles|ascii.
   if (import.meta.env.DEV) {
     (window as unknown as { __dcssTiles: (on?: boolean) => void }).__dcssTiles =
@@ -1311,8 +1282,8 @@ export function buildGameView(
           // version, so a same-version resume reuses the warm cache while a
           // different version gets a fully isolated instance — no shared state
           // to clear, no stale-atlas race. This is the moment a persisted
-          // tile-mode view (built before game_client) or a pre-game_client
-          // gesture toggle gets its loader and starts painting.
+          // tile-mode view built before game_client gets its loader and starts
+          // painting.
           loader = getTileLoader(conn.httpBase, msg.version)
           // Offline games only (httpBase '' → the same-origin pack): refresh
           // the pack's layout fingerprint so maybeSaveAvatar can stamp it on

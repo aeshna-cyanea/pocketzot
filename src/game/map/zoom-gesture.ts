@@ -8,6 +8,7 @@ export const MAX_MAP_ZOOM = 2
 const DOUBLE_TAP_MS = 300
 const DOUBLE_TAP_SLOP = 30
 const DRAG_SLOP = 4
+const PINCH_SLOP = 8
 // Moving one phone-height-ish span would be far too sensitive. 240 px per
 // doubling gives a thumb enough travel for fine adjustment while still
 // reaching the full range in one comfortable drag.
@@ -21,6 +22,13 @@ export function zoomFromDrag(startScale: number, deltaY: number): number {
   return clampMapZoom(startScale * 2 ** (deltaY / PX_PER_DOUBLING))
 }
 
+export function zoomFromPinch(startScale: number, startSpan: number, currentSpan: number): number {
+  if (startSpan <= 0 || !Number.isFinite(startSpan) || !Number.isFinite(currentSpan)) {
+    return clampMapZoom(startScale)
+  }
+  return clampMapZoom(startScale * currentSpan / startSpan)
+}
+
 export interface ZoomDragOptions {
   enabled: () => boolean
   acceptsTarget: (target: EventTarget | null) => boolean
@@ -30,9 +38,15 @@ export interface ZoomDragOptions {
 
 export interface ZoomDragBinding {
   // Clears pending/active gesture recognition. Used when a second finger
-  // lands so the two-finger tile gesture cannot also become a zoom drag.
+  // lands so a pending one-finger gesture cannot also become a zoom drag.
   cancel: () => void
   destroy: () => void
+}
+
+export interface PinchZoomOptions extends ZoomDragOptions {
+  // Lets the host cancel a pending one-finger recognizer as soon as the
+  // second contact makes this a pinch candidate.
+  onStart?: () => void
 }
 
 // Google-Maps-style one-finger zoom: tap once, then press the second tap and
@@ -113,6 +127,59 @@ export function bindZoomDrag(element: HTMLElement, opts: ZoomDragOptions): ZoomD
       element.removeEventListener('pointermove', onPointerMove)
       element.removeEventListener('pointerup', finishDrag)
       element.removeEventListener('pointercancel', onPointerCancel)
+    },
+  }
+}
+
+function touchSpan(a: Touch, b: Touch): number {
+  return Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY)
+}
+
+// Conventional two-finger pinch. The small span slop keeps contact jitter
+// from rebuilding the map before the user has expressed a zoom direction.
+export function bindPinchZoom(element: HTMLElement, opts: PinchZoomOptions): ZoomDragBinding {
+  let pinch: { startSpan: number; startScale: number; active: boolean } | null = null
+
+  const clear = (): void => { pinch = null }
+
+  const onTouchStart = (e: TouchEvent): void => {
+    if (!opts.enabled() || e.touches.length !== 2 || !opts.acceptsTarget(e.target)) {
+      clear()
+      return
+    }
+    const span = touchSpan(e.touches[0], e.touches[1])
+    if (span <= 0) { clear(); return }
+    opts.onStart?.()
+    pinch = { startSpan: span, startScale: opts.getScale(), active: false }
+  }
+
+  const onTouchMove = (e: TouchEvent): void => {
+    if (!pinch) return
+    if (e.touches.length !== 2) { clear(); return }
+    const span = touchSpan(e.touches[0], e.touches[1])
+    if (!pinch.active && Math.abs(span - pinch.startSpan) < PINCH_SLOP) return
+    pinch.active = true
+    opts.setScale(zoomFromPinch(pinch.startScale, pinch.startSpan, span))
+    e.preventDefault()
+  }
+
+  const onTouchEnd = (e: TouchEvent): void => {
+    if (e.touches.length < 2) clear()
+  }
+
+  element.addEventListener('touchstart', onTouchStart, { passive: true })
+  element.addEventListener('touchmove', onTouchMove, { passive: false })
+  element.addEventListener('touchend', onTouchEnd, { passive: true })
+  element.addEventListener('touchcancel', clear, { passive: true })
+
+  return {
+    cancel: clear,
+    destroy: () => {
+      clear()
+      element.removeEventListener('touchstart', onTouchStart)
+      element.removeEventListener('touchmove', onTouchMove)
+      element.removeEventListener('touchend', onTouchEnd)
+      element.removeEventListener('touchcancel', clear)
     },
   }
 }

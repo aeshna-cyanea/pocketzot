@@ -444,7 +444,7 @@ function renderMsglogSection(body: HTMLElement): void {
 function renderDisplaySection(body: HTMLElement): void {
   body.appendChild(el('h2', 'settings-h', 'Map display'))
   body.appendChild(el('p', 'settings-hint',
-    'A two-finger long-press on the map also toggles this mid-game.'))
+    'Changes apply immediately while a game is open.'))
   body.appendChild(segPref('Map display', 'mapRenderMode', [
     { value: 'ascii', label: 'ASCII' },
     { value: 'tiles', label: 'Tiles' },
