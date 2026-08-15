@@ -38,7 +38,8 @@ Progressive Web App.
 - Context-aware control sets for common situations.
 - Spectator mode with an expanded map view.
 - Floating, collapsible monster list; tap for details.
-- Map double-tap toggles zoom; two-finger long-press toggles tiles.
+- Double-tap and hold the map, then drag vertically for one-finger zoom;
+  two-finger long-press toggles tiles.
 - Over 2.8 trillion logos.
 - Installs to your home screen as a PWA.
 

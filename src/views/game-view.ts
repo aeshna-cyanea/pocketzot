@@ -4,6 +4,7 @@ import { fitToWidth } from './fit-terminal'
 import { MapStore } from '../game/map/map-store'
 import { MapView } from '../game/map/map-view'
 import { TileMapView } from '../game/map/tile-map-view'
+import { bindZoomDrag } from '../game/map/zoom-gesture'
 import { StatsView } from '../game/hud/stats-view'
 import { StatusView } from '../game/hud/status-view'
 import { MonsterListView } from '../game/hud/monster-list'
@@ -625,30 +626,19 @@ export function buildGameView(
   mapWrap.id = 'map-wrap'
   mapWrap.appendChild(mapView.element)
 
-  // Double-tap the map to toggle zoom. Bypassed while X-mode is active
-  // (font scale is overridden there) — single-tap behavior is undefined on
-  // the map today, so we don't need to suppress click propagation.
-  // Bound to mapWrap (not mapView.element) so it survives the in-place swap
-  // between MapView and TileMapView.
-  let lastTap = { t: 0, x: 0, y: 0 }
-  mapWrap.addEventListener('pointerdown', (e) => {
-    if (inXMode || e.button !== 0) return
-    // Ignore the secondary finger of a multi-touch gesture — otherwise two
-    // close-together touches can satisfy the double-tap-zoom check below.
-    if (!e.isPrimary) return
-    const target = e.target as HTMLElement | null
-    if (!target || !target.closest('#map-grid')) return
-    const now = e.timeStamp
-    const dt = now - lastTap.t
-    const dx = e.clientX - lastTap.x
-    const dy = e.clientY - lastTap.y
-    if (dt < 300 && dx * dx + dy * dy < 30 * 30) {
-      mapView.setZoomMode(!mapView.isZoomMode())
-      mapView.fitToContainer()
-      lastTap = { t: 0, x: 0, y: 0 }
-      return
-    }
-    lastTap = { t: now, x: e.clientX, y: e.clientY }
+  // Double-tap, hold the second tap, then drag vertically for continuous
+  // one-finger zoom (down = in, up = out). Bound to mapWrap so it survives
+  // the in-place swap between MapView and TileMapView. scheduleFit limits
+  // re-fitting to one pass per animation frame: pointermove can arrive faster
+  // than paint, and each fit performs live font/cell measurements.
+  const zoomDrag = bindZoomDrag(mapWrap, {
+    enabled: () => !inXMode,
+    acceptsTarget: target => target instanceof Element && !!target.closest('#map-grid'),
+    getScale: () => mapView.getZoomScale(),
+    setScale: (scale) => {
+      mapView.setZoomScale(scale)
+      scheduleFit()
+    },
   })
 
   // Two-finger long-press on the map flips between ASCII and tile rendering.
@@ -666,9 +656,8 @@ export function buildGameView(
     if (e.touches.length !== 2) { cancelTileGesture(); return }
     const target = e.target as HTMLElement | null
     if (!target || !target.closest('#map-grid')) { cancelTileGesture(); return }
-    // Suppress any pending single-tap-zoom state so the two-finger landings
-    // can't accidentally satisfy the double-tap-zoom check.
-    lastTap = { t: 0, x: 0, y: 0 }
+    // The second finger changes ownership to the tile gesture immediately.
+    zoomDrag.cancel()
     const t1 = e.touches[0]; const t2 = e.touches[1]
     tileGestureCenter = { x: (t1.clientX + t2.clientX) / 2, y: (t1.clientY + t2.clientY) / 2 }
     if (tileGestureTimer != null) window.clearTimeout(tileGestureTimer)
@@ -896,10 +885,9 @@ export function buildGameView(
   })
   fontScaleObserver.observe(mapView.element)
 
-  // Swaps the active map view in place. Forces zoom on when switching INTO
-  // tile mode (tiles at full 33×21 are ~10 px on a phone), and reuses the
-  // current view-center so the swap doesn't flicker through an unset position.
-  // Persists to prefs, so the choice sticks across sessions.
+  // Swaps the active map view in place. Carries continuous zoom and the current
+  // view-center across so the swap doesn't visibly resize or flicker through
+  // an unset position. Persists render mode (but not zoom) to prefs.
   function setRenderMode(mode: 'ascii' | 'tiles'): void {
     if (mode === renderMode) return
     renderMode = mode
@@ -908,13 +896,12 @@ export function buildGameView(
     // lightens over tiles — see --msglog-bg in style.css).
     view.classList.toggle('tiles-mode', mode === 'tiles')
     const center = { x: store.playerPos.x, y: store.playerPos.y }
+    const zoomScale = mapView.getZoomScale()
     fontScaleObserver.unobserve(mapView.element)
     const oldEl = mapView.element
     const next: MapView | TileMapView = mode === 'tiles' ? new TileMapView(store) : new MapView(store)
     next.setViewCenter(center)
-    // Default tile mode to zoom-on. Apply unconditionally — tile X-mode 
-    // uses the zoom-on (17-floor) base shrunk by X_MODE_SCALE.
-    if (mode === 'tiles') next.setZoomMode(true)
+    next.setZoomScale(zoomScale)
     // Carry the X-mode scale across the swap: the new view starts at 1.0
     // by default, which would visibly un-zoom the map mid-X-mode. inXMode
     // is the source of truth (global flag), so re-apply directly.
@@ -1032,6 +1019,7 @@ export function buildGameView(
     window.removeEventListener(MONSTER_LIST_MODE_CHANGED_EVENT, onMonsterListModePref)
     closeWatcher?.destroy()
     closeWatcher = null
+    zoomDrag.destroy()
     touchControls.destroy()
     onLobby(exit)
   }
@@ -1991,9 +1979,9 @@ export function buildGameView(
     renderSpellRail()  // drop the rail row (and the log's map overlay) for the examine map
     touchControls.enterXMode()
     mapView.setFontScale(X_MODE_SCALE)
-    // Zoom mode is left untouched: tiles already had zoom-on (forced at
-    // construction by setRenderMode), and the scale shrinks each cell by
-    // X_MODE_SCALE so the freed HUD/log area fills with more cells.
+    // User zoom stays stored but both renderers bypass it while this overview
+    // scale is active, so even a close normal-play view cannot defeat X-mode's
+    // purpose. The selected zoom returns unchanged on exit.
     scheduleFit()
     // Stash-search activation opens an X-mode preview with the destination
     // cursor: swap the results menu out for the full map + d-pad so the

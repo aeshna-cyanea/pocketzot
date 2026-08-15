@@ -33,7 +33,7 @@ Obligatory virtual keyboard also available.
 
 ## Gestures
 
-- Double tap on map to toggle zoom level
+- Double tap and hold on map, then drag down/up to zoom in/out
 - Two-finger long press on map to toggle ASCII/tiles
 - Double tap Shift to lock it
 - Tap place name in HUD (e.g. @D:1) to toggle minimap

@@ -1,13 +1,15 @@
 import type { MapStore } from './map-store'
 import { parseCellKey } from './map-store'
 import { decodeColor, DEFAULT_BG, flashColor } from './colors'
+import { clampMapZoom } from './zoom-gesture'
 
 const NORMAL_W = 33
 const NORMAL_H = 21
-// Zoom mode shrinks the binding-axis minimum so the font has to grow to fit
-// fewer cells. 17 keeps LOS (radius 7 ⇒ 15 cells) plus a one-cell border.
-const ZOOM_MIN_AXIS = 17
-const ZOOM_REDUCTION = 8
+const MIN_FONT_SIZE = 5
+// At maximum user zoom the viewport can intentionally crop inside the full
+// LOS. Nine cells still leaves enough immediate context to play while making
+// glyphs useful on very small/high-density screens.
+const MIN_VIEW_AXIS = 9
 
 // Renders a dynamic viewport window of the map as a grid of <span> elements.
 // Each span holds one character and a CSS color. Only dirty cells are updated on redraw.
@@ -28,7 +30,7 @@ export class MapView {
   // the log. See the reserve > 0 branch in fitToContainer.
   private centerRow = Math.floor(NORMAL_H / 2)
   private fontScale = 1.0
-  private zoomMode = false
+  private zoomScale = 1.0
   // Absolute viewport center (matches vgrdc from server). In normal play equals playerPos.
   private viewCenter = { x: 0, y: 0 }
   private cursorLoc: { x: number; y: number } | null = null
@@ -74,22 +76,20 @@ export class MapView {
     this.fontScale = scale
   }
 
-  // User-toggled zoom. When true and fontScale === 1, fitToContainer shrinks
-  // both axis minimums (to ZOOM_MIN_AXIS) and raises the font-size cap so
-  // glyphs scale up. X-mode sets fontScale ≠ 1 and bypasses zoom so its
-  // sizing is unchanged. Caller is expected to invoke fitToContainer() next,
-  // matching setFontScale().
-  setZoomMode(on: boolean): void {
-    this.zoomMode = on
+  // Continuous user zoom. X-mode's fontScale override temporarily bypasses
+  // this value, but the chosen scale remains stored and returns on exit.
+  // Caller invokes fitToContainer() after changing it, matching setFontScale.
+  setZoomScale(scale: number): void {
+    this.zoomScale = clampMapZoom(scale)
   }
 
-  isZoomMode(): boolean {
-    return this.zoomMode
+  getZoomScale(): number {
+    return this.zoomScale
   }
 
   // Pick font size + viewport dimensions together to fill the container.
-  // Font is sized so a minimum viewport fits (33×21 normally; reduced on the
-  // binding axis when zoomMode is on); viewport then expands in whichever
+  // Font is sized so the continuously scaled target viewport fits; viewport
+  // dimensions themselves remain whole cells and expand in whichever
   // dimension has spare room so no screen area is wasted.
   fitToContainer(): void {
     const rect = this.container.getBoundingClientRect()
@@ -148,22 +148,21 @@ export class MapView {
     // centered whole-row fit (e.g. X-mode, where the log is hidden).
     const reserve = Math.abs(padBottom - padTop)
 
-    // Font size that fits the minimum viewport (binding dimension wins).
-    // In zoom mode (and only when no X-mode scale override is in effect),
-    // shrink BOTH axis minimums to ZOOM_MIN_AXIS and raise the font-size cap.
-    // Reducing only the binding axis is insufficient on compact layouts (e.g.
-    // the in-game numpad + HUD + log squeeze the map so heightFsBase exceeds
-    // the normal 36px cap, leaving font and viewport unchanged across modes);
-    // we also need a higher cap so the font can actually grow past 36.
-    // ZOOM_MIN_AXIS=17 still fits LOS (radius 7 ⇒ 15 cells) plus a one-cell
-    // border on both axes.
-    const isZoom = this.zoomMode && this.fontScale === 1.0
-    const minW = isZoom ? Math.max(ZOOM_MIN_AXIS, NORMAL_W - ZOOM_REDUCTION) : NORMAL_W
-    const minH = isZoom ? Math.max(ZOOM_MIN_AXIS, NORMAL_H - ZOOM_REDUCTION) : NORMAL_H
-    const widthFs = availW / (minW * charWPerFs)
-    const heightFs = availH / (minH * lineHPerFs)
-    const maxFs = isZoom ? 64 : 36
-    const fontSize = Math.max(10, Math.min(maxFs, Math.min(widthFs, heightFs))) * this.fontScale
+    // Fractional target dimensions make font size move smoothly throughout a
+    // drag; only the rendered row/column counts step at whole-cell boundaries.
+    // X-mode is an overview tool, so its fontScale override bypasses user zoom
+    // while retaining the selected value for normal play.
+    const effectiveZoom = this.fontScale === 1.0 ? this.zoomScale : 1.0
+    const targetW = NORMAL_W / effectiveZoom
+    const targetH = NORMAL_H / effectiveZoom
+    const minW = Math.max(MIN_VIEW_AXIS, Math.floor(targetW))
+    const minH = Math.max(MIN_VIEW_AXIS, Math.floor(targetH))
+    const widthFs = availW / (targetW * charWPerFs)
+    const heightFs = availH / (targetH * lineHPerFs)
+    // Lift the historical 36px cap continuously as zoom rises; an abrupt
+    // 36→64 switch near 1x would make the first drag pixel visibly jump.
+    const maxFs = 36 + 28 * (effectiveZoom - 1)
+    const fontSize = Math.max(MIN_FONT_SIZE, Math.min(maxFs, Math.min(widthFs, heightFs))) * this.fontScale
     const fontSizePx = fontSize + 'px'
     if (this.container.style.fontSize !== fontSizePx) this.container.style.fontSize = fontSizePx
 
@@ -222,8 +221,11 @@ export class MapView {
   }
 
   resetViewportSize(): void {
-    this.centerRow = Math.floor(NORMAL_H / 2)
-    this.setViewportSize(NORMAL_W, NORMAL_H)
+    const effectiveZoom = this.fontScale === 1.0 ? this.zoomScale : 1.0
+    const w = Math.max(MIN_VIEW_AXIS, Math.floor(NORMAL_W / effectiveZoom))
+    const h = Math.max(MIN_VIEW_AXIS, Math.floor(NORMAL_H / effectiveZoom))
+    this.centerRow = Math.floor(h / 2)
+    this.setViewportSize(w, h)
   }
 
   // Screen↔dungeon origin: the top-left dungeon coord of the viewport. Screen

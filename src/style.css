@@ -1530,6 +1530,9 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   padding: 2px;
   white-space: pre;
   user-select: none;
+  /* Own the contact after the second tap so vertical zoom dragging is not
+     intercepted as browser page scrolling or native pinch/double-tap zoom. */
+  touch-action: none;
   height: 100%;
   min-height: 0;
   box-sizing: border-box;

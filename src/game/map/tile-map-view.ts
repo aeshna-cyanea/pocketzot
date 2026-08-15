@@ -12,6 +12,7 @@ import { TEX, type TileLoader, type TileSprite } from '../tiles/tile-loader'
 import { fgFlags, bgFlags } from './flag-decode'
 import { getStatusIconSizer, type StatusIconSizer } from './icon-sizes'
 import { buildStatusOverlays, fgHaloDngnName, fgThreatDngnName, resolveOverlayId } from '../hud/monster-style'
+import { clampMapZoom } from './zoom-gesture'
 
 // Tile-mode minimum viewport. Square because tile cells are square; 21×21
 // is roughly the smallest cell count where a phone-sized container still
@@ -20,10 +21,8 @@ import { buildStatusOverlays, fgHaloDngnName, fgThreatDngnName, resolveOverlayId
 // edge cells clip at the viewport boundary, the natural tile-game look —
 // with centerCol/centerRow pinning the player.
 const NORMAL_AXIS = 21
-// Square zoom viewport. DCSS LOS radius is 7, so 15×15 covers all visible
-// cells; 17×17 adds a one-cell border. The same full-bleed fill applies on
-// top, so zoom still uses freed space — just with a smaller floor.
-const ZOOM_AXIS = 17
+const MIN_VIEW_AXIS = 9
+const MIN_CELL_SIZE = 4
 
 // Authored cell size of every DCSS sprite atlas. Per-tile {ox,oy,w,h} positions
 // the sprite inside this 32×32 logical box; we scale the whole box to cellPx.
@@ -66,9 +65,9 @@ const HALO_UMBRA_LAST = 5
 // the versions that had them; KRAKEN_SW/RAMPAGE only where defined).
 
 // Tile renderer. Same public API as MapView, but each cell is a stack of
-// sprites drawn to a single <canvas>. Viewport floors at 21×21 (non-zoom)
-// or 17×17 (zoom) and full-bleeds the container on both axes — partial
-// cells clip at the edges, with centerCol/centerRow pinning the player
+// sprites drawn to a single <canvas>. User zoom continuously scales the cell
+// size from a 21×21 baseline and full-bleeds the container on both axes —
+// partial cells clip at the edges, with centerCol/centerRow pinning the player
 // (NOT the middle cell; see those fields). X-mode hides the HUD/log to
 // give the map more room and shrinks cells via setFontScale(0.7), the
 // full-bleed fill turning the freed area into more cells.
@@ -92,7 +91,7 @@ export class TileMapView {
   // Last CSS display width applied to the canvas, kept as a number for the
   // setViewportSize early-exit (see the comment there).
   private lastCssW = 0
-  private zoomMode = false
+  private zoomScale = 1.0
   // Multiplier on cellPx — mirrors MapView.fontScale. X-mode sets this to
   // <1 to shrink cells and let the full-bleed fill add more of them.
   // Named `renderScale` internally; setFontScale() stores into it for API
@@ -249,8 +248,8 @@ export class TileMapView {
   // ⇒ more of them fit, courtesy of the full-bleed fill); back to 1.0
   // on exit. Caller is expected to invoke fitToContainer() next.
   setFontScale(scale: number): void { this.renderScale = scale }
-  setZoomMode(on: boolean): void { this.zoomMode = on }
-  isZoomMode(): boolean { return this.zoomMode }
+  setZoomScale(scale: number): void { this.zoomScale = clampMapZoom(scale) }
+  getZoomScale(): number { return this.zoomScale }
 
   fitToContainer(): void {
     const rect = this.container.getBoundingClientRect()
@@ -269,22 +268,26 @@ export class TileMapView {
     const availH = rect.height - padTop - padBottom - occl
     if (availW <= 0 || availH <= 0) return
 
-    // Minimum viewport floor: 21×21 normal, 17×17 zoom. Cell size is picked
-    // so this floor fits the binding axis of the CLEAR area (availH excludes
-    // the asymmetric bottom padding — portrait's floating-log reserve — so
+    // Cell size is picked continuously from the zoomed target axis of the
+    // CLEAR area (availH excludes the asymmetric bottom padding — portrait's
+    // floating-log reserve — so
     // the player's surroundings stay above the log). X-mode flows through
     // the same code: HUD/log are hidden by game-view, availH grows, and the
     // renderScale<1 (set via setFontScale) shrinks each cell so the
     // full-bleed fill turns the freed area into still more cells.
-    const baseAxis = this.zoomMode ? ZOOM_AXIS : NORMAL_AXIS
+    // X-mode is an overview tool: bypass user zoom while renderScale applies,
+    // retaining the chosen zoom for when normal play resumes.
+    const effectiveZoom = this.renderScale === 1.0 ? this.zoomScale : 1.0
+    const targetAxis = NORMAL_AXIS / effectiveZoom
+    const minAxis = Math.max(MIN_VIEW_AXIS, Math.floor(targetAxis))
 
     // Float cell size — fills the binding axis exactly. The backing canvas
     // renders at ATLAS_CELL per cell and CSS scales to this size, so we don't
     // have to round to whole (or even) pixels to keep sprites aligned.
-    // renderScale (X-mode) shrinks the result further; clamp stays in [8,96]
+    // renderScale (X-mode) shrinks the result further; clamp stays in [4,96]
     // so tiny containers can't underflow.
-    const baseCell = Math.min(availW / baseAxis, availH / baseAxis)
-    const cell = Math.max(8, Math.min(96, baseCell * this.renderScale))
+    const baseCell = Math.min(availW / targetAxis, availH / targetAxis)
+    const cell = Math.max(MIN_CELL_SIZE, Math.min(96, baseCell * this.renderScale))
     this.cellPx = cell
 
     // Full-bleed: cover the ENTIRE element on both axes, partial cells
@@ -298,8 +301,8 @@ export class TileMapView {
     // clear area's vertical center (see pinAxis). No fit hysteresis: a ±1
     // cell change only adds/removes a clipped partial at an edge, so there's
     // no visible cell-drop to dampen.
-    const x = pinAxis(padLeft + availW / 2, cell, rect.width, baseAxis)
-    const y = pinAxis(padTop + occl + availH / 2, cell, rect.height, baseAxis)
+    const x = pinAxis(padLeft + availW / 2, cell, rect.width, minAxis)
+    const y = pinAxis(padTop + occl + availH / 2, cell, rect.height, minAxis)
 
     const prevCenterCol = this.centerCol
     const prevCenterRow = this.centerRow
@@ -345,7 +348,8 @@ export class TileMapView {
   }
 
   resetViewportSize(): void {
-    const axis = this.zoomMode ? ZOOM_AXIS : NORMAL_AXIS
+    const effectiveZoom = this.renderScale === 1.0 ? this.zoomScale : 1.0
+    const axis = Math.max(MIN_VIEW_AXIS, Math.floor(NORMAL_AXIS / effectiveZoom))
     this.centerCol = Math.floor(axis / 2)
     this.centerRow = Math.floor(axis / 2)
     this.setViewportSize(axis, axis)
