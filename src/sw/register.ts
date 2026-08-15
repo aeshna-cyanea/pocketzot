@@ -8,11 +8,13 @@ export function registerServiceWorker(): void {
     // Also retract an already-installed SW so the flag works for on-device
     // QA after a prod visit. Takes effect next launch (this page may stay
     // controlled); no auto-reload — surprising navigation isn't worth it.
-    navigator.serviceWorker.getRegistration().then((reg) => reg?.unregister())
+    navigator.serviceWorker.getRegistration(import.meta.env.BASE_URL).then((reg) => reg?.unregister())
     return
   }
   const register = () => {
-    navigator.serviceWorker.register('/sw.js').catch((err) => {
+    navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`, {
+      scope: import.meta.env.BASE_URL,
+    }).catch((err) => {
       console.warn('[sw] registration failed', err)
     })
   }

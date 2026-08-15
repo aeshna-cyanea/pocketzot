@@ -22,33 +22,35 @@
 // cache.put, so fetch-success alone doesn't mean cached. The probe is then
 // one cache lookup, offline-safe.
 
+import { appPath } from '../base-path'
+
 export const ARTIFACT_CACHE = 'pz-offline-artifacts'
 export const GAMEDATA_CACHE = 'pz-offline-gamedata'
 
 // Synthetic entries (leading __ can't collide with real files).
 const BUILD_KEYS: Record<string, string> = {
-  [ARTIFACT_CACHE]: '/offline/__build',
-  [GAMEDATA_CACHE]: '/gamedata/local/__build',
+  [ARTIFACT_CACHE]: appPath('/offline/__build'),
+  [GAMEDATA_CACHE]: appPath('/gamedata/local/__build'),
 }
 // Game-version label of the cached set ("0.34.1"), stamped alongside __build
 // so the readiness surface can name what's on the device while offline.
 const VERSION_KEYS: Record<string, string> = {
-  [ARTIFACT_CACHE]: '/offline/__version',
-  [GAMEDATA_CACHE]: '/gamedata/local/__version',
+  [ARTIFACT_CACHE]: appPath('/offline/__version'),
+  [GAMEDATA_CACHE]: appPath('/gamedata/local/__version'),
 }
 const COMPLETE_KEYS: Record<string, string> = {
-  [ARTIFACT_CACHE]: '/offline/__complete',
-  [GAMEDATA_CACHE]: '/gamedata/local/__complete',
+  [ARTIFACT_CACHE]: appPath('/offline/__complete'),
+  [GAMEDATA_CACHE]: appPath('/gamedata/local/__complete'),
 }
 
 // The boot-critical engine set, as fetchArtifact alternative-lists (gzipped
 // name first, plain fallback for older installs). Prewarm is optional at
 // deploy time but all-or-nothing once its manifest is present.
-const ENGINE_GLUE = ['/offline/crawl.js']
-const ENGINE_WASM = ['/offline/crawl.wasm.gz', '/offline/crawl.wasm']
-const ENGINE_DATA = ['/offline/crawl.data.gz', '/offline/crawl.data']
-const PREWARM_MANIFEST = ['/offline/prewarm/manifest.json']
-const PREWARM_BIN = ['/offline/prewarm/prewarm.bin.gz', '/offline/prewarm/prewarm.bin']
+const ENGINE_GLUE = [appPath('/offline/crawl.js')]
+const ENGINE_WASM = [appPath('/offline/crawl.wasm.gz'), appPath('/offline/crawl.wasm')]
+const ENGINE_DATA = [appPath('/offline/crawl.data.gz'), appPath('/offline/crawl.data')]
+const PREWARM_MANIFEST = [appPath('/offline/prewarm/manifest.json')]
+const PREWARM_BIN = [appPath('/offline/prewarm/prewarm.bin.gz'), appPath('/offline/prewarm/prewarm.bin')]
 
 // Tiles gamedata file set when the install ships no manifest.json (installs
 // before 2026-07-14). The manifest, when present, is authoritative — the
@@ -83,7 +85,7 @@ export type VersionInfo =
 
 export async function fetchVersion(timeoutMs = 4000): Promise<VersionInfo> {
   try {
-    const r = await fetch('/offline/version.json', {
+    const r = await fetch(appPath('/offline/version.json'), {
       cache: 'no-cache',
       signal: typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(timeoutMs) : undefined,
     })
@@ -264,7 +266,7 @@ export async function markEngineSetComplete(cache: Cache | null): Promise<boolea
 
 async function markGamedataComplete(cache: Cache, files: string[]): Promise<boolean> {
   for (const f of files) {
-    if (!await cache.match(`/gamedata/local/${f}`)) return false
+    if (!await cache.match(appPath(`/gamedata/local/${f}`))) return false
   }
   await cache.put(COMPLETE_KEYS[GAMEDATA_CACHE], new Response('1')).catch(() => { /* quota */ })
   return true
@@ -460,7 +462,7 @@ export async function downloadOfflineData(
     const files = await gamedataFileList(gamedata, stats) ?? []
     for (const [i, f] of files.entries()) {
       onProgress(`Downloading tiles ${i + 1}/${files.length}…`)
-      await fetchArtifact(gamedata, stats, `/gamedata/local/${f}`)
+      await fetchArtifact(gamedata, stats, appPath(`/gamedata/local/${f}`))
     }
     if (!await markGamedataComplete(gamedata, files))
       throw new Error('tile data did not fit in storage')
@@ -475,7 +477,7 @@ export async function downloadOfflineData(
 // null as "nothing left to fetch" and marks the empty set complete.
 async function gamedataFileList(cache: Cache, stats: FetchStats): Promise<string[] | null> {
   try {
-    const raw = await fetchArtifact(cache, stats, '/gamedata/local/manifest.json')
+    const raw = await fetchArtifact(cache, stats, appPath('/gamedata/local/manifest.json'))
     const files = (JSON.parse(new TextDecoder().decode(raw)) as { files?: unknown }).files
     if (Array.isArray(files) && files.every((f) => typeof f === 'string') && files.length > 0)
       return files
@@ -487,7 +489,7 @@ async function gamedataFileList(cache: Cache, stats: FetchStats): Promise<string
   // Distinguish "no manifest but files exist" from "no gamedata deployed":
   // probe the one file every install ships.
   try {
-    await fetchArtifact(cache, stats, `/gamedata/local/${GAMEDATA_FALLBACK_FILES[0]}`)
+    await fetchArtifact(cache, stats, appPath(`/gamedata/local/${GAMEDATA_FALLBACK_FILES[0]}`))
     return GAMEDATA_FALLBACK_FILES
   } catch (e) {
     if (!isAbsent(e)) throw e

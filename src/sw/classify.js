@@ -15,6 +15,15 @@ export const PRECACHE_EXTRAS = [
   '/icon-maskable-512.png',
 ]
 
+// Convert a deployed project path back to the root-relative vocabulary used
+// by classify(). Kept pure here so the classic-worker template and tests use
+// exactly the same boundary behavior.
+export function stripBasePath(path, basePath) {
+  if (!basePath) return path
+  if (path === basePath) return '/'
+  return path.startsWith(basePath + '/') ? path.slice(basePath.length) : path
+}
+
 // classify(url, {method, mode, sameOrigin}) →
 //   'network-first' | 'cache-first' | 'passthrough'
 // 'passthrough' never sees respondWith — browser default handling (game

@@ -37,14 +37,21 @@ function parseRootHeaders(): Record<string, string> {
 // disk here, and `bundle` is the authoritative emitted asset set.
 // Design: dev-material/service-worker-design.md.
 function swPrecache(): Plugin {
+  let basePath = ''
   return {
     name: 'pz-sw-precache',
     apply: 'build',
+    configResolved(config) {
+      // Vite normalizes pathname bases with a leading and trailing slash.
+      // The empty form keeps root-deploy output byte-compatible, while a
+      // project Pages build carries e.g. /pocketzot through every SW URL.
+      basePath = config.base === '/' ? '' : config.base.replace(/\/$/, '')
+    },
     writeBundle(options, bundle) {
       const outDir = options.dir ?? resolve(projectRoot, 'dist')
       const assetPaths = Object.keys(bundle)
         .filter((name) => name.startsWith('assets/'))
-        .map((name) => `/${name}`)
+        .map((name) => `${basePath}/${name}`)
         .sort()
       const shellHtml = readFileSync(resolve(outDir, 'index.html'), 'utf8')
       const shellHeaders = {
@@ -54,7 +61,7 @@ function swPrecache(): Plugin {
       const classifySrc = readFileSync(resolve(projectRoot, 'src/sw/classify.js'), 'utf8')
         .replace(/^export /gm, '')
       const template = readFileSync(resolve(projectRoot, 'src/sw/sw.js'), 'utf8')
-      const assets = [...assetPaths, ...PRECACHE_EXTRAS]
+      const assets = [...assetPaths, ...PRECACHE_EXTRAS.map((path) => basePath + path)]
       // The version names the whole SW generation (cache = pz-shell-<hash>),
       // so it must cover the SW's own code too: a template/classify-only
       // change would otherwise reuse the active generation's cache name, and
@@ -66,10 +73,13 @@ function swPrecache(): Plugin {
         .update(classifySrc)
         .update(template)
       for (const path of assets) {
-        hash.update(path).update(readFileSync(resolve(outDir, path.slice(1))))
+        // `path` is the deployed URL (possibly /project/assets/...), while
+        // Vite writes the artifact itself directly beneath outDir.
+        hash.update(path).update(readFileSync(resolve(outDir, path.slice(basePath.length + 1))))
       }
       const manifest = {
         version: hash.digest('hex').slice(0, 16),
+        basePath,
         shellHtml,
         shellHeaders,
         assets,

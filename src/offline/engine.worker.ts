@@ -200,6 +200,7 @@ import {
   bootArtifactsCached, cachedEngineBuild, fetchArtifact, fetchVersion, gunzipIfNeeded,
   markEngineSetComplete, newStats, openOfflineStores,
 } from './artifact-store'
+import { appPath } from '../base-path'
 
 const workerLog = (text: string): void => post({ type: 'log', text })
 
@@ -251,7 +252,7 @@ const PREWARM_STAMP_PATH = '/crawl/.pocketzot-prewarm'
 async function seedCaches(fs: CrawlFS, cache: Cache | null): Promise<void> {
   let manifest: { stamp: string | number, files: { path: string, offset: number, size: number }[] }
   try {
-    const raw = await fetchArtifact(cache, stats, '/offline/prewarm/manifest.json')
+    const raw = await fetchArtifact(cache, stats, appPath('/offline/prewarm/manifest.json'))
     manifest = JSON.parse(new TextDecoder().decode(raw)) as typeof manifest
   } catch {
     return // no prewarm shipped — the engine builds its caches itself
@@ -267,7 +268,7 @@ async function seedCaches(fs: CrawlFS, cache: Cache | null): Promise<void> {
   // One pack fetch for all ~575 cache files; nothing is written until the
   // whole pack is here, so a failed fetch can't leave a half-seeded set.
   const pack = new Uint8Array(await gunzipIfNeeded(await fetchArtifact(
-    cache, stats, '/offline/prewarm/prewarm.bin.gz', '/offline/prewarm/prewarm.bin')))
+    cache, stats, appPath('/offline/prewarm/prewarm.bin.gz'), appPath('/offline/prewarm/prewarm.bin'))))
 
   for (const f of manifest.files) {
     const path = `/crawl/${f.path}`
@@ -307,9 +308,9 @@ async function start(name: string): Promise<void> {
     // via HTML tags"), and a blob module bypasses its middleware entirely
     // while behaving identically in production.
     const [glueBuf, wasmBuf, dataBuf] = await Promise.all([
-      fetchArtifact(cache, stats, '/offline/crawl.js'),
-      fetchArtifact(cache, stats, '/offline/crawl.wasm.gz', '/offline/crawl.wasm').then(gunzipIfNeeded),
-      fetchArtifact(cache, stats, '/offline/crawl.data.gz', '/offline/crawl.data').then(gunzipIfNeeded),
+      fetchArtifact(cache, stats, appPath('/offline/crawl.js')),
+      fetchArtifact(cache, stats, appPath('/offline/crawl.wasm.gz'), appPath('/offline/crawl.wasm')).then(gunzipIfNeeded),
+      fetchArtifact(cache, stats, appPath('/offline/crawl.data.gz'), appPath('/offline/crawl.data')).then(gunzipIfNeeded),
     ])
     wasmBinary = new Uint8Array(wasmBuf)
     dataBuffer = dataBuf
@@ -401,7 +402,7 @@ async function start(name: string): Promise<void> {
         ...(glueSetsCrawlDir ? [] : ['-dir', '/crawl']),
         '-name', name, '-await-connection',
       ],
-      locateFile: (path) => `/offline/${path}`,
+      locateFile: (path) => appPath(`/offline/${path}`),
       pocketzotOnOutput: (chunk) => {
         if (outBuf.length === 0) queueMicrotask(flushOut)
         outBuf.push(chunk)

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 // @ts-expect-error plain-JS module (inlined into the classic-script SW at build)
-import { classify, PRECACHE_EXTRAS } from './classify.js'
+import { classify, PRECACHE_EXTRAS, stripBasePath } from './classify.js'
 
 const ORIGIN = 'https://pocketzot.app'
 
@@ -19,6 +19,14 @@ function run(
 }
 
 describe('classify — the design doc routing table', () => {
+  it('normalizes a GitHub project Pages prefix without touching other paths', () => {
+    expect(stripBasePath('/pocketzot/', '/pocketzot')).toBe('/')
+    expect(stripBasePath('/pocketzot/assets/index.js', '/pocketzot')).toBe('/assets/index.js')
+    expect(stripBasePath('/pocketzot-other/assets/index.js', '/pocketzot'))
+      .toBe('/pocketzot-other/assets/index.js')
+    expect(stripBasePath('/assets/index.js', '')).toBe('/assets/index.js')
+  })
+
   it('passes through non-GET and cross-origin requests', () => {
     expect(run('/', { method: 'POST', mode: 'navigate' })).toBe('passthrough')
     expect(run('https://crawl.dcss.io/gamedata/x/player.png', { origin: 'https://crawl.dcss.io' })).toBe('passthrough')

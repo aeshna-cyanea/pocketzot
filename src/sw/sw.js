@@ -7,14 +7,14 @@
 /* global self, caches */
 'use strict'
 
-// { version, shellHtml, shellHeaders, assets: ['/assets/…', …, manifest + icons] }
+// { version, basePath, shellHtml, shellHeaders, assets: [base-aware URLs] }
 const PRECACHE = __PRECACHE_MANIFEST__
 
 __CLASSIFY__
 
 const CACHE_NAME = 'pz-shell-' + PRECACHE.version
-// The shell is cached under '/' — Pages 308-redirects /index.html to /.
-const SHELL_URL = '/'
+// Root deployments use '/'; project Pages uses e.g. '/pocketzot/'.
+const SHELL_URL = PRECACHE.basePath + '/'
 // Bounds lie-fi only (a fetch that hangs instead of failing). Genuinely
 // offline, fetch() rejects in milliseconds and the fallback serves the
 // precache immediately — this timer never delays an airplane-mode launch.
@@ -78,7 +78,12 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url)
-  const strategy = classify(url, {
+  // classify.js intentionally reasons in root-relative app paths. Normalize
+  // the deployment prefix away for routing, while cache/fetch operations keep
+  // using the original request URL beneath the service worker's real scope.
+  const routeUrl = new URL(url)
+  routeUrl.pathname = stripBasePath(routeUrl.pathname, PRECACHE.basePath)
+  const strategy = classify(routeUrl, {
     method: event.request.method,
     mode: event.request.mode,
     sameOrigin: url.origin === self.location.origin,

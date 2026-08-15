@@ -13,6 +13,7 @@
 
 import { devLog, type GameConnection, type MessageHandler, type StateHandler } from '../ws/connection'
 import type { ClientMsg, ServerMsg } from '../ws/types'
+import { APP_BASE_PATH } from '../base-path'
 import { OFFLINE_WS_URL } from './offline-state'
 
 export class LocalConnection implements GameConnection {
@@ -35,11 +36,10 @@ export class LocalConnection implements GameConnection {
     return OFFLINE_WS_URL
   }
 
-  // '' makes getTileLoader's gamedata base resolve same-origin:
-  // /gamedata/local/ serves the offline engine's own enums.js (and, later,
-  // its tile atlases).
+  // The app base makes getTileLoader resolve the same-origin offline pack at
+  // /gamedata/local/ on root deploys or /<project>/gamedata/local/ on Pages.
   get httpBase(): string {
-    return ''
+    return APP_BASE_PATH
   }
 
   constructor() {
