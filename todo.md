@@ -1,10 +1,11 @@
 multitouch
-	modifier keys (holding finger on shift key lets it modify multiple keys)
+	support for holding modifier keys while tapping letters
 
-other touch
-	when user is safe, single taps on screen navigate (by sending X then a sequence of arrow keys to navigate to the tile, then enter).
-	long press shows tile info (like right click on desktop webtiles, maybe send the click as well?)
+other touch controls
+	tap to walk around like in webtiles
+		option for safe navigation (maybe by sending the keys X > a sequence of direction keys to navigate to the tapped tile > enter).
+	long press shows tile info (like right click on desktop webtiles)
 
-more robust reconnection - app seems kinda flaky
+more robust reconnection - app seems kinda flaky. think about how to test
 
-character sprites on main menu don't reconnect to that specific game
+tapping character sprites on main menu should resume that character's game
