@@ -1,4 +1,4 @@
-name: Deploy offline PocketZot to GitHub Pages
+name: Deploy PocketZot to GitHub Pages
 
 on:
   push:
@@ -29,9 +29,6 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-
-      - name: Fetch offline engine and tiles
-        run: node .github/fetch-offline.mjs
 
       - name: Type-check
         run: npx tsc --noEmit
