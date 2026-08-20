@@ -1,5 +1,5 @@
 /*
-  Content-Security-Policy: default-src 'self'; connect-src 'self' wss: https://cloudflareinsights.com; script-src 'self' blob: 'wasm-unsafe-eval' https://static.cloudflareinsights.com https://crawl.akrasiac.org:8443 https://cbro.berotato.org:8443 https://crawl.dcss.io https://crawl.roguelikes.gg https://crawl-br.roguelikes.gg https://crawl.xtahua.com https://underhound.eu:8080 https://crawl.nemelex.cards https://crawl.project357.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://crawl.akrasiac.org:8443 https://cbro.berotato.org:8443 https://crawl.dcss.io https://crawl.roguelikes.gg https://crawl-br.roguelikes.gg https://crawl.xtahua.com https://underhound.eu:8080 https://crawl.nemelex.cards https://crawl.project357.org; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+  Content-Security-Policy: default-src 'self'; connect-src 'self' ws: wss: https://cloudflareinsights.com; script-src 'self' blob: 'wasm-unsafe-eval' https: http:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: http:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
   Strict-Transport-Security: max-age=31536000; includeSubDomains
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer

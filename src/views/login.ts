@@ -2,8 +2,8 @@ import { WsConnection } from '../ws/connection'
 import type { ServerMsg } from '../ws/types'
 import { listSessions, saveSession, type StoredSession } from '../auth/session'
 import { SESSION_EXPIRED_NOTICE, tokenLogin } from '../auth/token-login'
-import { findServer, KNOWN_SERVERS, SPECTATE_SERVERS, labelFor } from '../servers'
-import { getLastSpectateServer, getPref, setLastSpectateServer, LOGIN_SPRITES_CHANGED_EVENT } from '../prefs'
+import { findServer, KNOWN_SERVERS, labelFor, normalizeServerUrl } from '../servers'
+import { getPref, LOGIN_SPRITES_CHANGED_EVENT } from '../prefs'
 import { openAboutDoc, openChangelogDoc, unreadDotHtml } from './docs'
 import { openSettings } from './settings-view'
 import { decorateLogo } from '../logo'
@@ -24,6 +24,8 @@ export interface LoginResult {
   guest?: boolean
 }
 
+const CUSTOM_SERVER_VALUE = '__custom_server__'
+
 export function buildLoginView(
   onLogin: (result: LoginResult) => void,
   // Shown in the error slot on mount — how the app explains an involuntary
@@ -32,6 +34,15 @@ export function buildLoginView(
   // Opens the offline lobby (save slots for the on-device WASM engine). When
   // absent the offline card is not rendered.
   onOffline?: () => void,
+  // Deep-linked `?server=` route. It selects the shared online server control
+  // but never submits credentials or opens a socket without a user action.
+  initialWsUrl?: string,
+  // Called at intent time (picker change / account or connect action), before
+  // opening a socket, so app.ts can expose `?server=` immediately.
+  onServerRoute?: (wsUrl: string, username?: string) => void,
+  // A routed account identity. This is public URL state, not a credential;
+  // the password remains exclusively in the password field/WebTiles frame.
+  initialUsername?: string,
 ): HTMLElement {
   const view = document.createElement('div')
   view.id = 'login-view'
@@ -39,13 +50,22 @@ export function buildLoginView(
   const sessions = listSessions()
   const hasSessions = sessions.length > 0
 
-  // Reused form contents — wrapped in a `<details>` toggle when the user
-  // already has saved sessions, or rendered as a plain Sign-in section when
-  // they don't.
+  // Reused connection controls — wrapped in a `<details>` toggle when the
+  // user already has saved sessions, or rendered directly when they don't.
   const formInnerHtml = `
     <label class="login-label">
       Server
       <select id="server-select"></select>
+    </label>
+    <label id="custom-server-label" class="login-label" hidden>
+      Custom WebSocket URL
+      <input id="custom-server-url" type="url" inputmode="url" autocomplete="url"
+             placeholder="wss://example.org/socket" spellcheck="false"
+             autocorrect="off" autocapitalize="off"
+             aria-describedby="custom-server-hint" />
+      <span id="custom-server-hint" class="login-field-hint">
+        Only connect to WebTiles servers you trust.
+      </span>
     </label>
     <label class="login-label">
       Username
@@ -56,7 +76,12 @@ export function buildLoginView(
       Password
       <input id="login-pass" type="password" autocomplete="current-password" required />
     </label>
-    <button id="login-btn" type="submit" class="login-btn">Connect</button>
+    <div class="login-action-row">
+      <button id="login-btn" type="submit" class="login-btn">Connect</button>
+      <button id="spectate-btn" type="button" class="login-btn login-btn-spectate">
+        Spectate as guest
+      </button>
+    </div>
   `
 
   // About / What's new are rendered in-app from the committed ABOUT.md /
@@ -77,7 +102,7 @@ export function buildLoginView(
   const addAccountSection = hasSessions
     ? `
       <details id="add-account" class="login-subsection login-add-section">
-        <summary class="login-add-toggle">Add another account</summary>
+        <summary class="login-add-toggle">Connect to a server</summary>
         <form id="login-form" autocomplete="on" novalidate class="login-add-form">
           ${formInnerHtml}
         </form>
@@ -85,7 +110,7 @@ export function buildLoginView(
     `
     : `
       <div class="login-subsection login-signin-section">
-        <div class="login-sub-label">Sign in</div>
+        <div class="login-sub-label">Connect to a server</div>
         <form id="login-form" autocomplete="on" novalidate>
           ${formInnerHtml}
         </form>
@@ -115,14 +140,6 @@ export function buildLoginView(
 
         ${addAccountSection}
 
-        <div class="login-subsection login-spectate-section">
-          <div class="login-sub-label">Spectate as guest</div>
-          <div class="login-spectate-row">
-            <select id="spectate-select" class="login-spectate-select" aria-label="Server"></select>
-            <button id="spectate-btn" type="button" class="login-btn login-btn-spectate">Spectate →</button>
-          </div>
-          <div id="spectate-error" class="login-error" style="display:none" role="alert"></div>
-        </div>
       </section>
 
       ${onOffline ? `
@@ -146,12 +163,13 @@ export function buildLoginView(
   `
 
   const formSelect = view.querySelector<HTMLSelectElement>('#server-select')!
-  const spectateSelect = view.querySelector<HTMLSelectElement>('#spectate-select')!
+  const customLabel = view.querySelector<HTMLLabelElement>('#custom-server-label')!
+  const customInput = view.querySelector<HTMLInputElement>('#custom-server-url')!
   const userInput = view.querySelector<HTMLInputElement>('#login-user')!
   const passInput = view.querySelector<HTMLInputElement>('#login-pass')!
   const errorEl = view.querySelector<HTMLElement>('#login-error')!
-  const spectateErrorEl = view.querySelector<HTMLElement>('#spectate-error')!
   const btn = view.querySelector<HTMLButtonElement>('#login-btn')!
+  const spectateBtn = view.querySelector<HTMLButtonElement>('#spectate-btn')!
 
   decorateLogo(view.querySelector<HTMLElement>('.login-title')!)
 
@@ -183,30 +201,68 @@ export function buildLoginView(
     o1.value = s.wsUrl; o1.textContent = s.label
     formSelect.appendChild(o1)
   }
-  // Hostnames, not the server tags: this is the home screen, where a visitor
-  // without an account is the likeliest person to use it, and "CDI" means
-  // nothing to them. The compressed row has the width for a hostname anyway
-  // (measured) — the tag belongs in the lobby chip, which genuinely doesn't.
-  for (const s of SPECTATE_SERVERS) {
-    const o2 = document.createElement('option')
-    o2.value = s.wsUrl; o2.textContent = s.label
-    spectateSelect.appendChild(o2)
+  // A custom server that issued a saved login token is a first-class account:
+  // keep its endpoint in the picker as well as its account card. The final
+  // sentinel opens a blank field for adding another endpoint.
+  const savedCustomUrls = Array.from(new Set(sessions.flatMap((session) => {
+    const normalized = normalizeServerUrl(session.wsUrl)
+    return normalized && !findServer(normalized) ? [normalized] : []
+  })))
+  for (const wsUrl of savedCustomUrls) {
+    const option = document.createElement('option')
+    option.value = wsUrl
+    option.textContent = wsUrl
+    formSelect.appendChild(option)
+  }
+  const customOption = document.createElement('option')
+  customOption.value = CUSTOM_SERVER_VALUE
+  customOption.textContent = 'Custom server…'
+  formSelect.appendChild(customOption)
+
+  // The shared login/spectate picker follows the most-recently-used account.
+  const topSession = sessions[0]
+  const topSessionUrl = topSession ? normalizeServerUrl(topSession.wsUrl) : null
+  if (topSessionUrl && Array.from(formSelect.options).some(o => o.value === topSessionUrl)) {
+    formSelect.value = topSessionUrl
+  }
+  const routedUrl = initialWsUrl ? normalizeServerUrl(initialWsUrl) : null
+  if (routedUrl) {
+    if (Array.from(formSelect.options).some(o => o.value === routedUrl)) {
+      formSelect.value = routedUrl
+    } else {
+      formSelect.value = CUSTOM_SERVER_VALUE
+      customInput.value = routedUrl
+    }
+  }
+  if (initialUsername) userInput.value = initialUsername
+
+  function syncCustomField(focus = false): void {
+    const custom = formSelect.value === CUSTOM_SERVER_VALUE
+    customLabel.hidden = !custom
+    if (custom && focus) customInput.focus()
   }
 
-  // Login-form dropdown follows the most-recently-used session's server.
-  // Spectate dropdown prefers the saved pref (last explicit guest pick),
-  // falling back to the session-derived prior when that server is also
-  // anonymously spectatable, otherwise the list top.
-  const topSession = sessions[0]
-  if (topSession && KNOWN_SERVERS.some(s => s.wsUrl === topSession.wsUrl)) {
-    formSelect.value = topSession.wsUrl
+  function selectedServerUrl(): string | null {
+    const raw = formSelect.value === CUSTOM_SERVER_VALUE ? customInput.value : formSelect.value
+    const wsUrl = normalizeServerUrl(raw)
+    if (!wsUrl) {
+      showError('Enter a valid ws:// or wss:// WebSocket URL.')
+      return null
+    }
+    return wsUrl
   }
-  const savedSpectate = getLastSpectateServer()
-  if (savedSpectate) {
-    spectateSelect.value = savedSpectate
-  } else if (topSession && SPECTATE_SERVERS.some(s => s.wsUrl === topSession.wsUrl)) {
-    spectateSelect.value = topSession.wsUrl
-  }
+
+  syncCustomField()
+  formSelect.addEventListener('change', () => {
+    clearErrors()
+    syncCustomField(true)
+    const wsUrl = formSelect.value === CUSTOM_SERVER_VALUE ? normalizeServerUrl(customInput.value) : formSelect.value
+    if (wsUrl) onServerRoute?.(wsUrl, userInput.value.trim() || undefined)
+  })
+  customInput.addEventListener('input', () => {
+    const wsUrl = normalizeServerUrl(customInput.value)
+    if (wsUrl) onServerRoute?.(wsUrl, userInput.value.trim() || undefined)
+  })
 
   view.querySelector('#login-about')!.addEventListener('click', (e) => {
     e.preventDefault()
@@ -414,6 +470,7 @@ export function buildLoginView(
 
   async function resumeWithToken(s: StoredSession, card: HTMLButtonElement): Promise<void> {
     clearErrors()
+    onServerRoute?.(s.wsUrl, s.username)
     card.disabled = true
 
     const conn = new WsConnection(s.wsUrl)
@@ -445,14 +502,17 @@ export function buildLoginView(
     e.preventDefault()
     clearErrors()
 
-    const wsUrl = formSelect.value
+    const wsUrl = selectedServerUrl()
+    if (!wsUrl) return
     const username = userInput.value.trim()
+    onServerRoute?.(wsUrl, username || undefined)
     const password = passInput.value
 
     if (!username) { showError('Please enter a username.'); return }
     if (!password) { showError('Please enter a password.'); return }
 
     btn.disabled = true
+    spectateBtn.disabled = true
     btn.textContent = 'Connecting…'
 
     const conn = new WsConnection(wsUrl)
@@ -461,6 +521,7 @@ export function buildLoginView(
     } catch {
       showError(`Could not connect to ${labelFor(wsUrl)}`)
       btn.disabled = false
+      spectateBtn.disabled = false
       btn.textContent = 'Connect'
       return
     }
@@ -478,20 +539,22 @@ export function buildLoginView(
         showError(msg.message || 'Login failed.')
         conn.close()
         btn.disabled = false
+        spectateBtn.disabled = false
         btn.textContent = 'Connect'
       }
     })
   })
 
-  const spectateBtn = view.querySelector<HTMLButtonElement>('#spectate-btn')!
   spectateBtn.addEventListener('click', async () => {
     clearErrors()
-    const wsUrl = spectateSelect.value
-    setLastSpectateServer(wsUrl)
+    const wsUrl = selectedServerUrl()
+    if (!wsUrl) return
+    onServerRoute?.(wsUrl)
     // The busy state pulses (login-busy) rather than relabelling: the
     // button's contents never change, so it can't resize and shove the
     // server picker's edge around mid-tap the way a "Connecting…" swap did.
     spectateBtn.disabled = true
+    btn.disabled = true
     spectateBtn.classList.add('login-busy')
     spectateBtn.setAttribute('aria-busy', 'true')
 
@@ -499,8 +562,9 @@ export function buildLoginView(
     try {
       await conn.connect()
     } catch {
-      showSpectateError(`Could not connect to ${labelFor(wsUrl)}`)
+      showError(`Could not connect to ${labelFor(wsUrl)}`)
       spectateBtn.disabled = false
+      btn.disabled = false
       spectateBtn.classList.remove('login-busy')
       spectateBtn.removeAttribute('aria-busy')
       return
@@ -510,20 +574,12 @@ export function buildLoginView(
   })
 
   function showError(msg: string): void {
-    spectateErrorEl.style.display = 'none'
     errorEl.textContent = msg
     errorEl.style.display = ''
   }
 
-  function showSpectateError(msg: string): void {
-    errorEl.style.display = 'none'
-    spectateErrorEl.textContent = msg
-    spectateErrorEl.style.display = ''
-  }
-
   function clearErrors(): void {
     errorEl.style.display = 'none'
-    spectateErrorEl.style.display = 'none'
   }
 
   return view

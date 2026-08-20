@@ -34,6 +34,7 @@ Progressive Web App.
 - Chat support.
 - Customizable controls.
 - Log in with multiple WebTiles server accounts and switch between them.
+- Connect to custom WebTiles servers and save their accounts normally.
 - Inline tap regions in many menus and descriptions for quick touch interaction.
 - Context-aware control sets for common situations.
 - Spectator mode with an expanded map view.
@@ -44,6 +45,26 @@ Progressive Web App.
 
 See [ABOUT.md](ABOUT.md) for more, including the controls model and the
 security and privacy notes.
+
+## URL routes
+
+PocketZot keeps the selected server and current screen in the URL. Choosing a
+server updates the URL before the connection attempt, which gives browser
+password managers a stable server-specific page to associate with the login.
+Routes use the standard WebTiles hash names, for example:
+
+- `?server=CDI&username=alice` (selected server / login pending)
+- `?server=CDI&username=alice#lobby`
+- `?server=CDI&username=alice#play-dcss-0.35`
+- `?server=CDI#watch-playername`
+- `?offline=1#lobby`
+- `?offline=1#play-charactername`
+
+Known server acronyms and hostnames are accepted in `server`; project Pages
+deployments retain their existing `/<repository>/` base path. The username is
+public URL state; passwords and WebTiles login tokens are never placed in the
+URL. Custom endpoints use their full, URL-encoded `ws://` or `wss://` address
+as the `server` value.
 
 ## Tech
 

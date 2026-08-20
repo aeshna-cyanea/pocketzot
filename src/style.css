@@ -463,61 +463,6 @@ html, body {
 .login-add-section[open] > summary::before { content: "−"; }
 .login-add-section[open] > summary { margin-bottom: 0.6rem; }
 
-.login-spectate-select {
-  display: block;
-  width: 100%;
-  background: var(--surface2);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--text-dim);
-  font-family: var(--font-mono);
-  font-size: 1rem;
-  padding: 0.5rem 0.75rem;
-  outline: none;
-  margin-bottom: 0.5rem;
-}
-.login-spectate-select:focus { border-color: var(--accent); color: var(--text); }
-
-/* Spectating stays a first-class path, but a one-line one: the server picker
-   and the go button share a row instead of stacking full-width under a label.
-   That's 37px back for the offline group below (measured, 402x874) without
-   costing a tap or hiding the path. Stretch, so the two controls are exactly
-   the same height rather than nearly.
-
-   The select's 10rem basis is a wrap threshold, not a width: it holds a
-   hostname (login.ts), and a phone narrow enough to clip that down to
-   "crawl.dc" (~320px) wraps the row back into the old full-width stack
-   instead, both children growing to fill their line. 375px keeps the single
-   row with the hostname intact, so the compression holds everywhere it helps
-   and gives way where it would cost legibility — no width breakpoint needed,
-   and none exists in this stylesheet to follow. */
-.login-spectate-row {
-  display: flex;
-  align-items: stretch;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-.login-spectate-row .login-spectate-select {
-  flex: 1 1 10rem;
-  min-width: 0;
-  width: auto;
-  margin-bottom: 0;
-  /* WebKit renders a menulist select at ~23px, ignoring its vertical padding,
-     so beside the button it would sit visibly short. Pin it to the button's
-     height — which also keeps the wrapped narrow layout, where there is no
-     button on the line to stretch against, identical to the single-row one.
-     `height`, not `min-height`: WebKit honours the former on a menulist and
-     ignores the latter (measured). rem so it still tracks the root font. */
-  height: 2.25rem;
-}
-.login-spectate-row .login-btn-spectate {
-  /* Grows only to fill its own line once wrapped; on the shared row the
-     select gets the slack, since the hostname is what needs the pixels. */
-  flex: 1 0 auto;
-  width: auto;
-  padding: 0.5rem 0.85rem;
-}
-
 .login-label {
   display: flex;
   flex-direction: column;
@@ -526,6 +471,7 @@ html, body {
   font-size: 0.85rem;
   color: var(--text-dim);
 }
+.login-label[hidden] { display: none; }
 
 .login-label input,
 .login-label select {
@@ -544,6 +490,12 @@ html, body {
 .login-label input:focus,
 .login-label select:focus { border-color: var(--accent); }
 .login-label select:focus { color: var(--text); }
+
+.login-field-hint {
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
 
 .login-error {
   color: var(--danger);
@@ -567,6 +519,18 @@ html, body {
 .login-btn:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* Login and guest spectating share one selected server. Keep the actions
+   adjacent when they fit and let both become full-width on narrow screens. */
+.login-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.login-action-row .login-btn {
+  flex: 1 1 9rem;
+  width: auto;
 }
 
 /* In-progress, as opposed to unavailable: a plain :disabled dim reads as the
@@ -4011,8 +3975,7 @@ button.lobby-account-chip.is-guest { cursor: pointer; }
   .login-subsection { margin-bottom: 0.7rem; }
   .login-label { margin-bottom: 0.5rem; font-size: 0.8rem; }
   .login-label input,
-  .login-label select,
-  .login-spectate-select { font-size: 0.9rem; padding: 0.4rem 0.6rem; }
+  .login-label select { font-size: 0.9rem; padding: 0.4rem 0.6rem; }
   .login-btn { padding: 0.5rem; font-size: 0.95rem; }
   .login-account-list { gap: 0.35rem; }
   .login-account-card { padding: 0.45rem 0.6rem; }

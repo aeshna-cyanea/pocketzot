@@ -5,11 +5,15 @@ import { buildLobbyView } from './views/lobby'
 import { buildOfflineLobbyView } from './views/offline-lobby'
 import { buildGameView, type SpectateTarget } from './views/game-view'
 import type { TileLoader } from './game/tiles/tile-loader'
-import { OFFLINE_GAME_ID } from './offline/offline-state'
-import { attemptResume, clearGameStart, loadPersistedResume, markProactiveClose } from './reconnect'
+import { OFFLINE_GAME_ID, validateOfflineName } from './offline/offline-state'
+import {
+  attemptResume, clearGameStart, loadPersistedResume, markProactiveClose, rememberGameStart,
+} from './reconnect'
 import { count } from './counter'
 import { getPref } from './prefs'
-import { loadSession } from './auth/session'
+import { listSessions, loadSession } from './auth/session'
+import { SESSION_EXPIRED_NOTICE, tokenLogin } from './auth/token-login'
+import { parseAppRoute, replaceRoute, type OnlineRoute } from './routes'
 
 type AppState = 'login' | 'lobby' | 'game'
 
@@ -19,6 +23,7 @@ let root: HTMLElement
 let currentUsername = ''
 let currentIsGuest = false
 let resumeActive = false
+let pendingOnlineRoute: OnlineRoute | null = null
 
 export function initApp(appEl: HTMLElement): void {
   root = appEl
@@ -43,14 +48,13 @@ export function initApp(appEl: HTMLElement): void {
       connLost()
     }
   })
-  // Offline play: ?offline=1 opens the offline lobby (save slots, backup
-  // management) with no server or login. Checked before the resume path so a
-  // stale online-resume record can't hijack the boot. The URL flag is a
-  // dev/debug convenience — the real entry point is the login view's offline
-  // card (onOffline below). ?engine=fake (a golden-fixture replay) skips the
-  // lobby and mounts the game view directly: fixtures have no save slot, and
-  // the replay flows drive rendering, not slot management.
+  // Offline routes open either the save-slot lobby or one named game with no
+  // server or login. Checked before the resume path so a stale online-resume
+  // record can't hijack the boot. ?engine=fake (a golden-fixture replay)
+  // skips the lobby and mounts the game view directly: fixtures have no save
+  // slot, and the replay flows drive rendering, not slot management.
   const params = new URLSearchParams(location.search)
+  const initialRoute = parseAppRoute(location)
   // Perf harness: ?replay=<recording> replays a __dcssRec capture through the
   // real game view with instrumentation (src/perf/replay.ts) — a lab bench,
   // not a session: no login, no resume, no server. Checked first so a stale
@@ -64,9 +68,16 @@ export function initApp(appEl: HTMLElement): void {
     })().catch((e: unknown) => showFatal(`Replay failed: ${e instanceof Error ? e.message : String(e)}`))
     return
   }
-  if (params.has('offline')) {
+  if (initialRoute.kind === 'offline-lobby' || initialRoute.kind === 'offline-play') {
     if (params.get('engine') === 'fake') void showOfflineGame('local')
+    else if (initialRoute.kind === 'offline-play' && !validateOfflineName(initialRoute.name)) {
+      void showOfflineGame(initialRoute.name)
+    }
     else showOfflineLobby()
+    return
+  }
+  if (initialRoute.kind.startsWith('online-')) {
+    openOnlineRoute(initialRoute as OnlineRoute)
     return
   }
   // A context in sessionStorage means iOS evicted the page mid-game (swap
@@ -82,14 +93,66 @@ export function initApp(appEl: HTMLElement): void {
   }
 }
 
+// A routed server can resume automatically only when it identifies one saved
+// account unambiguously. The stored value is WebTiles' rotating login token,
+// never the password. With zero or multiple accounts, leave the routed login
+// home visible and let the user choose an identity (or guest spectate).
+function openOnlineRoute(route: OnlineRoute): void {
+  // #lobby describes an authenticated screen. Strip it while login is still
+  // pending; unlike lobby, #play/#watch carry a destination that must survive
+  // authentication and therefore remain visible.
+  const pending: OnlineRoute = route.kind === 'online-lobby'
+    ? { kind: 'online-login', wsUrl: route.wsUrl, loginUsername: route.loginUsername }
+    : route
+  pendingOnlineRoute = pending
+  showLogin(undefined, pending)
+  const sessions = listSessions().filter(session =>
+    session.wsUrl === pending.wsUrl
+    && (!pending.loginUsername
+      || session.username.toLowerCase() === pending.loginUsername.toLowerCase()),
+  )
+  if (sessions.length !== 1) return
+
+  const session = sessions[0]!
+  const next = new WsConnection(pending.wsUrl)
+  void next.connect().then(() => {
+    // The user may have navigated elsewhere while the socket opened.
+    if (pendingOnlineRoute !== pending || state !== 'login') {
+      next.close()
+      return
+    }
+    tokenLogin(next, session, {
+      onSuccess: (username, flush) => {
+        if (pendingOnlineRoute !== pending || state !== 'login') {
+          next.close()
+          return
+        }
+        enterLobby(next, username, false)
+        flush()
+      },
+      onFail: () => {
+        next.close()
+        if (pendingOnlineRoute === pending && state === 'login') {
+          showLogin(SESSION_EXPIRED_NOTICE, pending)
+        }
+      },
+    })
+  }).catch(() => {
+    if (pendingOnlineRoute === pending && state === 'login') {
+      showLogin('Could not connect to the selected server.', pending)
+    }
+  })
+}
+
 // The offline "server" lobby: the on-device analog of showLobby — save-slot
 // list, new-character flow, backup export/import (views/offline-lobby.ts).
 // No connection exists here; back returns to the login home.
-function showOfflineLobby(exit?: GameExit): void {
+function showOfflineLobby(exit?: GameExit, syncRoute = true): void {
   conn?.close()
   conn = null
   state = 'lobby'
   clearGameStart()
+  if (syncRoute) replaceRoute({ kind: 'offline-lobby' })
   setView(buildOfflineLobbyView(
     (name) => { void showOfflineGame(name) },
     () => showLogin(),
@@ -128,21 +191,20 @@ async function showOfflineGame(name: string): Promise<void> {
   conn = boot.conn
   currentUsername = name
   currentIsGuest = false
+  replaceRoute({ kind: 'offline-play', name })
   setView(buildGameView(
     boot.conn,
     (exit) => {
       boot.dispose()
       conn = null
-      // Drop the ?offline flag with the session: a later reload (e.g. the
-      // iOS eviction path mid-online-game) must not boot back into offline.
-      // Only that flag — the dev params (?engine=fake, ?fixture, ?perf) must
-      // survive, or the next game this session boots a different engine
-      // than the one under test.
-      const p = new URLSearchParams(location.search)
-      p.delete('offline')
-      const qs = p.toString()
-      history.replaceState(null, '', location.pathname + (qs ? `?${qs}` : ''))
-      showOfflineLobby(exit)
+      // Fixture replays are a lab surface, not a persistent offline route:
+      // preserve their dev params but drop ?offline after the run as before.
+      if (params.get('engine') === 'fake') {
+        replaceRoute({ kind: 'home' })
+        showOfflineLobby(exit, false)
+      } else {
+        showOfflineLobby(exit)
+      }
     },
     undefined,
     undefined,
@@ -153,14 +215,32 @@ async function showOfflineGame(name: string): Promise<void> {
   boot.start()
 }
 
-function showLogin(notice?: string): void {
+function showLogin(notice?: string, routed?: OnlineRoute): void {
   conn?.close()
   conn = null
   state = 'login'
   clearGameStart()
+  if (routed) replaceRoute(routed)
+  else {
+    pendingOnlineRoute = null
+    replaceRoute({ kind: 'home' })
+  }
   setView(buildLoginView((result) => {
     enterLobby(result.conn, result.username, result.guest ?? false)
-  }, notice, () => showOfflineLobby()))
+  }, notice, () => showOfflineLobby(), routed?.wsUrl, selectOnlineServer, routed?.loginUsername))
+}
+
+// Server selection is navigation even before a socket opens: expose it in the
+// URL as soon as the user changes a picker or chooses an account, so password
+// managers and copied links see the intended WebTiles origin discriminator.
+function selectOnlineServer(wsUrl: string, loginUsername?: string): void {
+  // A login action for the same deep-linked server must not erase its pending
+  // #play/#watch target. A deliberate picker change to another server does.
+  const route: OnlineRoute = pendingOnlineRoute?.wsUrl === wsUrl
+    ? { ...pendingOnlineRoute, loginUsername: loginUsername || pendingOnlineRoute.loginUsername }
+    : { kind: 'online-login', wsUrl, loginUsername }
+  pendingOnlineRoute = route
+  replaceRoute(route)
 }
 
 // Every route onto a server ends the same way: take the connection, record who
@@ -170,17 +250,41 @@ function enterLobby(c: GameConnection, username: string, guest: boolean, exit?: 
   adoptConn(c)
   currentUsername = username
   currentIsGuest = guest
-  showLobby(username, guest, exit)
+  const pending = pendingOnlineRoute?.wsUrl === c.wsUrl ? pendingOnlineRoute : null
+  const destination = pending && !guest ? { ...pending, loginUsername: username } : pending
+  pendingOnlineRoute = null
+  const routedGameId = destination?.kind === 'online-play' && !guest ? destination.gameId : ''
+  showLobby(username, guest, exit, routedGameId)
+  if (destination?.kind === 'online-watch') {
+    rememberGameStart(
+      { kind: 'watch', username: destination.username },
+      { wsUrl: c.wsUrl, username, guest },
+    )
+    replaceRoute(destination)
+    c.send({ msg: 'watch', username: destination.username })
+  } else if (destination?.kind === 'online-play' && !guest) {
+    rememberGameStart(
+      { kind: 'play', gameId: destination.gameId },
+      { wsUrl: c.wsUrl, username, guest },
+    )
+    replaceRoute(destination)
+    c.send({ msg: 'play', game_id: destination.gameId })
+  }
 }
 
-function showLobby(username: string, guest: boolean, exit?: GameExit): void {
+function showLobby(username: string, guest: boolean, exit?: GameExit, routedGameId = ''): void {
   state = 'lobby'
   clearGameStart()
+  replaceRoute({
+    kind: 'online-lobby',
+    wsUrl: conn!.wsUrl,
+    loginUsername: guest ? undefined : username,
+  })
   setView(buildLobbyView(
     conn!,
     username,
     guest,
-    (spectating, loader, gameId) => showGame(spectating, loader, gameId),
+    (spectating, loader, gameId) => showGame(spectating, loader, gameId || routedGameId),
     () => showLogin(),
     exit,
     guest ? switchSpectateServer : undefined,
@@ -210,15 +314,31 @@ async function switchSpectateServer(wsUrl: string): Promise<void> {
 }
 
 function showGame(spectating?: SpectateTarget, loader?: TileLoader, gameId?: string): void {
+  const resolvedGameId = spectating ? '' : gameId || ''
   count(spectating ? 'spectate' : 'play', { ascii: getPref('mapRenderMode') === 'ascii' })
   state = 'game'
+  if (spectating) {
+    replaceRoute({
+      kind: 'online-watch',
+      wsUrl: conn!.wsUrl,
+      username: spectating.username,
+      loginUsername: currentIsGuest ? undefined : currentUsername,
+    })
+  } else if (resolvedGameId) {
+    replaceRoute({
+      kind: 'online-play',
+      wsUrl: conn!.wsUrl,
+      gameId: resolvedGameId,
+      loginUsername: currentUsername,
+    })
+  }
   setView(buildGameView(
     conn!,
     (exit) => showLobby(currentUsername, currentIsGuest, exit),
     spectating,
     loader,
     currentUsername,
-    gameId,
+    resolvedGameId,
     currentIsGuest,
   ))
 }

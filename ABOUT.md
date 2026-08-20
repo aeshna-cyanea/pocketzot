@@ -14,6 +14,7 @@ DCSS has no app on the App Store, but you don't need one: install PocketZot like
 - Chat support
 - Customizable controls
 - Log in with multiple WebTiles server accounts and switch between them
+- Connect to custom WebTiles servers; their accounts are saved normally
 - Inline tap targets in many menus and descriptions
 - Context-aware control sets for common situations
 - Spectator mode with an expanded map view
@@ -51,7 +52,9 @@ Current stable and trunk DCSS are supported. Versions back to 0.24 generally wor
 
 ## Security and privacy
 
-PocketZot has no accounts of its own. Your browser connects directly to your chosen DCSS server over an encrypted WebSocket, just like the desktop WebTiles client. Credentials go only in the login message and are never stored. Saved logins keep the server's session cookie, not your password. The site records anonymous usage counts.
+PocketZot has no accounts of its own. Your browser connects directly to your chosen DCSS server over WebSocket, just like the desktop WebTiles client; all built-in servers use encrypted `wss://` connections. Credentials go only in the login message and are never stored. Saved logins keep the server's session cookie, not your password. The site records anonymous usage counts.
+
+Custom servers also supply WebTiles tile metadata as JavaScript, just as the built-in servers do. Only connect to a custom server you trust.
 
 ## How it was built
 

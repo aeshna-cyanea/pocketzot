@@ -1,5 +1,6 @@
-// Hosts here must also be allowlisted in public/_headers (script-src + img-src)
-// for tile sprites and tileinfo modules to load through the production CSP.
+// The production CSP permits HTTP(S) tile assets by scheme because custom
+// servers cannot be enumerated at build time. See the trust warning beside
+// the custom-server field and in ABOUT.md.
 //
 // `tag` is the official server acronym from the DCSS howto
 // (https://crawl.develz.org/wordpress/howto), used as a compact label in
@@ -38,4 +39,21 @@ export function tagFor(wsUrl: string): string {
 
 export function labelFor(wsUrl: string): string {
   return findServer(wsUrl)?.label ?? wsUrl
+}
+
+// Canonicalize user-entered WebTiles socket URLs before they become route,
+// session, or connection identity. Embedded credentials and fragments are
+// rejected: neither belongs in a WebSocket endpoint, and credentials must
+// never leak into PocketZot's public URL state.
+export function normalizeServerUrl(raw: string): string | null {
+  const value = raw.trim()
+  if (!value) return null
+  try {
+    const url = new URL(value)
+    if (url.protocol !== 'ws:' && url.protocol !== 'wss:') return null
+    if (!url.hostname || url.username || url.password || url.hash) return null
+    return url.href
+  } catch {
+    return null
+  }
 }
