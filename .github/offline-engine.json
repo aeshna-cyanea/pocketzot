@@ -1,11 +1,11 @@
 {
   "repository": "aeshna-cyanea/crawl",
-  "tag": "engine-b58825c73ae6",
-  "asset": "pocketzot-offline-b58825c73ae6.tar.gz",
-  "bytes": 18492701,
-  "sha256": "9263356f29b28e8dc98a7943c6af29395b889b3a4fbeb94eb127bdaafe10504a",
-  "build": "b58825c73ae6",
-  "engineCommit": "d74616cfb7aaadac3fc5663419006a90bda6b1c7",
+  "tag": "engine-7eeb0304596d",
+  "asset": "pocketzot-offline-7eeb0304596d.tar.gz",
+  "bytes": 18491818,
+  "sha256": "b6ba7cbc97d70918ea2031b655f199fd43ef5b0ac517a204d1c5b31d3f581f65",
+  "build": "7eeb0304596d",
+  "engineCommit": "36cf9efc55500de8afe6aa7c6be80bb91fb51ecc",
   "crawlVersion": "0.35-a0-848-gd8b905dbbe",
   "crawlBase": "d8b905dbbe11af1a27670d0a61a53a580348959f"
 }

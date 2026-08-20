@@ -348,15 +348,21 @@ files. It verifies those files against `SHA256SUMS` before replacing the
 client's pin. To limit compiler parallelism, set the environment variable,
 for example `JOBS=8 npm run release:engine`.
 
+After publishing, the command creates an `Update offline engine release`
+commit using an explicit `.github/offline-engine.json` pathspec and pushes
+`origin/main`. Other staged or unstaged client changes are not included in the
+commit. If the final commit or push fails, the GitHub Release remains published
+and the verified pin remains in the working tree so the last steps can be
+retried without rebuilding the engine.
+
 The deployable archive contains `offline/`, `gamedata/local/`, and a release
 manifest. The Pages workflow reads its pin from
 [`.github/offline-engine.json`](../.github/offline-engine.json), downloads
 that exact release archive, verifies its pinned size and SHA-256 plus every
 file in `release.json`, and installs it under `public/` before the Vite build.
 The pin names a specific `engine-<build>` tag; deployment never follows
-GitHub's moving “Latest” release pointer. After `npm run release:engine`, review
-and commit the changed pin and submodule pointer. Do not commit the large
-generated files; `.gitignore` intentionally excludes them.
+GitHub's moving “Latest” release pointer. Do not commit the large generated
+files; `.gitignore` intentionally excludes them.
 
 To update the engine to newer Crawl, work in the submodule: fetch the selected
 upstream commit, merge or rebase the PocketZot commits onto it, update

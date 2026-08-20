@@ -10,7 +10,7 @@
     "test": "vitest",
     "check": "npm run typecheck && npm test -- --run",
     "build": "npm run check && vite build",
-    "release:engine": "engine/crawl-ref/source/wasm/release.sh --publish && node .github/fetch-offline.mjs --update-pin engine/crawl-ref/source/wasm/dist/release",
+    "release:engine": "engine/crawl-ref/source/wasm/release.sh --publish && node .github/fetch-offline.mjs --update-pin engine/crawl-ref/source/wasm/dist/release && git commit -m \"Update offline engine release\" -- .github/offline-engine.json && git push origin main",
     "preview": "vite preview"
   },
   "devDependencies": {

@@ -81,10 +81,10 @@ describe('offline deployment artifact', () => {
       new URL('../../.github/offline-engine.json', import.meta.url),
       'utf8',
     ))
-    expect(validateReleaseConfig(value)).toMatchObject({
-      repository: 'aeshna-cyanea/crawl',
-      build: 'b58825c73ae6',
-    })
+    const config = validateReleaseConfig(value)
+    expect(config.repository).toBe('aeshna-cyanea/crawl')
+    expect(config.tag).toBe(`engine-${config.build}`)
+    expect(config.asset).toBe(`pocketzot-offline-${config.build}.tar.gz`)
   })
 
   it('rejects a tag or asset that does not name the pinned build', () => {
