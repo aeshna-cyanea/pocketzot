@@ -43,15 +43,15 @@ interface CrawlFS {
 interface CrawlOverrides {
   arguments?: string[]
   locateFile?: (path: string) => string
+  instantiateWasm?: (
+    imports: WebAssembly.Imports,
+    receiveInstance: (instance: WebAssembly.Instance, module?: WebAssembly.Module) => void,
+  ) => void
   pocketzotOnOutput?: (chunk: string) => void
   onExit?: (code: number) => void
   print?: (text: string) => void
   printErr?: (text: string) => void
   pocketzotSeedCaches?: (fs: CrawlFS) => Promise<void>
-  // Pre-fetched engine bytes: with these provided the Emscripten glue does
-  // no artifact fetches of its own, which is what routes everything through
-  // the worker's cache+gunzip path below.
-  wasmBinary?: Uint8Array
   getPreloadedPackage?: (name: string, size: number) => ArrayBuffer
 }
 
@@ -295,7 +295,7 @@ async function start(name: string): Promise<void> {
   // same exit path as a missing artifact.
   let cache: Cache | null = null
   let factory: CrawlFactory
-  let wasmBinary: Uint8Array
+  let wasmBinary: Uint8Array<ArrayBuffer>
   let dataBuffer: ArrayBuffer
   let glueSetsCrawlDir = false
   try {
@@ -412,7 +412,17 @@ async function start(name: string): Promise<void> {
       print: (text) => post({ type: 'log', text }),
       printErr: (text) => post({ type: 'log', text }),
       pocketzotSeedCaches: (fs) => seedCaches(fs, cache),
-      wasmBinary,
+      // Emscripten 6 async worker builds no longer consume
+      // Module.wasmBinary by default. Instantiate explicitly from the bytes
+      // fetched and gunzipped above, exactly like the engine's
+      // wasm/bake-caches.mjs. Older glue supports this hook too, so cached
+      // pre-Emscripten-6 engine sets remain bootable without a second
+      // /offline/crawl.wasm network request.
+      instantiateWasm: (imports, receiveInstance) => {
+        const compiled = new WebAssembly.Module(wasmBinary)
+        const instance = new WebAssembly.Instance(compiled, imports)
+        receiveInstance(instance, compiled)
+      },
       getPreloadedPackage: (_name, size) => {
         if (size !== dataBuffer.byteLength)
           post({ type: 'log', text: `crawl.data size mismatch: glue expects ${size}, have ${dataBuffer.byteLength}` })
