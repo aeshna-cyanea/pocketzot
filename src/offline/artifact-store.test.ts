@@ -148,6 +148,20 @@ describe('fetchArtifact', () => {
       .rejects.toThrow('HTTP 404')
     expect(await c.match('/offline/missing')).toBeUndefined()
   })
+
+  it('evicts an old cached SPA shell and refetches the real artifact', async () => {
+    const c = await artifactCache()
+    await c.put('/offline/crawl.wasm.gz', new Response('<!DOCTYPE html><html>'))
+    stubFetch({ '/offline/crawl.wasm.gz': { body: 'real-wasm', type: 'application/gzip' } })
+
+    const stats = newStats()
+    const buf = await fetchArtifact(c as unknown as Cache, stats, '/offline/crawl.wasm.gz')
+
+    expect(new TextDecoder().decode(buf)).toBe('real-wasm')
+    expect(stats).toEqual({ cacheHits: 0, netFetches: 1, netBytes: 9 })
+    expect(new TextDecoder().decode(await (await c.match('/offline/crawl.wasm.gz'))!.arrayBuffer()))
+      .toBe('real-wasm')
+  })
 })
 
 describe('markEngineSetComplete', () => {
