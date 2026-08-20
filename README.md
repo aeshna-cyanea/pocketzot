@@ -49,6 +49,10 @@ security and privacy notes.
 
 TypeScript + [Vite](https://vitejs.dev).
 
+Want to understand or modify the code? Start with
+[Learning and hacking on PocketZot](docs/HACKING.md), which includes an
+architecture map, guided code tours, build/testing notes, and small exercises.
+
 ## License
 
 [AGPL-3.0-or-later](LICENSE). Copyright © 2026 the PocketZot developer.
