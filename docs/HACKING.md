@@ -32,15 +32,14 @@ The normal development commands are:
 
 ```sh
 npm run typecheck                     # Type-check application code
-npm run test:run                      # Run all Vitest tests once
-npm run test:run -- path/to/test.ts   # Run one test file
+npm test -- --run                     # Run all Vitest tests once
+npm test -- --run path/to/test.ts     # Run one test file
 npm run check                         # Type-check and run all tests
 npm run build                         # Check, then create dist/
 npm run preview -- --host 0.0.0.0
 ```
 
-`npm test` starts Vitest's watch mode. `npm run build:deploy` runs the same
-checked build, then deliberately removes offline artifacts from the result.
+`npm test` without `-- --run` starts Vitest's watch mode.
 
 ## The mental model
 
@@ -312,12 +311,9 @@ files already exist under
 If they do not exist, the client still builds but has no installable offline
 engine pack.
 
-The checked-in [Pages workflow](../.github/workflows/pages.yml) runs type
-checking, tests, and Vite on a clean GitHub runner. It currently neither builds
-nor downloads the ignored engine pack, so its Pages output is online-only.
-
-`npm run build:deploy` is specifically an online-only target: after the normal
-build it removes `dist/offline` and `dist/gamedata/local`.
+The checked-in [Pages workflow](../.github/workflows/pages.yml) downloads and
+verifies the exact engine release pinned by the repository, then runs the
+checked Vite build on a clean GitHub runner. It does not compile the engine.
 
 ### 2. The Crawl engine and deployable pack
 
@@ -329,23 +325,38 @@ not spend GitHub Actions CPU compiling Crawl and Emscripten.
 From `engine/crawl-ref/source`, the release command is:
 
 ```sh
-./wasm/release.sh --no-publish
+./wasm/release.sh
 ```
 
 It performs the native bootstrap, WASM build, first-boot cache prewarming,
 site packaging, source packaging, and checksums without contacting GitHub.
-The form without `--no-publish` additionally creates a GitHub release and has
-strict clean-branch and tooling checks. Details and manual stages are in the
-engine guide linked above.
+Passing `--publish` additionally creates a GitHub release and enables strict
+clean-branch, pushed-commit, and GitHub tooling checks. A local build does not
+need GitHub CLI; publishing requires an installed and authenticated `gh`.
+Details and manual stages are in the engine guide linked above.
+
+From the PocketZot repository root, the normal publishing command is:
+
+```sh
+npm run release:engine
+```
+
+That package script deliberately calls `release.sh --publish`, then uses the
+existing offline fetch tool's `--update-pin` mode to derive the archive size,
+SHA-256, build, engine commit, and Crawl provenance from the generated release
+files. It verifies those files against `SHA256SUMS` before replacing the
+client's pin. To limit compiler parallelism, set the environment variable,
+for example `JOBS=8 npm run release:engine`.
 
 The deployable archive contains `offline/`, `gamedata/local/`, and a release
 manifest. The Pages workflow reads its pin from
 [`.github/offline-engine.json`](../.github/offline-engine.json), downloads
 that exact release archive, verifies its pinned size and SHA-256 plus every
 file in `release.json`, and installs it under `public/` before the Vite build.
-Updating the engine therefore means publishing the local release candidate,
-then updating this pin in the client. Do not commit the large generated files;
-`.gitignore` intentionally excludes them.
+The pin names a specific `engine-<build>` tag; deployment never follows
+GitHub's moving “Latest” release pointer. After `npm run release:engine`, review
+and commit the changed pin and submodule pointer. Do not commit the large
+generated files; `.gitignore` intentionally excludes them.
 
 To update the engine to newer Crawl, work in the submodule: fetch the selected
 upstream commit, merge or rebase the PocketZot commits onto it, update

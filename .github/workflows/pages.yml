@@ -1,4 +1,4 @@
-name: Deploy PocketZot to GitHub Pages
+name: Deploy offline PocketZot to GitHub Pages
 
 on:
   push:
@@ -30,11 +30,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Type-check
-        run: npx tsc --noEmit
-
-      - name: Test
-        run: npm test -- --run
+      - name: Fetch pinned offline engine and tiles
+        run: node .github/fetch-offline.mjs
 
       - name: Determine Pages base path
         id: pages-base
@@ -48,7 +45,7 @@ jobs:
           fi
 
       - name: Build
-        run: npx vite build --base="${{ steps.pages-base.outputs.path }}"
+        run: npm run build -- --base="${{ steps.pages-base.outputs.path }}"
 
       - name: Configure Pages
         uses: actions/configure-pages@v5

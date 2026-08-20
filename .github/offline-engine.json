@@ -1,0 +1,11 @@
+{
+  "repository": "aeshna-cyanea/crawl",
+  "tag": "engine-b58825c73ae6",
+  "asset": "pocketzot-offline-b58825c73ae6.tar.gz",
+  "bytes": 18492701,
+  "sha256": "9263356f29b28e8dc98a7943c6af29395b889b3a4fbeb94eb127bdaafe10504a",
+  "build": "b58825c73ae6",
+  "engineCommit": "d74616cfb7aaadac3fc5663419006a90bda6b1c7",
+  "crawlVersion": "0.35-a0-848-gd8b905dbbe",
+  "crawlBase": "d8b905dbbe11af1a27670d0a61a53a580348959f"
+}
