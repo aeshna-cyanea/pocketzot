@@ -190,14 +190,6 @@ const isAbsent = (e: unknown): boolean => e instanceof ArtifactError && e.status
 // A quota failure on cache.put is swallowed (served uncached); the
 // __complete markers below re-verify presence, so a swallowed put can't
 // masquerade as readiness.
-function looksLikeHtml(buf: ArrayBuffer): boolean {
-  // GitHub Pages and other SPA hosts can return the shell for a missing asset
-  // with a successful status. Older versions of this loader cached that shell,
-  // so inspect cached bodies as well as response headers before trusting them.
-  const text = new TextDecoder().decode(new Uint8Array(buf).subarray(0, 256))
-  return /^\s*<(?:!doctype\b|html\b)/i.test(text)
-}
-
 export async function fetchArtifact(
   cache: Cache | null,
   stats: FetchStats,
@@ -205,24 +197,16 @@ export async function fetchArtifact(
 ): Promise<ArrayBuffer> {
   for (const p of paths) {
     const hit = cache && await cache.match(p)
-    if (hit) {
-      const buf = await hit.arrayBuffer()
-      if (!looksLikeHtml(buf)) { stats.cacheHits++; return buf }
-      // Recover installs made while the deploy was serving an SPA fallback.
-      await cache.delete(p).catch(() => { /* best effort */ })
-    }
+    if (hit) { stats.cacheHits++; return hit.arrayBuffer() }
   }
   let lastStatus = 0
   for (const p of paths) {
     const res = await fetch(p).catch(() => null)
     if (!res || !res.ok) { lastStatus = res?.status ?? 0; continue }
-    const buf = await res.arrayBuffer()
-    if ((res.headers.get('content-type') ?? '').includes('text/html') || looksLikeHtml(buf)) {
-      lastStatus = 404
-      continue
-    }
-    if (cache) await cache.put(p, new Response(buf, { headers: res.headers })).catch(() => { /* quota — serve uncached */ })
+    if ((res.headers.get('content-type') ?? '').includes('text/html')) { lastStatus = 404; continue }
+    if (cache) await cache.put(p, res.clone()).catch(() => { /* quota — serve uncached */ })
     stats.netFetches++
+    const buf = await res.arrayBuffer()
     stats.netBytes += buf.byteLength
     return buf
   }

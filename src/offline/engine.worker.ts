@@ -301,8 +301,9 @@ async function start(name: string): Promise<void> {
   try {
     cache = await openArtifactCache()
     // All three artifacts go through the cache+gunzip path; wasm and data
-    // are handed to the glue as bytes (wasmBinary / getPreloadedPackage), so
-    // the glue performs no fetches of its own. The glue itself is fetched +
+    // are handed to the glue as bytes (instantiateWasm /
+    // getPreloadedPackage), so the glue performs no fetches of its own. The
+    // glue itself is fetched +
     // blob-URL imported rather than imported by path: the Vite dev server
     // refuses to module-serve files under public/ ("can only be referenced
     // via HTML tags"), and a blob module bypasses its middleware entirely
