@@ -36,6 +36,7 @@ npm test -- --run                     # Run all Vitest tests once
 npm test -- --run path/to/test.ts     # Run one test file
 npm run check                         # Type-check and run all tests
 npm run build                         # Check, then create dist/
+npm run build:full                    # Build engine and complete offline dist/
 npm run preview -- --host 0.0.0.0
 ```
 
@@ -334,6 +335,27 @@ Passing `--publish` additionally creates a GitHub release and enables strict
 clean-branch, pushed-commit, and GitHub tooling checks. A local build does not
 need GitHub CLI; publishing requires an installed and authenticated `gh`.
 Details and manual stages are in the engine guide linked above.
+
+### Full local build without GitHub
+
+To compile both products entirely on the local machine, from source already
+present in this checkout, run this at the PocketZot repository root:
+
+```sh
+JOBS=8 npm run build:full
+```
+
+`JOBS` is optional. The command runs the engine's non-publishing release build,
+runs the checked Vite client build, then copies the contents of
+`engine/crawl-ref/source/wasm/dist/site/` into `dist/`. The resulting `dist/`
+contains the app, local WASM engine, prewarmed caches, and local tiles and can
+be served by any static file server. The trailing `/.` in the copy source puts
+`offline/`, `gamedata/`, and `release.json` directly at the deployment root.
+
+This path does not use GitHub, GitHub Releases, Actions, or Pages; it does not
+change the checked-in engine pin, commit, or push anything. It requires the
+engine submodule and its dependency submodules to be present, the native Crawl
+build dependencies, PyYAML, and `emcc`/`em++` on `PATH`.
 
 From the PocketZot repository root, the normal publishing command is:
 
