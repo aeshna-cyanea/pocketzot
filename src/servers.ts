@@ -41,17 +41,19 @@ export function labelFor(wsUrl: string): string {
   return findServer(wsUrl)?.label ?? wsUrl
 }
 
-// Canonicalize user-entered WebTiles socket URLs before they become route,
-// session, or connection identity. Embedded credentials and fragments are
-// rejected: neither belongs in a WebSocket endpoint, and credentials must
-// never leak into PocketZot's public URL state.
+// Canonicalize a WebTiles host (or complete secure socket URL) before it
+// becomes route, session, or connection identity. PocketZot deliberately
+// assumes the standard WebTiles endpoint: wss://<host>/socket. That keeps a
+// route's `server` value to host[:port] without an alias table or encoded URL.
 export function normalizeServerUrl(raw: string): string | null {
   const value = raw.trim()
   if (!value) return null
   try {
-    const url = new URL(value)
-    if (url.protocol !== 'ws:' && url.protocol !== 'wss:') return null
-    if (!url.hostname || url.username || url.password || url.hash) return null
+    const url = new URL(value.includes('://') ? value : `wss://${value}`)
+    if (url.protocol !== 'wss:') return null
+    if (!url.hostname || url.username || url.password || url.hash || url.search) return null
+    if (url.pathname !== '/' && url.pathname !== '/socket' && url.pathname !== '/socket/') return null
+    url.pathname = '/socket'
     return url.href
   } catch {
     return null

@@ -1,11 +1,12 @@
-// URL routes for the static app. The selected transport and optional public
-// account name live in the query (`?server=CDI&username=alice` /
+// URL routes for the static app. The selected WebTiles host and optional
+// public account name live in the query (`?server=underhound.eu:8080` /
 // `?offline=1`), while the screen uses Crawl WebTiles' established hash
-// vocabulary (`#lobby`, `#play-…`, `#watch-…`). Hash routes keep deep links
+// vocabulary (`#lobby`, `#play-…`, `#watch-…`). WebTiles' standard
+// wss://<host>/socket endpoint is implicit. Hash routes keep deep links
 // compatible with GitHub project Pages: every reload still requests the real
 // app entry path rather than a server-side route.
 
-import { findServer, KNOWN_SERVERS, normalizeServerUrl } from './servers'
+import { normalizeServerUrl } from './servers'
 
 export type AppRoute =
   | { kind: 'home' }
@@ -21,20 +22,15 @@ export type OnlineRoute =
 
 type UrlSource = Pick<Location, 'href' | 'search' | 'hash'>
 
-export function serverRouteKey(wsUrl: string): string {
-  return findServer(wsUrl)?.tag.toLowerCase() ?? wsUrl
+export function serverRouteHost(wsUrl: string): string {
+  const normalized = normalizeServerUrl(wsUrl)
+  if (!normalized) throw new Error(`Invalid standard WebTiles URL: ${wsUrl}`)
+  return new URL(normalized).host
 }
 
-export function serverFromRouteKey(key: string | null): string | null {
-  if (!key) return null
-  const lowered = key.toLowerCase()
-  const known = KNOWN_SERVERS.find(server =>
-    server.tag.toLowerCase() === lowered
-    || server.label.toLowerCase() === lowered
-    || new URL(server.wsUrl).hostname.toLowerCase() === lowered,
-  )
-  if (known) return known.wsUrl
-  return normalizeServerUrl(key)
+export function serverFromRouteHost(host: string | null): string | null {
+  if (!host || host.includes('/') || host.includes('@')) return null
+  return normalizeServerUrl(host)
 }
 
 function hashTarget(hash: string):
@@ -64,7 +60,7 @@ export function parseAppRoute(source: Pick<UrlSource, 'search' | 'hash'>): AppRo
       : { kind: 'offline-lobby' }
   }
 
-  const wsUrl = serverFromRouteKey(params.get('server'))
+  const wsUrl = serverFromRouteHost(params.get('server'))
   if (!wsUrl) return { kind: 'home' }
   const loginUsername = params.get('username')?.trim() || undefined
   if (target.kind === 'play') return { kind: 'online-play', wsUrl, gameId: target.value, loginUsername }
@@ -95,22 +91,22 @@ export function routeHref(route: AppRoute, source: UrlSource = location): string
       url.hash = `play-${encodeURIComponent(route.name)}`
       break
     case 'online-login':
-      url.searchParams.set('server', serverRouteKey(route.wsUrl))
+      url.searchParams.set('server', serverRouteHost(route.wsUrl))
       if (route.loginUsername) url.searchParams.set('username', route.loginUsername)
       url.hash = ''
       break
     case 'online-lobby':
-      url.searchParams.set('server', serverRouteKey(route.wsUrl))
+      url.searchParams.set('server', serverRouteHost(route.wsUrl))
       if (route.loginUsername) url.searchParams.set('username', route.loginUsername)
       url.hash = 'lobby'
       break
     case 'online-play':
-      url.searchParams.set('server', serverRouteKey(route.wsUrl))
+      url.searchParams.set('server', serverRouteHost(route.wsUrl))
       if (route.loginUsername) url.searchParams.set('username', route.loginUsername)
       url.hash = `play-${encodeURIComponent(route.gameId)}`
       break
     case 'online-watch':
-      url.searchParams.set('server', serverRouteKey(route.wsUrl))
+      url.searchParams.set('server', serverRouteHost(route.wsUrl))
       if (route.loginUsername) url.searchParams.set('username', route.loginUsername)
       url.hash = `watch-${encodeURIComponent(route.username)}`
       break

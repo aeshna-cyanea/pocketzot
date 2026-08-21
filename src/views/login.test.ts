@@ -90,7 +90,7 @@ describe('login server routes', () => {
     select.dispatchEvent(new Event('change'))
     expect(customLabel.hidden).toBe(false)
 
-    customInput.value = 'wss://custom.example/socket'
+    customInput.value = 'custom.example'
     customInput.dispatchEvent(new Event('input'))
     expect(onServerRoute).toHaveBeenLastCalledWith('wss://custom.example/socket', undefined)
   })

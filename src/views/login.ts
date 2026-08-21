@@ -64,9 +64,9 @@ export function buildLoginView(
       <select id="server-select"></select>
     </label>
     <label id="custom-server-label" class="login-label" hidden>
-      Custom WebSocket URL
-      <input id="custom-server-url" type="url" inputmode="url" autocomplete="url"
-             placeholder="wss://example.org/socket" spellcheck="false"
+      Custom server
+      <input id="custom-server-url" type="text" inputmode="url" autocomplete="url"
+             placeholder="example.org:8443" spellcheck="false"
              autocorrect="off" autocapitalize="off"
              aria-describedby="custom-server-hint" />
       <span id="custom-server-hint" class="login-field-hint">
@@ -217,7 +217,7 @@ export function buildLoginView(
   for (const wsUrl of savedCustomUrls) {
     const option = document.createElement('option')
     option.value = wsUrl
-    option.textContent = wsUrl
+    option.textContent = new URL(wsUrl).host
     formSelect.appendChild(option)
   }
   const customOption = document.createElement('option')
@@ -237,7 +237,7 @@ export function buildLoginView(
       formSelect.value = routedUrl
     } else {
       formSelect.value = CUSTOM_SERVER_VALUE
-      customInput.value = routedUrl
+      customInput.value = new URL(routedUrl).host
     }
   }
   if (initialUsername) userInput.value = initialUsername
@@ -252,7 +252,7 @@ export function buildLoginView(
     const raw = formSelect.value === CUSTOM_SERVER_VALUE ? customInput.value : formSelect.value
     const wsUrl = normalizeServerUrl(raw)
     if (!wsUrl) {
-      showError('Enter a valid ws:// or wss:// WebSocket URL.')
+      showError('Enter a valid WebTiles hostname, optionally with a port.')
       return null
     }
     return wsUrl

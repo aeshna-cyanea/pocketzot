@@ -53,18 +53,18 @@ server updates the URL before the connection attempt, which gives browser
 password managers a stable server-specific page to associate with the login.
 Routes use the standard WebTiles hash names, for example:
 
-- `?server=CDI&username=alice` (selected server / login pending)
-- `?server=CDI&username=alice#lobby`
-- `?server=CDI&username=alice#play-dcss-0.35`
-- `?server=CDI#watch-playername`
+- `?server=crawl.dcss.io&username=alice` (selected server / login pending)
+- `?server=crawl.dcss.io&username=alice#lobby`
+- `?server=crawl.dcss.io&username=alice#play-dcss-0.35`
+- `?server=underhound.eu%3A8080#watch-playername`
 - `?offline=1#lobby`
 - `?offline=1#play-charactername`
 
-Known server acronyms and hostnames are accepted in `server`; project Pages
-deployments retain their existing `/<repository>/` base path. The username is
-public URL state; passwords and WebTiles login tokens are never placed in the
-URL. Custom endpoints use their full, URL-encoded `ws://` or `wss://` address
-as the `server` value.
+`server` is always the WebTiles hostname with an optional port. PocketZot
+derives the standard `wss://<host>/socket` endpoint; there are no server
+aliases. Project Pages deployments retain their existing `/<repository>/`
+base path. The username is public URL state; passwords and WebTiles login
+tokens are never placed in the URL.
 
 ## Tech
 
