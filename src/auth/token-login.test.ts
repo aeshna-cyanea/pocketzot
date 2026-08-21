@@ -3,7 +3,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { fakeStorage } from '../test/fake-storage'
 import { tokenLogin, SESSION_EXPIRED_NOTICE, type TokenLoginConn } from './token-login'
-import { loadSession, saveSession } from './session'
+import { listSessions, loadSession, saveSession } from './session'
 import type { ClientMsg, ServerMsg } from '../ws/types'
 
 vi.stubGlobal('localStorage', fakeStorage())
@@ -32,6 +32,14 @@ afterEach(() => {
 })
 
 describe('tokenLogin', () => {
+  it('keeps an expired account available for password recovery without loading its token', () => {
+    saveSession(WS_URL, USER, 'expired-cookie', -1)
+    expect(loadSession(WS_URL, USER)).toBeNull()
+    expect(listSessions()).toEqual([
+      expect.objectContaining({ wsUrl: WS_URL, username: USER, cookie: 'expired-cookie' }),
+    ])
+  })
+
   it('exchanges the cookie and requests a fresh one on success', () => {
     const { conn, sent, feed } = fakeConn()
     const successes: string[] = []
@@ -84,6 +92,6 @@ describe('tokenLogin', () => {
     feed({ msg: 'login_fail', message: 'nope' })
     expect(failed).toBe(true)
     expect(loadSession(WS_URL, USER)).toBeNull()
-    expect(SESSION_EXPIRED_NOTICE).toMatch(/sign in/)
+    expect(SESSION_EXPIRED_NOTICE).toMatch(/expired/)
   })
 })

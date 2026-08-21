@@ -13,9 +13,10 @@
 import type { ClientMsg, ServerMsg } from '../ws/types'
 import { clearSession, saveSession, type StoredSession } from './session'
 
-// Canonical copy for the one user-visible failure ("log in" vs "sign in"
-// had drifted between the old copies).
-export const SESSION_EXPIRED_NOTICE = 'Saved session expired — please sign in again.'
+// Shared fatal reason. app.ts recognizes this exact value and opens inline
+// password recovery for the affected account instead of displaying it as a
+// generic sign-in notice.
+export const SESSION_EXPIRED_NOTICE = 'Saved session expired.'
 
 // Structural subset of WsConnection we need; reconnect.ts hands in its
 // test-substitutable ResumeConn.

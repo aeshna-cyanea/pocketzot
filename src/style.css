@@ -408,6 +408,46 @@ html, body {
   font-size: 1.1rem;
 }
 .login-account-card:disabled::after { content: "…"; }
+.login-account-card.needs-password::after { content: "↻"; }
+
+.login-reauth-form {
+  background: var(--surface2);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 0.7rem;
+}
+.login-reauth-account {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin-bottom: 0.55rem;
+}
+.login-reauth-copy {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  margin-bottom: 0.65rem;
+}
+.login-reauth-form .login-label { margin-bottom: 0.65rem; }
+.login-reauth-form .login-error { margin-bottom: 0.65rem; }
+.login-reauth-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+.login-reauth-actions .login-btn {
+  flex: 1 1 auto;
+  width: auto;
+  padding: 0.55rem;
+}
+.login-reauth-cancel {
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font: inherit;
+  padding: 0.55rem;
+}
+.login-reauth-cancel:disabled { opacity: 0.5; cursor: default; }
 
 /* Offline entry card (login.ts renderOfflineCard): account-card chrome with a
    two-line middle — the most recent character (or "New game") as the title +

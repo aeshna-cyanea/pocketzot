@@ -1,7 +1,7 @@
 import { WsConnection } from '../ws/connection'
 import type { ServerMsg } from '../ws/types'
-import { listSessions, saveSession, type StoredSession } from '../auth/session'
-import { SESSION_EXPIRED_NOTICE, tokenLogin } from '../auth/token-login'
+import { listSessions, saveSession, sessionExpired, type StoredSession } from '../auth/session'
+import { tokenLogin } from '../auth/token-login'
 import { findServer, KNOWN_SERVERS, labelFor, normalizeServerUrl } from '../servers'
 import { getPref, LOGIN_SPRITES_CHANGED_EVENT } from '../prefs'
 import { openAboutDoc, openChangelogDoc, unreadDotHtml } from './docs'
@@ -24,6 +24,8 @@ export interface LoginResult {
   guest?: boolean
 }
 
+export type ReauthAccount = Pick<StoredSession, 'wsUrl' | 'username'>
+
 const CUSTOM_SERVER_VALUE = '__custom_server__'
 
 export function buildLoginView(
@@ -43,12 +45,16 @@ export function buildLoginView(
   // A routed account identity. This is public URL state, not a credential;
   // the password remains exclusively in the password field/WebTiles frame.
   initialUsername?: string,
+  // Account whose saved token just expired. Render its password recovery
+  // inline and continue the pending route after a successful login.
+  reauthAccount?: ReauthAccount,
 ): HTMLElement {
   const view = document.createElement('div')
   view.id = 'login-view'
 
   const sessions = listSessions()
-  const hasSessions = sessions.length > 0
+  let pendingReauth = reauthAccount
+  const hasSessions = sessions.length > 0 || pendingReauth !== undefined
 
   // Reused connection controls — wrapped in a `<details>` toggle when the
   // user already has saved sessions, or rendered directly when they don't.
@@ -453,11 +459,17 @@ export function buildLoginView(
     list.innerHTML = ''
     const ss = listSessions()
     for (const s of ss) {
+      if (pendingReauth?.wsUrl === s.wsUrl
+          && pendingReauth.username.toLowerCase() === s.username.toLowerCase()) continue
       const server = findServer(s.wsUrl)
       const tag = server?.tag ?? new URL(s.wsUrl).hostname.split('.')[0].slice(0, 4).toUpperCase()
       const card = document.createElement('button')
       card.type = 'button'
       card.className = 'login-account-card'
+      if (sessionExpired(s)) {
+        card.classList.add('needs-password')
+        card.setAttribute('aria-label', `${s.username} — password required`)
+      }
       card.innerHTML = `
         <span class="login-account-tag">${escHtml(tag)}</span>
         <span class="login-account-username">${escHtml(s.username)}</span>
@@ -465,12 +477,101 @@ export function buildLoginView(
       card.addEventListener('click', () => resumeWithToken(s, card))
       list.appendChild(card)
     }
-    if (ss.length === 0) section.hidden = true
+    if (pendingReauth) renderReauthForm(list, pendingReauth)
+    section.hidden = list.childElementCount === 0
+  }
+
+  function renderReauthForm(list: HTMLElement, account: ReauthAccount): void {
+    const server = findServer(account.wsUrl)
+    const tag = server?.tag ?? new URL(account.wsUrl).hostname.split('.')[0].slice(0, 4).toUpperCase()
+    const form = document.createElement('form')
+    form.className = 'login-reauth-form'
+    form.autocomplete = 'on'
+    form.noValidate = true
+    form.innerHTML = `
+      <div class="login-reauth-account">
+        <span class="login-account-tag">${escHtml(tag)}</span>
+        <span class="login-account-username">${escHtml(account.username)}</span>
+      </div>
+      <div class="login-reauth-copy">Saved session expired. Enter your password to continue.</div>
+      <label class="login-label">
+        Password
+        <input class="login-reauth-password" type="password"
+               name="password" autocomplete="current-password" required />
+      </label>
+      <div class="login-reauth-error login-error" role="alert" hidden></div>
+      <div class="login-reauth-actions">
+        <button type="submit" class="login-btn">Continue</button>
+        <button type="button" class="login-reauth-cancel">Cancel</button>
+      </div>
+    `
+    const passwordInput = form.querySelector<HTMLInputElement>('.login-reauth-password')!
+    const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]')!
+    const cancel = form.querySelector<HTMLButtonElement>('.login-reauth-cancel')!
+    const inlineError = form.querySelector<HTMLElement>('.login-reauth-error')!
+
+    cancel.addEventListener('click', () => {
+      pendingReauth = undefined
+      renderResumeButtons()
+    })
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault()
+      inlineError.hidden = true
+      const password = passwordInput.value
+      if (!password) {
+        inlineError.textContent = 'Please enter your password.'
+        inlineError.hidden = false
+        return
+      }
+      onServerRoute?.(account.wsUrl, account.username)
+      submit.disabled = true
+      submit.textContent = 'Connecting…'
+      cancel.disabled = true
+
+      const conn = new WsConnection(account.wsUrl)
+      try {
+        await conn.connect()
+      } catch {
+        conn.close()
+        inlineError.textContent = `Could not connect to ${labelFor(account.wsUrl)}`
+        inlineError.hidden = false
+        submit.disabled = false
+        submit.textContent = 'Continue'
+        cancel.disabled = false
+        return
+      }
+
+      conn.send({ msg: 'login', username: account.username, password })
+      listenOnce(conn, (msg: ServerMsg) => {
+        if (msg.msg === 'login_success') {
+          conn.onLoginCookie = (cookie, expiresDays) => {
+            saveSession(account.wsUrl, msg.username, cookie, expiresDays)
+          }
+          conn.send({ msg: 'set_login_cookie' })
+          onLogin({ conn, username: msg.username })
+        } else if (msg.msg === 'login_fail') {
+          inlineError.textContent = msg.message || 'Incorrect password.'
+          inlineError.hidden = false
+          conn.close()
+          passwordInput.select()
+          submit.disabled = false
+          submit.textContent = 'Continue'
+          cancel.disabled = false
+        }
+      })
+    })
+    list.prepend(form)
+    queueMicrotask(() => { if (view.isConnected) passwordInput.focus() })
   }
 
   async function resumeWithToken(s: StoredSession, card: HTMLButtonElement): Promise<void> {
     clearErrors()
     onServerRoute?.(s.wsUrl, s.username)
+    if (sessionExpired(s)) {
+      pendingReauth = s
+      renderResumeButtons()
+      return
+    }
     card.disabled = true
 
     const conn = new WsConnection(s.wsUrl)
@@ -491,7 +592,7 @@ export function buildLoginView(
       },
       onFail: () => {
         conn.close()
-        showError(SESSION_EXPIRED_NOTICE)
+        pendingReauth = s
         renderResumeButtons()
       },
     })

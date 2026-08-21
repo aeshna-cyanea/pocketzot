@@ -52,7 +52,7 @@ Current stable and trunk DCSS are supported. Versions back to 0.24 generally wor
 
 ## Security and privacy
 
-PocketZot has no accounts of its own. Your browser connects directly to your chosen DCSS server over WebSocket, just like the desktop WebTiles client; all built-in servers use encrypted `wss://` connections. Credentials go only in the login message and are never stored. Saved logins keep the server's session cookie, not your password. The site records anonymous usage counts.
+PocketZot has no accounts of its own. Your browser connects directly to your chosen DCSS server over WebSocket, just like the desktop WebTiles client; all built-in servers use encrypted `wss://` connections. Credentials go only in the login message and are never stored. Saved logins keep the server's session cookie, not your password; when that token expires, PocketZot asks for the password inline to refresh it. The site records anonymous usage counts.
 
 Custom servers also supply WebTiles tile metadata as JavaScript, just as the built-in servers do. Only connect to a custom server you trust.
 

@@ -235,8 +235,10 @@ export function buildLobbyView(
       const stored = loadSession(conn.wsUrl, username)
       if (stored) {
         conn.send({ msg: 'forget_login_cookie', cookie: stored.cookie })
-        clearSession(conn.wsUrl, username)
       }
+      // Also removes a locally expired record: those are retained only so the
+      // login screen can offer password recovery, not after explicit logout.
+      clearSession(conn.wsUrl, username)
       conn.close()
       onDisconnect()
     })

@@ -18,6 +18,10 @@ export interface StoredSession {
   expiresAtMs: number
 }
 
+export function sessionExpired(session: StoredSession, now = Date.now()): boolean {
+  return session.expiresAtMs <= now
+}
+
 function storageKey(wsUrl: string, username: string): string {
   return KEY_PREFIX + wsUrl + SEP + username.toLowerCase()
 }
@@ -28,10 +32,9 @@ export function loadSession(wsUrl: string, username: string): StoredSession | nu
   if (!raw) return null
   try {
     const s = JSON.parse(raw) as StoredSession
-    if (s.expiresAtMs <= Date.now()) {
-      localStorage.removeItem(k)
-      return null
-    }
+    // Keep the record so the login screen can retain the server/account
+    // identity and ask for a fresh password. The expired token is never used.
+    if (sessionExpired(s)) return null
     return s
   } catch {
     localStorage.removeItem(k)
@@ -55,7 +58,7 @@ export function clearSession(wsUrl: string, username: string): void {
 
 export function listSessions(): StoredSession[] {
   const out: StoredSession[] = []
-  const stale: string[] = []
+  const corrupt: string[] = []
   for (let i = 0; i < localStorage.length; i++) {
     const k = localStorage.key(i)
     if (!k || !k.startsWith(KEY_PREFIX)) continue
@@ -63,10 +66,11 @@ export function listSessions(): StoredSession[] {
     if (!raw) continue
     try {
       const s = JSON.parse(raw) as StoredSession
-      if (s.expiresAtMs > Date.now()) out.push(s)
-      else stale.push(k)
-    } catch { stale.push(k) }
+      if (typeof s.wsUrl === 'string' && typeof s.username === 'string'
+          && typeof s.cookie === 'string' && typeof s.expiresAtMs === 'number') out.push(s)
+      else corrupt.push(k)
+    } catch { corrupt.push(k) }
   }
-  for (const k of stale) localStorage.removeItem(k)
+  for (const k of corrupt) localStorage.removeItem(k)
   return out
 }

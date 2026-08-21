@@ -1,6 +1,6 @@
 import { WsConnection, type GameConnection } from './ws/connection'
 import type { GameExit } from './ws/types'
-import { buildLoginView } from './views/login'
+import { buildLoginView, type ReauthAccount } from './views/login'
 import { buildLobbyView } from './views/lobby'
 import { buildOfflineLobbyView } from './views/offline-lobby'
 import { buildGameView, type SpectateTarget } from './views/game-view'
@@ -11,7 +11,7 @@ import {
 } from './reconnect'
 import { count } from './counter'
 import { getPref } from './prefs'
-import { listSessions, loadSession } from './auth/session'
+import { listSessions, loadSession, sessionExpired } from './auth/session'
 import { SESSION_EXPIRED_NOTICE, tokenLogin } from './auth/token-login'
 import { parseAppRoute, replaceRoute, type OnlineRoute } from './routes'
 
@@ -114,6 +114,10 @@ function openOnlineRoute(route: OnlineRoute): void {
   if (sessions.length !== 1) return
 
   const session = sessions[0]!
+  if (sessionExpired(session)) {
+    showLogin(undefined, pending, session)
+    return
+  }
   const next = new WsConnection(pending.wsUrl)
   void next.connect().then(() => {
     // The user may have navigated elsewhere while the socket opened.
@@ -133,7 +137,7 @@ function openOnlineRoute(route: OnlineRoute): void {
       onFail: () => {
         next.close()
         if (pendingOnlineRoute === pending && state === 'login') {
-          showLogin(SESSION_EXPIRED_NOTICE, pending)
+          showLogin(undefined, pending, session)
         }
       },
     })
@@ -215,19 +219,28 @@ async function showOfflineGame(name: string): Promise<void> {
   boot.start()
 }
 
-function showLogin(notice?: string, routed?: OnlineRoute): void {
+function showLogin(notice?: string, routed?: OnlineRoute, reauthAccount?: ReauthAccount): void {
   conn?.close()
   conn = null
   state = 'login'
   clearGameStart()
-  if (routed) replaceRoute(routed)
+  if (routed) {
+    pendingOnlineRoute = routed
+    replaceRoute(routed)
+  }
   else {
     pendingOnlineRoute = null
     replaceRoute({ kind: 'home' })
   }
-  setView(buildLoginView((result) => {
-    enterLobby(result.conn, result.username, result.guest ?? false)
-  }, notice, () => showOfflineLobby(), routed?.wsUrl, selectOnlineServer, routed?.loginUsername))
+  setView(buildLoginView(
+    (result) => { enterLobby(result.conn, result.username, result.guest ?? false) },
+    notice,
+    () => showOfflineLobby(),
+    routed?.wsUrl,
+    selectOnlineServer,
+    routed?.loginUsername,
+    reauthAccount,
+  ))
 }
 
 // Server selection is navigation even before a socket opens: expose it in the
@@ -391,7 +404,16 @@ function startResume(wsUrl: string): void {
     },
     onGiveUp: (notice) => {
       resumeActive = false
-      showLogin(notice)
+      if (notice === SESSION_EXPIRED_NOTICE && !currentIsGuest) {
+        const parsed = parseAppRoute(location)
+        const parsedOnline = parsed.kind.startsWith('online-') ? parsed as OnlineRoute : null
+        const routed: OnlineRoute = parsedOnline?.wsUrl === wsUrl
+          ? { ...parsedOnline, loginUsername: currentUsername }
+          : { kind: 'online-login', wsUrl, loginUsername: currentUsername }
+        showLogin(undefined, routed, { wsUrl, username: currentUsername })
+      } else {
+        showLogin(notice)
+      }
     },
   })
 }

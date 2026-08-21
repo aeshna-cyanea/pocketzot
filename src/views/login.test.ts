@@ -7,13 +7,43 @@ vi.stubGlobal('localStorage', fakeStorage())
 vi.stubGlobal('sessionStorage', fakeStorage())
 
 import { KNOWN_SERVERS } from '../servers'
-import { saveSession } from '../auth/session'
+import { loadSession, saveSession } from '../auth/session'
 import { buildLoginView } from './login'
+
+class FakeWebSocket {
+  static readonly OPEN = 1
+  static instances: FakeWebSocket[] = []
+
+  readyState = 0
+  onopen: (() => void) | null = null
+  onerror: (() => void) | null = null
+  onclose: (() => void) | null = null
+  onmessage: ((event: { data: string }) => void) | null = null
+  readonly sent: Record<string, unknown>[] = []
+
+  constructor(readonly url: string) {
+    FakeWebSocket.instances.push(this)
+    queueMicrotask(() => {
+      this.readyState = FakeWebSocket.OPEN
+      this.onopen?.()
+    })
+  }
+
+  send(raw: string): void { this.sent.push(JSON.parse(raw) as Record<string, unknown>) }
+  close(): void { this.readyState = 3 }
+  feed(message: Record<string, unknown>): void {
+    this.onmessage?.({ data: JSON.stringify(message) })
+  }
+}
+
+vi.stubGlobal('WebSocket', FakeWebSocket)
 
 describe('login server routes', () => {
   beforeEach(() => {
     localStorage.clear()
     sessionStorage.clear()
+    FakeWebSocket.instances = []
+    document.body.textContent = ''
   })
 
   it('announces the selected server before validating or connecting', () => {
@@ -73,5 +103,61 @@ describe('login server routes', () => {
     expect(Array.from(view.querySelectorAll<HTMLOptionElement>('#server-select option'))
       .some(option => option.value === wsUrl)).toBe(true)
     expect(view.querySelector('.login-account-username')?.textContent).toBe('alice')
+  })
+
+  it('opens password recovery immediately for a locally expired token', () => {
+    const wsUrl = KNOWN_SERVERS[0]!.wsUrl
+    saveSession(wsUrl, 'alice', 'expired-token', -1)
+    const view = buildLoginView(vi.fn())
+    const account = view.querySelector<HTMLButtonElement>('.login-account-card.needs-password')!
+
+    account.click()
+
+    expect(view.querySelector<HTMLInputElement>('.login-reauth-password')).not.toBeNull()
+    expect(view.querySelector('.login-reauth-copy')?.textContent).toContain('expired')
+  })
+
+  it('replaces a server-rejected token card with password recovery', async () => {
+    const wsUrl = KNOWN_SERVERS[0]!.wsUrl
+    saveSession(wsUrl, 'alice', 'rejected-token', 1)
+    const view = buildLoginView(vi.fn())
+    view.querySelector<HTMLButtonElement>('.login-account-card')!.click()
+
+    await vi.waitFor(() => expect(FakeWebSocket.instances[0]?.sent[0])
+      .toEqual({ msg: 'token_login', cookie: 'rejected-token' }))
+    FakeWebSocket.instances[0]!.feed({ msg: 'login_fail', message: 'expired' })
+
+    expect(view.querySelector<HTMLInputElement>('.login-reauth-password')).not.toBeNull()
+    expect(view.querySelector('#login-error')?.textContent).toBe('')
+    expect(loadSession(wsUrl, 'alice')).toBeNull()
+  })
+
+  it('logs in with the replacement password and stores the new token', async () => {
+    const wsUrl = KNOWN_SERVERS[0]!.wsUrl
+    const onLogin = vi.fn()
+    const onServerRoute = vi.fn()
+    const view = buildLoginView(
+      onLogin, undefined, undefined, wsUrl, onServerRoute, 'alice',
+      { wsUrl, username: 'alice' },
+    )
+    document.body.appendChild(view)
+    const form = view.querySelector<HTMLFormElement>('.login-reauth-form')!
+    const password = view.querySelector<HTMLInputElement>('.login-reauth-password')!
+    password.value = 'replacement-password'
+    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1))
+    const socket = FakeWebSocket.instances[0]!
+    await vi.waitFor(() => expect(socket.sent[0]).toEqual({
+      msg: 'login', username: 'alice', password: 'replacement-password',
+    }))
+    expect(onServerRoute).toHaveBeenCalledWith(wsUrl, 'alice')
+
+    socket.feed({ msg: 'login_success', username: 'Alice' })
+    expect(socket.sent.at(-1)).toEqual({ msg: 'set_login_cookie' })
+    expect(onLogin).toHaveBeenCalledWith(expect.objectContaining({ username: 'Alice' }))
+
+    socket.feed({ msg: 'login_cookie', cookie: 'new-token', expires: 7 })
+    expect(loadSession(wsUrl, 'Alice')?.cookie).toBe('new-token')
   })
 })
