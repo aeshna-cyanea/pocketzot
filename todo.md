@@ -9,3 +9,5 @@ other touch controls
 more robust reconnection - app seems kinda flaky. think about how to test
 
 tapping character sprites on main menu should resume that character's game
+
+make the spell memorization menu have a special keyboard like the skills menu
